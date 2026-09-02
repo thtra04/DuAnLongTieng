@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VSub Studio — Tạo phụ đề & dịch video</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+</head>
+<body>
+
+<div class="aurora"><span></span><span></span><span></span></div>
+<div class="grid-overlay"></div>
+
+<div class="shell">
+
+  <header class="top">
+    <div class="logo">
+      <div class="logo-mark">🎬</div>
+      <div>
+        <h1>VSub Studio</h1>
+        <p>Tạo phụ đề · Dịch đa ngôn ngữ · Nung vào video</p>
+      </div>
+    </div>
+    <div class="status-row" id="statusRow">
+      <span class="pill"><i class="dot"></i> Đang kiểm tra…</span>
+    </div>
+  </header>
+
+  <nav class="stepper">
+    <button class="step-btn active" data-step="1"><span class="num">1</span>
+      <span class="lbl">Nguồn video<span class="sub" id="step1Sub">File, link, hoặc phụ đề sẵn</span></span></button>
+    <button class="step-btn" data-step="2" disabled><span class="num">2</span>
+      <span class="lbl">Ngôn ngữ &amp; dịch<span class="sub" id="step2Sub">Chọn nguồn → đích</span></span></button>
+    <button class="step-btn" data-step="3" disabled><span class="num">3</span>
+      <span class="lbl">Xử lý<span class="sub" id="step3Sub">Nghe, canh giờ, dịch</span></span></button>
+    <button class="step-btn" data-step="4" disabled><span class="num">4</span>
+      <span class="lbl">Biên tập &amp; xuất<span class="sub" id="step4Sub">Sửa lời, chỉnh kiểu, tải về</span></span></button>
+  </nav>
+
+  <!-- ══════════════════════════ BƯỚC 1 ══════════════════════════ -->
+  <section class="panel active" id="panel1">
+    <div class="card" id="projectCard">
+      <h2><span class="ic">📂</span> Dự án phim <span class="badge" id="projCount">…</span></h2>
+      <p class="hint">Làm theo ba bước: <b>1.</b> tạo bộ phim → <b>2.</b> tạo tập →
+        <b>3.</b> đưa link hoặc upload video cho từng tập.</p>
+      <p class="projsum" id="projSum"></p>
+      <div class="actions" style="margin-bottom:16px">
+        <button class="btn primary sm" id="filmNew">➕ Tạo dự án phim</button>
+        <button class="btn sm ghost" id="projReload">🔄 Tải lại</button>
+      </div>
+
+      <!-- form tạo bộ phim, ẩn cho tới khi bấm nút -->
+      <div id="filmForm" class="newfilm hide">
+        <label class="field">
+          <span>Tên bộ phim</span>
+          <input type="text" id="filmName" placeholder="Ví dụ: Đại Hán Thiên Mệnh Nhân">
+        </label>
+        <label class="field">
+          <span>Link cả bộ <span class="muted">— không bắt buộc</span></span>
+          <input type="url" id="filmUrl" placeholder="https://www.bilibili.com/video/BV…">
+        </label>
+        <p class="muted">Dán link nhiều phần thì tool <b>tạo sẵn từng tập</b> kèm tên và thời lượng.
+          Bỏ trống cũng được — tự thêm tập rồi upload video cho mỗi tập.</p>
+        <div class="actions">
+          <button class="btn primary sm" id="filmSave">Tạo bộ phim</button>
+          <button class="btn sm ghost" id="filmCancel">Thôi</button>
+        </div>
+      </div>
+
+      <div id="projList"></div>
+    </div>
+
+    <div class="card">
+      <div id="targetBar" class="targetbar hide"></div>
+      <h2><span class="ic">📥</span> Nguồn video</h2>
+      <p class="hint">Kéo thả file từ máy, hoặc dán link YouTube / TikTok / Facebook… để tool tự tải về.</p>
+
+      <div class="tabs">
+        <button class="tab active" data-src="file">💾 File từ máy</button>
+        <button class="tab" data-src="url">🔗 Link video</button>
+      </div>
+
+      <div class="tabpane active" data-pane="file">
+        <div class="drop" id="drop">
+          <span class="ic">📼</span>
+          <strong>Kéo thả video vào đây</strong>
+          <small>hoặc bấm để chọn — mp4, mkv, mov, avi, webm, mp3, wav…</small>
+          <input type="file" id="fileInput" class="hide"
+                 accept="video/*,audio/*,.mkv,.ts,.flv,.wmv">
+        </div>
+        <div id="fileCard"></div>
+      </div>
+
+      <div class="tabpane" data-pane="url">
+        <label class="field">
+          <span>Link video</span>
+          <input type="url" id="urlInput" placeholder="https://www.youtube.com/watch?v=…">
+        </label>
+        <div class="actions">
+          <button class="btn sm ghost" id="checkLink">🔍 Kiểm tra link</button>
+          <span class="muted" id="linkState" style="align-self:center"></span>
+        </div>
+        <p class="muted" style="margin-top:12px">Tool dùng <b>yt-dlp</b> để tải, ưu tiên chất lượng tối đa 1080p.
+          Link nhiều phần (bilibili nhiều <b>P</b>, playlist YouTube…) sẽ được hỏi chọn phần.
+          Chỉ tải nội dung bạn có quyền sử dụng.</p>
+        <div id="linkParts" class="hide"></div>
+      </div>
+
+      <div id="srcSummary" class="srcbar hide"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="ic">✍️</span> Nội dung phụ đề lấy từ đâu?</h2>
+      <p class="hint">Chọn cách tool tạo ra các dòng phụ đề.</p>
+
+      <div class="choice-grid" id="modeGrid">
+        <div class="choice on" data-mode="auto">
+          <b>🎙️ Tự nghe từ video</b>
+          <small>Whisper AI nghe lời thoại và tự viết ra phụ đề, kèm mốc giờ chính xác.</small>
+        </div>
+        <div class="choice" data-mode="text">
+          <b>📄 Theo văn bản của tôi</b>
+          <small>Bạn dán sẵn lời thoại/kịch bản — tool nghe video rồi canh giờ khớp từng câu.</small>
+        </div>
+        <div class="choice" data-mode="srt">
+          <b>🗂️ Đã có file .srt/.vtt</b>
+          <small>Nạp phụ đề có sẵn để dịch, chỉnh kiểu chữ và nung vào video.</small>
+        </div>
+      </div>
+
+      <div id="modeText" class="hide" style="margin-top:18px">
+        <label class="field">
+          <span>Dán văn bản (mỗi câu một dòng, hoặc cả đoạn — tool tự tách theo dấu câu)</span>
+          <textarea id="scriptText" placeholder="Xin chào các bạn, hôm nay chúng ta sẽ…&#10;Trước tiên hãy cùng xem qua…"></textarea>
+        </label>
+        <div class="actions">
+          <button class="btn sm ghost" id="pickTxt">📎 Nạp từ file .txt</button>
+          <input type="file" id="txtInput" class="hide" accept=".txt,.md,text/plain">
+        </div>
+      </div>
+
+      <div id="modeSrt" class="hide" style="margin-top:18px">
+        <div class="drop" id="dropSrt" style="padding:28px 20px">
+          <span class="ic">🗂️</span>
+          <strong>Chọn file .srt hoặc .vtt</strong>
+          <small>Kéo thả hoặc bấm để chọn</small>
+          <input type="file" id="srtInput" class="hide" accept=".srt,.vtt">
+        </div>
+        <div id="srtCard"></div>
+      </div>
+    </div>
+
+    <div class="actions right">
+      <button class="btn primary" id="toStep2">Tiếp tục →</button>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ BƯỚC 2 ══════════════════════════ -->
+  <section class="panel" id="panel2">
+    <div class="card">
+      <h2><span class="ic">🌐</span> Ngôn ngữ</h2>
+      <p class="hint">Chọn ngôn ngữ đang nói trong video, và ngôn ngữ bạn muốn dịch sang.</p>
+
+      <div class="grid2">
+        <label class="field">
+          <span>Ngôn ngữ gốc (trong video)</span>
+          <select id="srcLang"><option value="">🔎 Tự động phát hiện</option></select>
+        </label>
+        <label class="field">
+          <span>Dịch sang</span>
+          <select id="tgtLang"></select>
+        </label>
+      </div>
+
+      <label class="switch" style="margin-top:4px">
+        <input type="checkbox" id="doTranslate" checked>
+        <span class="track"></span>
+        <span class="txt"><b>Bật dịch phụ đề</b>
+          <small>Tắt nếu bạn chỉ muốn phụ đề nguyên ngữ.</small></span>
+      </label>
+    </div>
+
+    <div class="card" id="engineCard">
+      <h2><span class="ic">🔤</span> Công cụ dịch</h2>
+      <p class="hint">Chọn engine dịch phù hợp với chất lượng và chi phí bạn cần.</p>
+      <div class="choice-grid" id="engineGrid"></div>
+
+      <div id="aiBox" class="hide" style="margin-top:18px">
+        <div class="divider"></div>
+        <div class="grid2">
+          <label class="field">
+            <span>API key <span id="keyHint" class="muted"></span></span>
+            <input type="password" id="apiKey" placeholder="sk-…" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>Model</span>
+            <select id="aiModel"></select>
+          </label>
+        </div>
+        <label class="field hide" id="baseUrlField">
+          <span>API endpoint <span class="muted">(9Router / OpenAI-compatible)</span></span>
+          <input type="url" id="aiBaseUrl" value="http://localhost:20128/v1" placeholder="http://localhost:20128/v1">
+        </label>
+        <label class="field">
+          <span>Bối cảnh video <span class="muted">(tuỳ chọn — giúp AI dịch sát nghĩa hơn)</span></span>
+          <input type="text" id="contextNote" placeholder="VD: video hướng dẫn nấu ăn, giọng vui vẻ, nhiều tiếng lóng">
+        </label>
+        <label class="field">
+          <span>Phong cách dịch AI</span>
+          <select id="translationMode">
+            <option value="natural">Tự nhiên, sát ý</option>
+            <option value="funny">Hài hước, bắt trend</option>
+            <option value="cinematic">Điện ảnh, giàu cảm xúc</option>
+            <option value="dubbing">Tối ưu lồng tiếng, câu ngắn</option>
+          </select>
+          <small class="muted">AI giữ đúng số dòng và ưu tiên độ dài vừa khung.</small>
+        </label>
+        <label class="field">
+          <span>Bộ thuật ngữ <span class="muted">(tuỳ chọn — mỗi dòng một quy tắc)</span></span>
+          <textarea id="glossary" rows="3" placeholder="John = anh John&#10;The Guild = Hội Đồng&#10;bro = ông bạn"></textarea>
+          <small class="muted">Dùng để giữ thống nhất tên riêng, cách xưng hô và từ chuyên ngành.</small>
+        </label>
+        <div class="cache-tools">
+          <span class="muted" id="cacheInfo">Cache AI đang kiểm tra…</span>
+          <button class="btn sm ghost" id="clearCache" type="button">🧹 Xoá cache AI</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="ic">⚙️</span> Cấu hình nhận dạng <span class="badge">nâng cao</span></h2>
+      <p class="hint">Model càng lớn càng chính xác nhưng chậm hơn và tải lâu hơn lần đầu.</p>
+      <div class="grid3">
+        <label class="field">
+          <span>Model Whisper</span>
+          <select id="asrModel"></select>
+        </label>
+        <label class="field">
+          <span>Thiết bị chạy</span>
+          <select id="device">
+            <option value="auto">Tự chọn (ưu tiên GPU)</option>
+            <option value="cuda">GPU (CUDA)</option>
+            <option value="cpu">CPU</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Độ dài tối đa 1 dòng phụ đề</span>
+          <div class="rangeline">
+            <input type="range" id="maxChars" min="40" max="140" step="4" value="84">
+            <output id="maxCharsOut">84</output>
+          </div>
+        </label>
+      </div>
+      <label class="switch" style="margin-bottom:14px">
+        <input type="checkbox" id="vad">
+        <span class="track"></span>
+        <span class="txt"><b>Lọc khoảng lặng (VAD)</b>
+          <small>Nhanh hơn với video phỏng vấn/thuyết trình, nhưng hay <b>cắt mất đoạn hát</b>
+            trong video ca nhạc. Nên để tắt nếu không chắc.</small></span>
+      </label>
+      <label class="switch" style="margin-bottom:14px">
+        <input type="checkbox" id="autoFix" checked>
+        <span class="track"></span>
+        <span class="txt"><b>Tự sửa khi phụ đề bị hụt</b>
+          <small>Đo độ phủ, tự nhận dạng lại và quét bù các đoạn dài bị bỏ sót.</small></span>
+      </label>
+      <label class="field">
+        <span>Gợi ý từ khoá <span class="muted">(tên riêng, thuật ngữ — giúp nghe đúng hơn)</span></span>
+        <input type="text" id="prompt" placeholder="VD: Nguyễn Văn A, VieNeu-TTS, FastAPI">
+      </label>
+    </div>
+
+    <div class="actions">
+      <button class="btn ghost" data-goto="1">← Quay lại</button>
+      <div style="flex:1"></div>
+      <button class="btn primary" id="startBtn">▶ Bắt đầu xử lý</button>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ BƯỚC 3 ══════════════════════════ -->
+  <section class="panel" id="panel3">
+    <div class="card">
+      <div class="progress-hero">
+        <div class="ring" id="ring">
+          <svg width="168" height="168">
+            <defs>
+              <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#6ea8ff"/>
+                <stop offset="60%" stop-color="#a97bff"/>
+                <stop offset="100%" stop-color="#38e8c4"/>
+              </linearGradient>
+            </defs>
+            <circle class="bg" cx="84" cy="84" r="72"></circle>
+            <circle class="fg" cx="84" cy="84" r="72" id="ringFg"
+                    stroke-dasharray="452.4" stroke-dashoffset="452.4"></circle>
+          </svg>
+          <div class="val"><div><span id="pctText">0</span>%<small id="phaseText">đang chuẩn bị…</small></div></div>
+        </div>
+      </div>
+      <div class="steps-list" id="stepsList"></div>
+      <div id="covWarn" class="hide"></div>
+      <div class="logbox" id="logBox">Chờ khởi động…</div>
+      <div class="actions" style="margin-top:16px">
+        <button class="btn danger" id="cancelBtn">✕ Huỷ</button>
+        <button class="btn ghost hide" id="retryFromError">⚙ Sửa cấu hình và chạy lại</button>
+        <div style="flex:1"></div>
+        <button class="btn primary hide" id="toEditor">Tới bước biên tập →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ BƯỚC 4 ══════════════════════════ -->
+  <section class="panel" id="panel4">
+    <div class="editor">
+      <div class="player-wrap">
+        <div class="card" style="padding:14px">
+          <div class="player-box">
+            <video id="player" controls preload="metadata"></video>
+            <div class="sub-overlay" id="subOverlay"></div>
+          </div>
+          <div class="actions" style="margin-top:12px">
+            <button class="btn sm ghost" id="prevCue">⏮ Dòng trước</button>
+            <button class="btn sm ghost" id="nextCue">Dòng sau ⏭</button>
+            <div style="flex:1"></div>
+            <span class="muted" id="cueCount"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2><span class="ic">🎨</span> Kiểu phụ đề</h2>
+          <div class="stylebar">
+            <label class="field"><span>Font</span>
+              <select id="stFont">
+                <option>Arial</option><option>Segoe UI</option><option>Tahoma</option>
+                <option>Verdana</option><option>Roboto</option><option>Times New Roman</option>
+                <option>Impact</option><option>Comic Sans MS</option>
+              </select>
+            </label>
+            <label class="field"><span>Cỡ chữ</span>
+              <div class="rangeline"><input type="range" id="stSize" min="20" max="90" value="46">
+                <output id="stSizeOut">46</output></div>
+            </label>
+            <label class="field"><span>Màu chữ</span><input type="color" id="stColor" value="#FFFFFF"></label>
+            <label class="field"><span>Màu viền</span><input type="color" id="stOutlineColor" value="#000000"></label>
+            <label class="field"><span>Độ dày viền</span>
+              <div class="rangeline"><input type="range" id="stOutline" min="0" max="6" step="0.5" value="2.5">
+                <output id="stOutlineOut">2.5</output></div>
+            </label>
+            <label class="field"><span>Vị trí</span>
+              <select id="stPos"><option value="bottom">Dưới</option><option value="middle">Giữa</option><option value="top">Trên</option></select>
+            </label>
+            <label class="field"><span>Lề dọc</span>
+              <div class="rangeline"><input type="range" id="stMargin" min="10" max="200" step="2" value="48">
+                <output id="stMarginOut">48</output></div>
+            </label>
+            <label class="field"><span>Ký tự / dòng hiển thị</span>
+              <div class="rangeline"><input type="range" id="stLineChars" min="20" max="70" value="52">
+                <output id="stLineCharsOut">52</output></div>
+            </label>
+          </div>
+          <div class="grid3" style="margin-top:6px">
+            <label class="check" id="stBoldW"><input type="checkbox" id="stBold" checked>
+              <span><b>Chữ đậm</b></span></label>
+            <label class="check" id="stBoxW"><input type="checkbox" id="stBox">
+              <span><b>Nền hộp mờ</b><small>thay cho viền chữ</small></span></label>
+            <label class="field" style="margin:0"><span>Lệch giờ (giây)</span>
+              <input type="number" id="stOffset" value="0" step="0.1"></label>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h2><span class="ic">📝</span> Nội dung phụ đề</h2>
+          <p class="hint">Bấm vào một dòng để tua video tới đó. Sửa trực tiếp trong ô.</p>
+          <div class="tabs" id="dispTabs">
+            <button class="tab" data-disp="main">Nguyên ngữ</button>
+            <button class="tab active" data-disp="second">Bản dịch</button>
+            <button class="tab" data-disp="both">Song ngữ</button>
+          </div>
+          <div class="cuelist" id="cueList"></div>
+        </div>
+
+        <div class="card">
+          <h2><span class="ic">🎙️</span> Lồng tiếng <span class="badge">VieNeu-TTS</span></h2>
+          <p class="hint">Đọc bản dịch thành tiếng Việt và ghép vào video, canh khớp mốc giờ phụ đề.</p>
+
+          <div id="ttsUnavailable" class="hide">
+            <p class="muted" id="ttsReason"></p>
+          </div>
+
+          <div id="ttsBox">
+            <label class="switch" style="margin-bottom:16px">
+              <input type="checkbox" id="dubOn">
+              <span class="track"></span>
+              <span class="txt"><b>Bật lồng tiếng</b>
+                <small>Video xuất ra sẽ nói tiếng Việt thay vì chỉ có phụ đề.</small></span>
+            </label>
+
+            <div id="dubOpts" class="hide">
+              <div class="grid2">
+                <label class="field">
+                  <span>Giọng đọc</span>
+                  <select id="dubVoice"><option value="">Đang tải danh sách giọng…</option></select>
+                </label>
+                <label class="field">
+                  <span>Phong cách đọc</span>
+                  <select id="dubStyle"></select>
+                </label>
+              </div>
+
+              <div class="actions" style="margin:-4px 0 14px">
+                <button class="btn sm ghost" id="dubTest">🔊 Nghe thử giọng</button>
+                <audio id="dubAudio" class="hide"></audio>
+                <span class="muted" id="dubTestMsg"></span>
+              </div>
+
+              <label class="check on" id="keepOrigWrap">
+                <input type="checkbox" id="dubKeepOrig" checked>
+                <span><b>Giữ tiếng gốc ở nền</b>
+                  <small>Còn nghe được nhạc nền, tiếng động. Bỏ chọn để thay hẳn tiếng gốc.</small></span>
+              </label>
+
+              <label class="check on" id="autoLevelWrap" style="margin-top:10px">
+                <input type="checkbox" id="dubAutoLevel" checked>
+                <span><b>Tự cân âm lượng</b>
+                  <small>Chuẩn hoá giọng đọc lên sát mức tối đa, và hạ nền thêm nếu tiếng gốc
+                    còn to quá. Giọng TTS ra nhỏ hơn thoại gốc trong phim nên để nguyên sẽ lép.</small></span>
+              </label>
+              <label class="check on" id="duckWrap">
+                <input type="checkbox" id="dubDuck" checked>
+                <span><b>Tiếng gốc chỉ nhỏ lại khi có người đọc</b>
+                  <small>Đoạn không ai đọc vẫn nghe nguyên nhạc và tiếng động. Bỏ chọn để giảm
+                    đều suốt cả video.</small></span>
+              </label>
+
+              <div class="grid3" style="margin-top:14px">
+                <label class="field">
+                  <span>Âm lượng giọng đọc</span>
+                  <div class="rangeline">
+                    <input type="range" id="dubVol" min="50" max="250" step="5" value="100">
+                    <output id="dubVolOut">100%</output>
+                  </div>
+                </label>
+                <label class="field" id="origVolWrap">
+                  <span>Âm lượng tiếng gốc <span class="muted">(mức tối đa)</span></span>
+                  <div class="rangeline">
+                    <input type="range" id="dubOrigVol" min="0" max="100" value="45">
+                    <output id="dubOrigVolOut">45%</output>
+                  </div>
+                </label>
+                <label class="field">
+                  <span>Tăng tốc tối đa <span class="muted">(khi câu dịch dài hơn khung giờ)</span></span>
+                  <div class="rangeline">
+                    <input type="range" id="dubSpeed" min="100" max="200" step="5" value="150">
+                    <output id="dubSpeedOut">1.50×</output>
+                  </div>
+                </label>
+              </div>
+
+              <p class="muted" style="margin-top:4px">
+                Giọng còn lép thì kéo <b>Âm lượng giọng đọc</b> lên — nó nhân thêm lên mức tool đã
+                tự cân. Nếu bạn cũng chọn <b>Video nung phụ đề</b>, tiếng sẽ được lồng lên chính
+                bản đó — ra một video vừa có chữ vừa có tiếng Việt.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2><span class="ic">📦</span> Xuất kết quả</h2>
+          <div class="grid2">
+            <label class="check on"><input type="checkbox" id="outSrt" checked>
+              <span><b>File .SRT</b><small>phổ biến nhất, mở được mọi nơi</small></span></label>
+            <label class="check"><input type="checkbox" id="outVtt">
+              <span><b>File .VTT</b><small>dùng cho web / HTML5</small></span></label>
+            <label class="check"><input type="checkbox" id="outSrtBoth">
+              <span><b>.SRT song ngữ</b><small>gốc + dịch trên 2 dòng</small></span></label>
+            <label class="check"><input type="checkbox" id="outTxt">
+              <span><b>File .TXT</b><small>toàn bộ lời thoại, không mốc giờ</small></span></label>
+            <label class="check"><input type="checkbox" id="outBurn">
+              <span><b>🔥 Video nung phụ đề</b><small>chữ dính vào hình, encode lại — lâu nhất</small></span></label>
+            <label class="check"><input type="checkbox" id="outSoft">
+              <span><b>Video phụ đề bật/tắt</b><small>gắn dạng track, rất nhanh</small></span></label>
+            <label class="check hide" id="outDubWrap"><input type="checkbox" id="outDub">
+              <span><b>🎙️ Video lồng tiếng</b><small>đọc bản dịch thành tiếng Việt</small></span></label>
+            <label class="check hide" id="outDubWavWrap"><input type="checkbox" id="outDubWav">
+              <span><b>File tiếng .WAV</b><small>chỉ track lồng tiếng, để tự dựng</small></span></label>
+          </div>
+
+          <div id="burnOpts" class="hide" style="margin-top:14px">
+            <div class="divider"></div>
+            <div class="grid2">
+              <label class="field"><span>Chất lượng (CRF — nhỏ hơn = nét hơn, file nặng hơn)</span>
+                <div class="rangeline"><input type="range" id="crf" min="16" max="30" value="20">
+                  <output id="crfOut">20</output></div>
+              </label>
+              <label class="field"><span>Tốc độ encode</span>
+                <select id="preset">
+                  <option value="veryfast">Rất nhanh (chất lượng thấp hơn)</option>
+                  <option value="fast">Nhanh</option>
+                  <option value="medium" selected>Cân bằng</option>
+                  <option value="slow">Chậm (nén tốt hơn)</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="actions" style="margin-top:16px">
+            <button class="btn ghost" data-goto="1">↺ Video khác</button>
+            <div style="flex:1"></div>
+            <button class="btn primary" id="renderBtn">⬇ Xuất file</button>
+          </div>
+
+          <div id="renderProgress" class="hide" style="margin-top:18px">
+            <div class="steps-list" id="renderSteps"></div>
+          </div>
+
+          <div id="resultBox" class="hide" style="margin-top:18px">
+            <div class="divider"></div>
+            <h2 style="font-size:15px"><span class="ic">✅</span> File đã tạo</h2>
+            <div class="filelist" id="fileList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    VSub Studio · Whisper + Google/NLLB/AI · Lồng tiếng bằng
+    <a href="https://github.com/pnnbao97/VieNeu-TTS" target="_blank" rel="noopener">VieNeu-TTS</a>
+    <br>Chạy hoàn toàn trên máy bạn — video không rời khỏi máy (trừ khi dùng engine dịch online).
+  </footer>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script src="/app.js"></script>
+</body>
+</html>

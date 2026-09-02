@@ -1,0 +1,10 @@
+.venv/
+data/
+tools/
+__pycache__/
+*.pyc
+.env
+
+# Kết quả thực nghiệm (nặng, sinh lại được)
+eval_out/
+runs/
