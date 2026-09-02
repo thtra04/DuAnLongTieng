@@ -318,7 +318,35 @@ def _score_reference(video: Path, cue: Cue, tmp: Path, min_len: float) -> tuple[
     return voiced, level
 
 
-def extract_reference(video: Path, cues: list[Cue], out_path: Path, min_len: float = 4.0) -> Path:
+def _clean_neighbours(cues: list[Cue], index: dict[int, int], cue: Cue, gap: float = 0.3) -> bool:
+    """Cue này có cách xa lượt thoại của người khác không.
+
+    Cắt mẫu ngay sát chỗ người khác vừa nói xong thì dễ dính đuôi giọng của họ,
+    và mẫu lai hai giọng làm bản nhân bản nghe không ra ai. Chỉ nhận cue nào mà
+    hàng xóm hai bên hoặc cùng người nói, hoặc cách ít nhất `gap` giây.
+    """
+    i = index.get(id(cue))
+    if i is None:
+        return True
+    for j in (i - 1, i + 1):
+        if not (0 <= j < len(cues)):
+            continue
+        other = cues[j]
+        if (other.speaker or "") == (cue.speaker or ""):
+            continue
+        distance = cue.start - other.end if j < i else other.start - cue.end
+        if distance < gap:
+            return False
+    return True
+
+
+def extract_reference(
+    video: Path,
+    cues: list[Cue],
+    out_path: Path,
+    min_len: float = 4.0,
+    speaker: str = "",
+) -> Path:
     """Cắt 4–8 giây **có tiếng nói** từ video để nhân bản giọng.
 
     Chấm điểm ~15 cue đầu rồi chọn cái tốt nhất, thay vì lấy cái đầu tiên đủ dài.
@@ -327,12 +355,25 @@ def extract_reference(video: Path, cues: list[Cue], out_path: Path, min_len: flo
     vào chỗ không có thoại thì model sinh chạy loạn — đo trên video thật, cùng một
     câu: mẫu thoại sạch ra 3,4 giây, mẫu đoạn không thoại ra **24,0 giây** (đúng
     trần sinh), và khi đó MỌI câu đều tràn, đè chồng suốt cả tập.
+
+    Truyền `speaker` thì chỉ xét cue của đúng nhân vật đó, và ưu tiên những cue
+    không nằm sát lượt thoại của người khác — đây là chỗ quyết định để mỗi nhân
+    vật ra một giọng riêng thay vì mấy giọng lai vào nhau.
     """
     tmp = out_path.parent / (out_path.stem + ".try.wav")
-    candidates = [
-        c for c in cues
-        if c.end - c.start >= min_len and not _NOT_SPEECH.match((c.text or "").strip())
-    ][:15]
+    pool = [c for c in cues if c.speaker == speaker] if speaker else list(cues)
+    index = {id(c): i for i, c in enumerate(cues)}
+
+    def usable(c: Cue) -> bool:
+        return c.end - c.start >= min_len and not _NOT_SPEECH.match((c.text or "").strip())
+
+    # Vòng 1: cue đủ dài, có thoại, và không sát lượt của người khác
+    candidates = [c for c in pool if usable(c) and _clean_neighbours(cues, index, c)][:15]
+    # Vòng 2: nới điều kiện hàng xóm — thà mẫu hơi dính còn hơn không có mẫu
+    if not candidates:
+        candidates = [c for c in pool if usable(c)][:15]
+    if not candidates and pool:
+        candidates = [max(pool, key=lambda c: c.end - c.start)]
     if not candidates and cues:
         candidates = [max(cues, key=lambda c: c.end - c.start)]
 
@@ -373,6 +414,56 @@ def extract_reference(video: Path, cues: list[Cue], out_path: Path, min_len: flo
     return out_path
 
 
+def speaker_ids(cues: list[Cue]) -> list[str]:
+    """Nhãn nhân vật có trong `cues`, sắp theo tổng thời gian nói giảm dần."""
+    talk: dict[str, float] = {}
+    for c in cues:
+        sid = (c.speaker or "").strip()
+        if sid:
+            talk[sid] = talk.get(sid, 0.0) + max(0.0, c.end - c.start)
+    return sorted(talk, key=lambda s: (-talk[s], s))
+
+
+def extract_references(
+    video: Path,
+    cues: list[Cue],
+    workdir: Path,
+    min_len: float = 4.0,
+    only: set[str] | None = None,
+    on_log: Callable[[str], None] | None = None,
+    on_progress: Callable[[float], None] | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """Cắt mẫu giọng riêng cho **từng nhân vật** trong video.
+
+    Trả về ``(map nhãn -> đường dẫn wav, danh sách nhãn không cắt được)``.
+
+    Cố ý KHÔNG để một nhân vật hỏng làm sập cả job: cắt trượt nhân vật nào thì
+    ghi tên nhân vật đó vào danh sách thứ hai để bên gọi cấp một giọng dựng sẵn
+    thay thế. Cảnh phụ chỉ có hai câu thoại lí nhí là ca rất thường gặp, và bỏ
+    cả bản lồng tiếng chỉ vì nó thì vô lý.
+    """
+    ids = [s for s in speaker_ids(cues) if only is None or s in only]
+    refs: dict[str, str] = {}
+    failed: list[str] = []
+
+    for n, sid in enumerate(ids, 1):
+        out_path = workdir / f"voice_ref_{sid}.wav"
+        try:
+            extract_reference(video, cues, out_path, min_len=min_len, speaker=sid)
+            refs[sid] = str(out_path)
+            if on_log:
+                on_log(f"  {sid}: đã cắt mẫu giọng ({out_path.name}).")
+        except Exception as exc:
+            failed.append(sid)
+            out_path.unlink(missing_ok=True)
+            if on_log:
+                on_log(f"  {sid}: không cắt được mẫu ({exc}) — sẽ dùng giọng dựng sẵn.")
+        if on_progress:
+            on_progress(n / max(1, len(ids)))
+
+    return refs, failed
+
+
 def _spoken_text(cue: Cue, use_translation: bool) -> str:
     """Chữ sẽ đưa vào TTS cho một cue, hoặc rỗng nếu không có gì đọc được.
 
@@ -409,29 +500,57 @@ def speech_units(cues: list[Cue], use_translation: bool = True) -> list[dict]:
 
     units: list[dict] = []
     for g in group_cues(cues):
-        for part in _cap_unit(cues, g):
-            parts, taken = [], []
-            for i in part:
-                raw = _spoken_text(cues[i], use_translation)
-                if raw:
-                    parts.append(raw)
-                    taken.append(i)
-            text = _clean_for_tts(_join_fragments(parts))
-            if not text or not taken:
-                continue
-            # `taken` chứ không phải `part`: cue nào không góp chữ nào (thiếu bản
-            # dịch, chỉ có dấu câu) thì không được coi là đã đọc — nếu không thì
-            # nó lọt khỏi danh sách cảnh báo, và khoảng thời gian bị tính rộng ra
-            # phần chẳng ai đọc.
-            units.append(
-                {
-                    "cues": taken,
-                    "start": cues[taken[0]].start,
-                    "end": cues[taken[-1]].end,
-                    "text": text,
-                }
-            )
+        for same_voice in _split_by_speaker(cues, g):
+            for part in _cap_unit(cues, same_voice):
+                parts, taken = [], []
+                for i in part:
+                    raw = _spoken_text(cues[i], use_translation)
+                    if raw:
+                        parts.append(raw)
+                        taken.append(i)
+                text = _clean_for_tts(_join_fragments(parts))
+                if not text or not taken:
+                    continue
+                # `taken` chứ không phải `part`: cue nào không góp chữ nào (thiếu
+                # bản dịch, chỉ có dấu câu) thì không được coi là đã đọc — nếu
+                # không thì nó lọt khỏi danh sách cảnh báo, và khoảng thời gian
+                # bị tính rộng ra phần chẳng ai đọc.
+                units.append(
+                    {
+                        "cues": taken,
+                        "start": cues[taken[0]].start,
+                        "end": cues[taken[-1]].end,
+                        "text": text,
+                        "speaker": (cues[taken[0]].speaker or "").strip(),
+                    }
+                )
     return units
+
+
+def _split_by_speaker(cues: list[Cue], idx: list[int]) -> list[list[int]]:
+    """Chẻ nhóm cue mỗi khi đổi người nói.
+
+    Một đơn vị đọc phải do **đúng một nhân vật** nói. Bỏ bước này thì hai nhân
+    vật đối đáp nhanh sẽ bị `group_cues` gom chung vào một câu, đọc bằng một
+    giọng duy nhất — mất sạch ý nghĩa của việc tách nhân vật, mà log vẫn báo
+    thành công.
+
+    Cue chưa gán nhãn (nhãn rỗng) được coi là một "nhân vật" riêng, nên nó cũng
+    không bị dính vào lượt của người khác.
+    """
+    out: list[list[int]] = []
+    cur: list[int] = []
+    last: str | None = None
+    for i in idx:
+        speaker = (cues[i].speaker or "").strip()
+        if cur and speaker != last:
+            out.append(cur)
+            cur = []
+        cur.append(i)
+        last = speaker
+    if cur:
+        out.append(cur)
+    return out
 
 
 def _cap_unit(cues: list[Cue], idx: list[int]) -> list[list[int]]:
@@ -467,6 +586,8 @@ def build_dub_track(
     use_translation: bool = True,
     max_speed: float = 1.5,
     per_cue: bool = False,
+    voice_map: dict[str, str] | None = None,
+    ref_map: dict[str, str] | None = None,
     on_progress: Callable[[float], None] | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> tuple[Path, dict]:
@@ -474,6 +595,11 @@ def build_dub_track(
 
     Mặc định đọc theo **câu trọn** (xem `speech_units`). `per_cue=True` thì đọc
     từng cue một như trước — giữ lại để so sánh, chứ nghe kém hơn rõ rệt.
+
+    Lồng tiếng đa nhân vật: truyền `voice_map` (nhãn nhân vật -> id giọng dựng
+    sẵn) và/hoặc `ref_map` (nhãn nhân vật -> file mẫu để nhân bản). Nhân vật nào
+    không có trong hai bảng đó thì rơi về `ref_audio`/`voice` dùng chung, nên
+    hàm vẫn chạy y như cũ khi không truyền gì.
     """
     import numpy as np
 
@@ -484,7 +610,8 @@ def build_dub_track(
     if per_cue:
         units = [
             {"cues": [i], "start": c.start, "end": c.end,
-             "text": _spoken_text(c, use_translation)}
+             "text": _spoken_text(c, use_translation),
+             "speaker": (c.speaker or "").strip()}
             for i, c in enumerate(cues)
         ]
         units = [u for u in units if u["text"]]
@@ -533,11 +660,15 @@ def build_dub_track(
         )
         try:
             kwargs = {"style": style}
-            if ref_audio:
-                kwargs["ref_audio"] = ref_audio
+            # Giọng riêng của nhân vật này; không có thì dùng giọng chung.
+            speaker = (unit.get("speaker") or "").strip()
+            unit_ref = (ref_map or {}).get(speaker) or ref_audio
+            unit_voice = (voice_map or {}).get(speaker) or voice
+            if unit_ref:
+                kwargs["ref_audio"] = unit_ref
                 kwargs["denoise"] = True
-            elif voice:
-                kwargs["voice"] = voice
+            elif unit_voice:
+                kwargs["voice"] = unit_voice
             audio = engine.infer(text, **kwargs)
         except Exception as exc:
             stats["failed"] += 1

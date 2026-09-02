@@ -226,6 +226,7 @@ def full(job_id: str) -> dict | None:
     if item is None:
         return None
     item["cues"] = found[1].get("cues") or []
+    item["speakers"] = found[1].get("speakers") or []
     return item
 
 
