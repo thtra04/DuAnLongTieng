@@ -161,17 +161,20 @@ def run_in_thread(job: Job, target) -> None:
     def wrapper() -> None:
         job.status = "running"
         job.updated = time.time()
+        # `status` luôn được đặt SAU CÙNG trong mỗi nhánh. Giao diện hỏi trạng
+        # thái mỗi giây và dừng hỏi ngay khi thấy done/error/cancelled — đặt
+        # status trước thì lần hỏi cuối có thể bắt được job đã lỗi mà bước vẫn
+        # ghi "đang chạy", hoặc thiếu mất dòng log cuối.
         try:
             target(job)
             if job.status == "running":
-                job.status = "done"
                 job.log("Hoàn tất.")
+                job.status = "done"
         except JobCancelled:
-            job.status = "cancelled"
             job.error = "Đã huỷ theo yêu cầu."
             job.log("Đã huỷ.")
+            job.status = "cancelled"
         except Exception as exc:
-            job.status = "error"
             job.error = str(exc) or exc.__class__.__name__
             job.log(f"LỖI: {job.error}")
             detail = traceback.format_exc(limit=6)
@@ -180,6 +183,7 @@ def run_in_thread(job: Job, target) -> None:
             for s in job.steps:
                 if s.status == "running":
                     s.status = "error"
+            job.status = "error"
         finally:
             job.updated = time.time()
 
