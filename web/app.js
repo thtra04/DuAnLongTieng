@@ -36,7 +36,9 @@ const RECOVERY_KEY = 'vsub.active-job.v1';
 function saveJobRecovery(payload) {
   try {
     const safe = { ...payload };
+    // Bí mật không được nằm trong localStorage — nó sống qua cả lần đóng trình duyệt
     delete safe.api_key;
+    delete safe.hf_token;
     localStorage.setItem(RECOVERY_KEY, JSON.stringify({ jobId: S.jobId, payload: safe }));
   } catch { }
 }
@@ -205,6 +207,7 @@ async function boot() {
   fillAsrModels();
   fillEngines();
   initTts();
+  initDiarize();
   restorePrefs();
   refreshCacheInfo();
   loadProjects();
@@ -1085,6 +1088,9 @@ async function startAnalyze() {
     auto_fix: $('#autoFix').checked,
     prompt: $('#prompt').value.trim(),
     max_chars: +$('#maxChars').value,
+    diarize: $('#diarizeOn').checked,
+    num_speakers: +$('#numSpeakers').value || null,
+    hf_token: $('#hfToken').value.trim(),
   };
   savePrefs();
 
@@ -1284,6 +1290,7 @@ function renderCues() {
       <div class="cue-top">
         <span class="idx">#${i + 1}</span>
         <span class="tc">${fmtTime(c.start)} → ${fmtTime(c.end)}</span>
+        ${c.speaker ? `<span class="spk s${spkSlot(c.speaker)}" title="Nhân vật ${esc(c.speaker)}">${esc(spkName(c.speaker))}</span>` : ''}
         <span class="len ${cps > 22 ? 'warn' : ''}" title="ký tự/giây — trên 22 là hơi nhanh">${cps} cps</span>
         ${tooLong ? '<span class="len warn" title="Bản dịch dài hơn 125% bản gốc — nên rút gọn trước khi lồng tiếng">Dài</span>' : ''}
       </div>
@@ -1506,6 +1513,7 @@ $('#dubOn').addEventListener('change', async e => {
   outDub.checked = on;
   outDub.closest('.check').classList.toggle('on', on);
   if (on && !S.voicesLoaded) await loadVoices();
+  if (on) renderSpeakerVoices();
 });
 
 async function loadVoices() {
@@ -1517,6 +1525,8 @@ async function loadVoices() {
     const clone = r.clone_id || '__clone__';
     // Thiếu thư viện thì khoá sẵn mục nhân bản, đừng để chọn rồi xuất mới lỗi
     const cloneOk = r.clone !== false;
+    S.voices = r.voices || [];
+    S.cloneOk = cloneOk;
     sel.innerHTML =
       r.voices.map(v => `<option value="${v.id}">${esc(v.label)}</option>`).join('') +
       `<option value="${clone}"${cloneOk ? '' : ' disabled'}>` +
@@ -1525,6 +1535,7 @@ async function loadVoices() {
         : '🧬 Nhân bản giọng — chưa dùng được (cần uv sync --extra clone)') +
       '</option>';
     S.voicesLoaded = true;
+    renderSpeakerVoices();
     toast(`Đã nạp ${r.voices.length} giọng đọc.`, 'ok', 2600);
     if (!cloneOk && r.clone_reason) {
       toast('Nhân bản giọng: ' + r.clone_reason, 'warn', 9000);
@@ -1571,6 +1582,166 @@ $('#dubTest').addEventListener('click', async () => {
     btn.disabled = false;
   }
 });
+
+/* --------------------------- nhân vật & giọng --------------------------- */
+
+/* Nhãn nhân vật từ máy chủ là S1, S2… Người dùng đổi tên được, tên đổi chỉ nằm
+   trong phiên làm việc — nó thuần tuý để nhìn cho dễ, máy chủ vẫn dùng nhãn gốc. */
+const SPK_SLOTS = 6;
+
+function spkSlot(id) {
+  const n = parseInt(String(id).replace(/\D/g, ''), 10);
+  return (Number.isFinite(n) ? (n - 1) % SPK_SLOTS : 0) + 1;
+}
+
+function spkName(id) {
+  const custom = (S.speakerNames || {})[id];
+  if (custom) return custom;
+  const n = parseInt(String(id).replace(/\D/g, ''), 10);
+  return Number.isFinite(n) ? `Vai ${n}` : id;
+}
+
+function initDiarize() {
+  const d = S.sys.diarize || {};
+  const box = $('#diarizeOpts');
+  const hint = $('#diarizeHint');
+
+  // Có token trong biến môi trường rồi thì khỏi bắt nhập lại
+  if (d.has_token) $('#hfTokenWrap').classList.add('hide');
+
+  $('#diarizeOn').addEventListener('change', e => {
+    box.classList.toggle('hide', !e.target.checked);
+  });
+
+  if (!d.available && !d.has_token) {
+    hint.innerHTML =
+      `${esc(d.reason || 'Chưa dùng được.')}<br>` +
+      `Model: <code>${esc(d.model || '')}</code> — mở trang model trên Hugging Face, ` +
+      `bấm chấp nhận điều khoản, rồi tạo token ở mục Access Tokens.`;
+  } else {
+    hint.textContent =
+      'Chạy trên chính đường tiếng của video nên không phụ thuộc ngôn ngữ — '
+      + 'phim Trung, Hàn, Nhật, Anh đều dùng được.';
+  }
+}
+
+/** Bảng chọn giọng cho từng nhân vật, dựng lại mỗi khi có phụ đề mới. */
+function renderSpeakerVoices() {
+  const box = $('#spkBox'), list = $('#spkList');
+  const speakers = speakersFromCues();
+
+  if (!speakers.length) {
+    box.classList.add('hide');
+    list.innerHTML = '';
+    return;
+  }
+  box.classList.remove('hide');
+  $('#spkCount').textContent =
+    `${speakers.length} nhân vật · ${speakers.reduce((n, s) => n + s.lines, 0)} dòng`;
+
+  S.speakerVoices = S.speakerVoices || {};
+  const voices = S.voices || [];
+  const cloneId = S.sys.tts?.clone_id || '__clone__';
+
+  // Mặc định: mỗi nhân vật một giọng dựng sẵn khác nhau. Chọn giọng có sẵn thay
+  // vì nhân bản vì nhân bản chậm hơn nhiều và có thể trượt ở vai ít thoại —
+  // muốn nhân bản thì đổi một cú bấm.
+  speakers.forEach((s, i) => {
+    if (!S.speakerVoices[s.id] && voices.length) {
+      S.speakerVoices[s.id] = voices[i % voices.length].id;
+    }
+  });
+
+  list.innerHTML = speakers.map(s => `
+    <div class="spkrow" data-spk="${esc(s.id)}">
+      <span class="spk s${spkSlot(s.id)} big">${esc(s.id)}</span>
+      <div class="spkmain">
+        <div class="spkline">
+          <input class="spkname" type="text" value="${esc(spkName(s.id))}"
+                 data-spk="${esc(s.id)}" maxlength="40" aria-label="Tên nhân vật ${esc(s.id)}">
+          <span class="muted">${s.lines} dòng · ${Math.round(s.seconds)}s nói</span>
+        </div>
+        ${s.sample ? `<div class="spksample">“${esc(s.sample)}”</div>` : ''}
+        <div class="spkline">
+          <select class="spkvoice" data-spk="${esc(s.id)}" aria-label="Giọng cho ${esc(s.id)}">
+            ${voices.map(v => `<option value="${esc(v.id)}"${S.speakerVoices[s.id] === v.id ? ' selected' : ''}>${esc(v.label)}</option>`).join('')}
+            <option value="${esc(cloneId)}"${S.speakerVoices[s.id] === cloneId ? ' selected' : ''}
+              ${S.cloneOk === false ? ' disabled' : ''}>
+              🧬 Nhân bản chính giọng nhân vật này
+            </option>
+          </select>
+          <button class="btn sm ghost spktest" data-spk="${esc(s.id)}">🔊</button>
+        </div>
+      </div>
+    </div>`).join('');
+
+  $$('.spkvoice', list).forEach(sel => sel.addEventListener('change', () => {
+    S.speakerVoices[sel.dataset.spk] = sel.value;
+  }));
+  $$('.spkname', list).forEach(inp => inp.addEventListener('input', () => {
+    S.speakerNames = S.speakerNames || {};
+    S.speakerNames[inp.dataset.spk] = inp.value.trim();
+    renderCues();
+  }));
+  $$('.spktest', list).forEach(btn => btn.addEventListener('click', () => {
+    previewSpeaker(btn.dataset.spk, btn);
+  }));
+}
+
+/** Danh sách nhân vật rút thẳng từ cue đang có trên màn hình.
+    Lấy từ cue chứ không lấy từ `S.analyzed.speakers` để người dùng sửa nhãn ở
+    bước 4 thì bảng giọng cập nhật theo ngay. */
+function speakersFromCues() {
+  const table = {};
+  S.cues.forEach(c => {
+    const id = (c.speaker || '').trim();
+    if (!id) return;
+    const item = table[id] || (table[id] = { id, lines: 0, seconds: 0, sample: '' });
+    item.lines++;
+    item.seconds += Math.max(0, c.end - c.start);
+    if (!item.sample) item.sample = (c.text2 || c.text || '').trim().slice(0, 70);
+  });
+  return Object.values(table).sort((a, b) => b.seconds - a.seconds);
+}
+
+/** {nhãn nhân vật: id giọng} gửi kèm lúc xuất file. */
+function collectSpeakerVoices() {
+  const out = {};
+  speakersFromCues().forEach(s => {
+    const v = (S.speakerVoices || {})[s.id];
+    if (v) out[s.id] = v;
+  });
+  return out;
+}
+
+async function previewSpeaker(id, btn) {
+  const voice = (S.speakerVoices || {})[id];
+  const cloneId = S.sys.tts?.clone_id || '__clone__';
+  if (!voice) return toast('Chưa chọn giọng cho nhân vật này.', 'warn');
+  if (voice === cloneId) {
+    return toast('Giọng nhân bản chỉ tạo được lúc xuất video — nó cần cắt mẫu từ chính video.', 'warn', 7000);
+  }
+  const line = S.cues.find(c => (c.speaker || '') === id && (c.text2 || c.text || '').trim());
+  const text = line ? (line.text2 || line.text) : 'Xin chào, đây là giọng đọc thử.';
+
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/tts/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text.slice(0, 300), voice, style: $('#dubStyle').value }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'lỗi');
+    const a = $('#dubAudio');
+    a.src = URL.createObjectURL(await res.blob());
+    a.classList.remove('hide'); a.controls = true;
+    $('#player').pause();
+    await a.play();
+  } catch (e) {
+    toast(`Nghe thử ${spkName(id)} lỗi: ${e.message}`, 'err', 8000);
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 /* ------------------------------ xuất file ------------------------------- */
 $('#renderBtn').addEventListener('click', async () => {
@@ -1622,6 +1793,7 @@ $('#renderBtn').addEventListener('click', async () => {
       duck: $('#dubDuck').checked,
       max_speed: +$('#dubSpeed').value / 100,
       keep_wav: $('#outDubWav').checked,
+      voices: collectSpeakerVoices(),
     },
   };
 

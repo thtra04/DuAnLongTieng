@@ -8,6 +8,7 @@ Tool tạo **phụ đề** và **dịch video** chạy hoàn toàn trên máy b�
 - 🔗 **Tải từ link** YouTube / TikTok / Facebook / bilibili — link nhiều phần sẽ được hỏi chọn phần
 - 🌐 **Dịch giữa 41 ngôn ngữ** — Google (miễn phí), NLLB-200 (offline), Claude / OpenAI (chất lượng cao)
 - 🎙️ **Lồng tiếng Việt** — 14 giọng Bắc/Trung/Nam, hoặc nhân bản chính giọng người nói trong video
+- 🎭 **Lồng tiếng đa nhân vật** — tự nghe ra trong phim có mấy người nói, mỗi nhân vật một giọng riêng
 - 🎨 **Biên tập trực quan** — xem trước phụ đề chồng lên video, sửa từng dòng, đổi font/màu/vị trí
 - 📦 **Xuất** SRT · VTT · SRT song ngữ · TXT · video nung phụ đề · video phụ đề bật-tắt · video lồng tiếng
 - 📂 **Dự án phim** — tạo bộ → tạo tập → đưa video vào từng tập; theo dõi còn thiếu tập nào
@@ -29,12 +30,13 @@ uv sync --extra cuda --extra ai        # + Claude / OpenAI API
 uv sync --extra cuda --extra offline   # + NLLB-200 dịch offline (tải torch ~2.5 GB)
 uv sync --extra cuda --extra tts       # + lồng tiếng Việt VieNeu-TTS (14 giọng có sẵn)
 uv sync --extra cuda --extra clone     # + nhân bản giọng trong video (kéo torch ~2.5 GB)
+uv sync --extra cuda --extra diarize   # + nhận diện người nói → lồng tiếng đa nhân vật
 ```
 
 Cài tất cả:
 
 ```bash
-uv sync --extra cuda --extra ai --extra offline --extra tts --extra clone
+uv sync --extra cuda --extra ai --extra offline --extra tts --extra clone --extra diarize
 ```
 
 `ffmpeg` đã đi kèm sẵn qua gói `imageio-ffmpeg` — không cần cài gì thêm.
@@ -214,6 +216,45 @@ Bật **Lồng tiếng** ở bước 4 để video nói tiếng Việt thay vì 
 
 Bấm **🔊 Nghe thử giọng** để nghe ngay dòng đang chọn trước khi xuất.
 
+### 🎭 Lồng tiếng đa nhân vật
+
+Cả phim đọc bằng một giọng thì người xem không phân biệt nổi ai đang nói — đó không phải
+chuyện thẩm mỹ mà là điều kiện để hiểu nội dung. Bật **Nhận diện người nói** ở bước 2, tool
+nghe đường tiếng của phim rồi gán mỗi dòng phụ đề cho một nhân vật.
+
+```
+#12  00:04:21 → 00:04:24   [Vai 1]              18 cps
+     朕已经决定了
+     Trẫm đã quyết rồi.
+
+#13  00:04:25 → 00:04:27   [Vai 2]              14 cps
+     臣遵旨
+     Thần tuân chỉ.
+```
+
+Sang bước 4, mục **🎭 Giọng cho từng nhân vật** cho bạn đặt tên vai và chọn giọng riêng cho
+từng người — hoặc **nhân bản chính giọng nhân vật đó** trong phim.
+
+| Chi tiết | Cách làm |
+|---|---|
+| **Nhãn nhân vật** | `S1`, `S2`… đánh số theo **tổng thời gian nói giảm dần** — `S1` thường là vai chính, và thứ tự không đổi giữa các lần chạy |
+| **Gán dòng cho vai** | Theo **độ chồng lấn thời gian lớn nhất**. Dòng vắt qua hai người thì lấy bên chiếm nhiều hơn |
+| **Dòng không rõ ai nói** | Thường là phụ đề trên nền nhạc — đọc bằng giọng ở ô "Giọng đọc" chung |
+| **Mẫu nhân bản** | Ưu tiên đoạn thoại **không sát lượt của người khác**, tránh mẫu lai hai giọng |
+| **Vai không cắt được mẫu** | Tự chuyển sang giọng dựng sẵn, có báo rõ — không làm hỏng cả bản lồng tiếng |
+| **Biết trước số vai** | Điền vào ô **Số nhân vật** ở bước 2 — chính xác hơn hẳn để tool tự đoán |
+
+> Không phụ thuộc ngôn ngữ: bước này chỉ đọc đặc trưng âm học của giọng, nên phim Trung, Hàn,
+> Nhật, Anh hay bất kỳ tiếng nào cũng dùng được y như nhau.
+
+**Cần token Hugging Face.** Model `pyannote/speaker-diarization-3.1` yêu cầu chấp nhận điều
+khoản: mở trang model, bấm đồng ý, tạo token ở mục *Access Tokens*, rồi dán vào ô ở bước 2
+(hoặc đặt biến môi trường `HF_TOKEN` cho khỏi nhập lại).
+
+```bash
+uv sync --extra diarize
+```
+
 **Đọc theo câu trọn, không đọc từng dòng phụ đề.** Đây là chỗ quyết định chất lượng.
 
 Phụ đề bị cắt theo **giới hạn ký tự**, không theo ngữ pháp — Whisper tiếng Trung gần như không
@@ -279,6 +320,7 @@ app/
   main.py         API FastAPI + phục vụ giao diện
   pipeline.py     Điều phối: nguồn → phụ đề → dịch → xuất
   asr.py          Whisper (faster-whisper), tự chọn GPU/CPU
+  diarize.py      Nhận diện người nói (pyannote), gán nhãn nhân vật vào từng dòng
   align.py        Canh văn bản người dùng vào timeline lời nói
   translate.py    5 engine dịch
   subtitles.py    Đọc/ghi SRT, VTT, ASS; cắt dòng từ word-timestamps
@@ -304,6 +346,8 @@ data/             Video upload, kết quả job, model đã tải  (không commi
 | `VSUB_MODEL_DIR` | `./data/models` | Nơi lưu model đã tải |
 | `VSUB_ASR_MODEL` | `medium` | Model Whisper mặc định |
 | `VSUB_MAX_UPLOAD` | `4294967296` | Giới hạn upload (bytes) |
+| `HF_TOKEN` | — | Token Hugging Face để tải model nhận diện người nói (khỏi nhập trên giao diện) |
+| `VSUB_DIARIZE_MODEL` | `pyannote/speaker-diarization-3.1` | Model nhận diện người nói |
 
 ---
 

@@ -265,6 +265,29 @@
         <span class="txt"><b>Tự sửa khi phụ đề bị hụt</b>
           <small>Đo độ phủ, tự nhận dạng lại và quét bù các đoạn dài bị bỏ sót.</small></span>
       </label>
+      <label class="switch" style="margin-bottom:14px">
+        <input type="checkbox" id="diarizeOn">
+        <span class="track"></span>
+        <span class="txt"><b>Nhận diện người nói</b>
+          <small>Nghe ra trong video có mấy nhân vật, để bước lồng tiếng cấp cho
+            <b>mỗi nhân vật một giọng riêng</b> thay vì cả phim một giọng.
+            Chạy thêm vài phút sau khi nghe lời thoại.</small></span>
+      </label>
+
+      <div id="diarizeOpts" class="hide subbox">
+        <div class="grid2">
+          <label class="field">
+            <span>Số nhân vật <span class="muted">(biết trước thì điền — chính xác hơn hẳn)</span></span>
+            <input type="number" id="numSpeakers" min="1" max="20" placeholder="để trống = tự đoán">
+          </label>
+          <label class="field" id="hfTokenWrap">
+            <span>Token Hugging Face</span>
+            <input type="password" id="hfToken" placeholder="hf_..." autocomplete="off">
+          </label>
+        </div>
+        <p class="hint" id="diarizeHint"></p>
+      </div>
+
       <label class="field">
         <span>Gợi ý từ khoá <span class="muted">(tên riêng, thuật ngữ — giúp nghe đúng hơn)</span></span>
         <input type="text" id="prompt" placeholder="VD: Nguyễn Văn A, VieNeu-TTS, FastAPI">
@@ -414,6 +437,15 @@
                 <button class="btn sm ghost" id="dubTest">🔊 Nghe thử giọng</button>
                 <audio id="dubAudio" class="hide"></audio>
                 <span class="muted" id="dubTestMsg"></span>
+              </div>
+
+              <div id="spkBox" class="hide subbox" style="margin-bottom:14px">
+                <div class="spk-head">
+                  <b>🎭 Giọng cho từng nhân vật</b>
+                  <span class="muted" id="spkCount"></span>
+                </div>
+                <p class="hint">Ô "Giọng đọc" ở trên áp dụng cho những dòng chưa nhận ra ai nói.</p>
+                <div id="spkList"></div>
               </div>
 
               <label class="check on" id="keepOrigWrap">

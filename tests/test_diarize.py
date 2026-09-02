@@ -143,3 +143,27 @@ def test_mau_cau_uu_tien_ban_dich():
     out = speakers_of(cues)
     assert out[0]["sample"] == "bản dịch"
     assert out[0]["first_line"] == 1
+
+
+# ------------------------------------------------- available() phải nhẹ
+
+
+def test_available_khong_nap_thu_vien_nang():
+    """`/api/system` gọi hàm này mỗi lần mở trang — nạp torch ở đây là treo trang.
+
+    Tác giả gốc đã cố tránh đúng chuyện này cho tính năng nhân bản giọng; test
+    này khoá lại để lần sửa sau không vô tình làm hỏng.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from app import diarize; diarize.available();"
+        "heavy=[m for m in ('torch','pyannote.audio','speechbrain') if m in sys.modules];"
+        "print(','.join(heavy))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
+    assert out.returncode == 0, out.stderr[-500:]
+    assert out.stdout.strip() == "", f"available() đã nạp: {out.stdout.strip()}"
