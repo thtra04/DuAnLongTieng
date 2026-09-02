@@ -67,20 +67,21 @@ def hf_token(explicit: str = "") -> str:
 def available(token: str = "") -> tuple[bool, str]:
     """Có chạy được diarization không, kèm lý do nếu không.
 
-    Cố ý KHÔNG tải model ở đây — chỉ kiểm thư viện và token, vì hàm này được
-    gọi lúc mở trang. Tải model mất vài phút, phải để tới lúc chạy thật.
+    Cố ý KHÔNG tải model, và cũng KHÔNG `import` thư viện thật ở đây — hàm này
+    chạy mỗi lần mở trang qua `/api/system`. `import pyannote.audio` kéo theo cả
+    torch và speechbrain, mất hàng chục giây lượt đầu; `find_spec` chỉ tra xem
+    gói có tồn tại hay không nên gần như tức thì. (Cùng lý do mà `/api/system`
+    không kiểm torch cho tính năng nhân bản giọng — xem `tts_voices` ở main.py.)
     """
-    try:
-        import pyannote.audio  # noqa: F401
-    except ImportError:
-        return False, "Chưa cài pyannote: uv sync --extra diarize"
-    except Exception as exc:
-        return False, f"pyannote lỗi khi nạp: {exc}"
+    import importlib.util
 
     try:
-        import torch  # noqa: F401
-    except ImportError:
-        return False, "Nhận diện người nói cần `torch`: uv sync --extra diarize"
+        if importlib.util.find_spec("pyannote.audio") is None:
+            return False, "Chưa cài pyannote: uv sync --extra diarize"
+        if importlib.util.find_spec("torch") is None:
+            return False, "Nhận diện người nói cần `torch`: uv sync --extra diarize"
+    except (ImportError, ValueError) as exc:
+        return False, f"Không kiểm được thư viện pyannote: {exc}"
 
     if not hf_token(token) and not _cached_locally():
         return False, (

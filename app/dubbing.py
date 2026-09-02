@@ -246,7 +246,7 @@ _CUE_TAG = re.compile(r"\[[^\]]{1,20}\]")
 _READABLE = re.compile(r"[0-9A-Za-zÀ-ỹ]")
 
 
-def _clean_for_tts(text: str) -> str:
+def _clean_for_tts(text: str, add_stop: bool = True) -> str:
     """Bỏ xuống dòng, ký tự lạ; giữ lại cue cảm xúc dạng [cười].
 
     Trả về chuỗi rỗng nếu chẳng còn gì đọc được. Bỏ bước này thì những cue chỉ
@@ -254,13 +254,18 @@ def _clean_for_tts(text: str) -> str:
     đo thật, "..." ra 2,16 giây, "第一集" (3 ký tự) ra 2,08 giây, có lần chạm
     đúng trần 24 giây — rồi đổ vào track, đè lên mấy câu thoại thật phía sau,
     mà vẫn bị đếm là đọc thành công.
+
+    `add_stop=False` khi text chỉ là **một mảnh giữa câu** sắp được nối với mảnh
+    khác. Đây là chỗ từng sai: mảnh nào cũng bị chấm câu trước khi nối, nên
+    "Hôm nay" + "trời đẹp." ra "Hôm nay. trời đẹp." — TTS đọc thành hai câu, tụt
+    giọng và nghỉ ngay giữa câu, đúng cái mà `speech_units` sinh ra để tránh.
     """
     text = text.replace("\n", " ").replace("♪", " ")
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     if not _READABLE.search(text):
         return ""
-    if text and text[-1] not in ".!?…,;:":
+    if add_stop and text and text[-1] not in ".!?…,;:":
         text += "."
     return text
 
@@ -464,7 +469,7 @@ def extract_references(
     return refs, failed
 
 
-def _spoken_text(cue: Cue, use_translation: bool) -> str:
+def _spoken_text(cue: Cue, use_translation: bool, add_stop: bool = True) -> str:
     """Chữ sẽ đưa vào TTS cho một cue, hoặc rỗng nếu không có gì đọc được.
 
     Cố ý KHÔNG rơi về `cue.text` khi thiếu bản dịch. Trước đây có fallback đó,
@@ -474,8 +479,8 @@ def _spoken_text(cue: Cue, use_translation: bool) -> str:
     Thà bỏ trống rồi chỉ rõ dòng nào để người dùng dịch lại.
     """
     if use_translation:
-        return _clean_for_tts(cue.text2 or "")
-    return _clean_for_tts(cue.text or "")
+        return _clean_for_tts(cue.text2 or "", add_stop=add_stop)
+    return _clean_for_tts(cue.text or "", add_stop=add_stop)
 
 
 def speech_units(cues: list[Cue], use_translation: bool = True) -> list[dict]:
@@ -504,7 +509,8 @@ def speech_units(cues: list[Cue], use_translation: bool = True) -> list[dict]:
             for part in _cap_unit(cues, same_voice):
                 parts, taken = [], []
                 for i in part:
-                    raw = _spoken_text(cues[i], use_translation)
+                    # add_stop=False: đây mới là mảnh, dấu chấm chỉ đặt sau khi nối
+                    raw = _spoken_text(cues[i], use_translation, add_stop=False)
                     if raw:
                         parts.append(raw)
                         taken.append(i)
