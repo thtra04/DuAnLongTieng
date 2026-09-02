@@ -100,12 +100,18 @@ def parse_time(text: str) -> float:
 
 
 def _wrap_cjk(text: str, max_chars: int, max_lines: int) -> str:
-    """Ngắt dòng cho chữ viết liền: cắt theo số ký tự, ưu tiên sau dấu câu."""
+    """Ngắt dòng cho chữ viết liền: cắt theo số ký tự, ưu tiên sau dấu câu.
+
+    `max_lines` cố ý KHÔNG dùng để chặn vòng lặp — cùng lý do đã ghi ở
+    `wrap_text` cho chữ Latin. Cách cũ dừng sau `max_lines - 1` nhát cắt rồi dồn
+    tất cả phần còn lại vào dòng cuối, nên `max_chars` bị vượt thẳng: 80 chữ Hán
+    với giới hạn 20 ra dòng đầu 20 chữ và dòng sau **60 chữ**. Đây là ca dùng
+    chính của tool (phim Trung), mà thanh trượt số ký tự lại thành vô nghĩa từ
+    dòng thứ hai trở đi. Vượt số dòng thì `pipeline._warn_too_many_lines` báo.
+    """
     lines: list[str] = []
     rest = text
-    while rest and len(lines) < max_lines - 1:
-        if len(rest) <= max_chars:
-            break
+    while len(rest) > max_chars:
         cut = max_chars
         # lùi lại tìm dấu câu để ngắt cho tự nhiên
         for k in range(max_chars, max(0, max_chars - 6), -1):
@@ -115,7 +121,10 @@ def _wrap_cjk(text: str, max_chars: int, max_lines: int) -> str:
         # không để dấu câu rơi xuống đầu dòng sau
         while cut < len(rest) and rest[cut] in NO_LINE_START:
             cut += 1
-        lines.append(rest[:cut].strip())
+        chunk = rest[:cut].strip()
+        if not chunk:
+            break  # không cắt thêm được -> dừng, đừng lặp vô hạn
+        lines.append(chunk)
         rest = rest[cut:].strip()
     if rest:
         lines.append(rest)
