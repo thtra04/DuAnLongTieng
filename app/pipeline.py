@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from . import align, asr, dubbing, media, subtitles, translate
+from . import align, asr, diarize, dubbing, media, subtitles, translate
 from .jobs import Job, Step
 from .subtitles import Cue
 
@@ -45,6 +45,8 @@ def analyze_steps(cfg: dict) -> list[Step]:
         if mode == "text":
             steps.append(Step("align", "Canh văn bản của bạn theo lời nói", weight=0.8))
 
+    if cfg.get("diarize"):
+        steps.append(Step("diarize", "Nhận diện người nói", weight=4.0))
     if cfg.get("translate"):
         steps.append(Step("translate", "Dịch phụ đề", weight=3.0))
     steps.append(Step("write", "Tạo file phụ đề", weight=0.3))
@@ -153,6 +155,12 @@ def run_analyze(job: Job, cfg: dict) -> None:
         raise RuntimeError("Không tạo được dòng phụ đề nào.")
     job.check_cancel()
 
+    # 3.5. Nhận diện người nói -> mỗi nhân vật một giọng lúc lồng tiếng
+    speakers: list[dict] = []
+    if cfg.get("diarize"):
+        speakers = _run_diarize(job, cfg, video_path, workdir, cues)
+    job.check_cancel()
+
     # 4. Dịch
     target = cfg.get("target_lang") or ""
     if cfg.get("translate") and target:
@@ -187,7 +195,12 @@ def run_analyze(job: Job, cfg: dict) -> None:
         "source_lang": detected_lang,
         "target_lang": target if cfg.get("translate") else "",
         "cues": [c.to_dict() for c in cues],
-        "cfg": {k: v for k, v in cfg.items() if k not in ("api_key", "script_text", "subtitle_text")},
+        "speakers": speakers,
+        # hf_token cũng là bí mật như api_key — không được ghi xuống đĩa
+        "cfg": {
+            k: v for k, v in cfg.items()
+            if k not in ("api_key", "hf_token", "script_text", "subtitle_text")
+        },
     }
     write_utf8(workdir / "state.json", json.dumps(state, ensure_ascii=False, indent=1))
     job.finish_step("write")
@@ -201,12 +214,70 @@ def run_analyze(job: Job, cfg: dict) -> None:
         "target_lang": state["target_lang"],
         "cue_count": len(cues),
         "cues": state["cues"],
+        "speakers": speakers,
         "has_libass": media.has_libass(),
         "coverage": asr_result.get("coverage", 1.0 if cues else 0.0),
         "coverage_note": coverage_note,
         "gaps": [g for g in asr_result.get("gaps", []) if g[1] - g[0] >= 15][:8],
         "asr_notes": asr_result.get("notes", []),
     }
+
+
+def _run_diarize(job: Job, cfg: dict, video_path: Path, workdir: Path, cues) -> list[dict]:
+    """Nhận diện người nói rồi gán nhãn nhân vật vào từng cue.
+
+    Hỏng thì **không làm sập job**: phụ đề vẫn xong, chỉ là phần lồng tiếng quay
+    về một giọng chung. Bắt cả job chết chỉ vì bước phụ này là vô lý — người
+    dùng đã chờ xong khâu nhận dạng lời thoại vốn tốn nhiều thời gian nhất.
+    """
+    job.start_step("diarize", "Đang nghe xem có mấy người nói…")
+    try:
+        wav = workdir / "audio.wav"
+        if not wav.exists():
+            # Chế độ "đã có .srt/.vtt" không tách âm thanh ở bước trước
+            job.log("Tách âm thanh để nhận diện người nói…")
+            wav = media.extract_audio(video_path, wav)
+
+        turns = diarize.run(
+            wav,
+            num_speakers=cfg.get("num_speakers") or None,
+            max_speakers=cfg.get("max_speakers") or None,
+            token=cfg.get("hf_token", ""),
+            on_log=job.log,
+            on_progress=lambda p: job.set_step_progress("diarize", p),
+        )
+        stats = diarize.assign(cues, turns)
+        speakers = diarize.speakers_of(cues)
+
+        job.finish_step(
+            "diarize",
+            f"{len(speakers)} nhân vật · gán {stats['labeled']}/{stats['total']} dòng",
+        )
+        job.log(
+            f"Nhận diện được {len(speakers)} nhân vật, gán nhãn cho "
+            f"{stats['labeled']}/{stats['total']} dòng phụ đề."
+        )
+        for s in speakers:
+            job.log(f"  {s['id']}: {s['lines']} dòng · {s['seconds']:.0f}s nói")
+        if stats["empty"]:
+            job.log(
+                f"  {stats['empty']} dòng không gán được nhân vật (thường là phụ đề "
+                "trên nền nhạc) — sẽ đọc bằng giọng mặc định."
+            )
+        if stats["unsure"]:
+            job.log(
+                f"  {stats['unsure']} dòng gán chưa chắc chắn — xem lại ở bước 4 "
+                "nếu thấy nhân vật bị lẫn giọng."
+            )
+        return speakers
+
+    except Exception as exc:
+        job.skip_step("diarize", str(exc)[:70])
+        job.log(f"Không nhận diện được người nói: {exc}")
+        job.log("  Phụ đề vẫn xong bình thường; phần lồng tiếng sẽ dùng một giọng chung.")
+        for cue in cues:
+            cue.speaker = ""
+        return []
 
 
 # --------------------------------------------------------------- bước xuất
@@ -220,7 +291,11 @@ def render_steps(cfg: dict) -> list[Step]:
     if out.get("soft"):
         steps.append(Step("soft", "Gắn phụ đề dạng track", weight=1.5))
     if out.get("dub"):
-        if (cfg.get("dub") or {}).get("voice") == dubbing.CLONE_VOICE:
+        dcfg = cfg.get("dub") or {}
+        wants_clone = dcfg.get("voice") == dubbing.CLONE_VOICE or any(
+            v == dubbing.CLONE_VOICE for v in (dcfg.get("voices") or {}).values()
+        )
+        if wants_clone:
             steps.append(Step("ref", "Cắt mẫu giọng gốc", weight=0.4))
         steps.append(Step("tts", "Đọc bản dịch thành tiếng", weight=12.0))
         steps.append(Step("dubmux", "Ghép tiếng vào video", weight=2.0))
@@ -384,17 +459,55 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
             )
         job.log("Không có bản dịch — sẽ đọc chính nội dung phụ đề gốc.")
 
+    # Bảng giọng theo nhân vật do bước 4 gửi lên: {"S1": "<id giọng>" | "__clone__"}
+    voice_map = {
+        str(k): str(v) for k, v in (dcfg.get("voices") or {}).items() if k and v
+    }
+    ref_map: dict[str, str] = {}
+    present = set(dubbing.speaker_ids(cues))
+    to_clone = [s for s, v in voice_map.items() if v == dubbing.CLONE_VOICE and s in present]
     if voice == dubbing.CLONE_VOICE:
+        # Giọng chung đặt là "nhân bản" -> nhân bản cho mọi nhân vật chưa chọn riêng
+        to_clone += [s for s in present if s not in voice_map]
+
+    if to_clone or voice == dubbing.CLONE_VOICE:
         clone_ok, clone_why = dubbing.clone_available()
         if not clone_ok:
             raise RuntimeError(clone_why)
         job.start_step("ref", "Đang cắt mẫu giọng…")
-        ref_audio = str(
-            dubbing.extract_reference(Path(state["video_path"]), cues, workdir / "voice_ref.wav")
-        )
-        job.finish_step("ref")
-        job.log("Đã cắt mẫu giọng gốc để nhân bản.")
+
+        if to_clone:
+            job.log(f"Cắt mẫu giọng cho {len(to_clone)} nhân vật…")
+            ref_map, failed = dubbing.extract_references(
+                Path(state["video_path"]), cues, workdir,
+                only=set(to_clone),
+                on_log=job.log,
+                on_progress=lambda p: job.set_step_progress("ref", p),
+            )
+            if failed:
+                fallback = _fallback_voice(voice)
+                for sid in failed:
+                    voice_map[sid] = fallback
+                job.log(
+                    f"⚠ {len(failed)} nhân vật ({', '.join(failed)}) không cắt được mẫu "
+                    "giọng sạch — dùng giọng dựng sẵn thay thế."
+                )
+
+        # Không có nhãn nhân vật nào (chưa bật nhận diện) -> nhân bản một giọng chung
+        if voice == dubbing.CLONE_VOICE and not present:
+            ref_audio = str(
+                dubbing.extract_reference(
+                    Path(state["video_path"]), cues, workdir / "voice_ref.wav"
+                )
+            )
+            job.log("Đã cắt mẫu giọng gốc để nhân bản.")
+
+        job.finish_step("ref", f"{len(ref_map)} mẫu" if ref_map else "1 mẫu")
         job.check_cancel()
+
+    if voice_map:
+        named = ", ".join(f"{k}→{_voice_label(v)}" for k, v in sorted(voice_map.items()))
+        job.log(f"Lồng tiếng đa nhân vật: {named}")
 
     job.start_step("tts", f"{len(cues)} dòng")
     job.log("Đang nạp model VieNeu-TTS (lần đầu có thể mất vài phút)…")
@@ -402,11 +515,13 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         cues,
         total_duration=duration,
         workdir=workdir,
-        voice="" if ref_audio else voice,
+        voice="" if ref_audio else _fallback_voice(voice),
         ref_audio=ref_audio,
         style=style,
         use_translation=has_translation,
         max_speed=float(dcfg.get("max_speed", 1.5)),
+        voice_map={k: v for k, v in voice_map.items() if v != dubbing.CLONE_VOICE},
+        ref_map=ref_map,
         on_progress=lambda p: job.set_step_progress("tts", p),
         on_log=job.log,
     )
@@ -486,6 +601,26 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
     if dcfg.get("keep_wav"):
         files.append({"name": dub_wav.name, "size": dub_wav.stat().st_size, "kind": "wav"})
     job.finish_step("dubmux")
+
+
+def _fallback_voice(voice: str) -> str:
+    """Giọng dựng sẵn dùng khi không nhân bản được.
+
+    Trả về "" nếu không lấy được danh sách giọng — lúc đó để TTS tự chọn mặc
+    định, vẫn còn hơn truyền thẳng `__clone__` vào engine (nó không hiểu giá trị
+    đó và sẽ báo lỗi cho từng câu một).
+    """
+    if voice and voice != dubbing.CLONE_VOICE:
+        return voice
+    try:
+        voices = dubbing.list_voices()
+    except Exception:
+        return ""
+    return voices[0]["id"] if voices else ""
+
+
+def _voice_label(voice_id: str) -> str:
+    return "nhân bản giọng gốc" if voice_id == dubbing.CLONE_VOICE else voice_id
 
 
 def _coverage_warning(job, result: dict, duration: float) -> str:

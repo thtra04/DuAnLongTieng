@@ -14,7 +14,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import dubbing, films, media, pipeline, projects, series, translate
+from . import diarize, dubbing, films, media, pipeline, projects, series, translate
 from .config import (
     AI_MODELS,
     ASR_MODELS,
@@ -92,8 +92,16 @@ def system_info() -> dict:
         engines.append({**e, "available": ok, "reason": why})
 
     tts_ok, tts_reason = dubbing.available()
+    dia_ok, dia_reason = diarize.available()
 
     return {
+        "diarize": {
+            "available": dia_ok,
+            "reason": dia_reason,
+            # Có token sẵn trong biến môi trường thì giao diện khỏi hỏi lại
+            "has_token": bool(diarize.hf_token()),
+            "model": diarize.MODEL_ID,
+        },
         "ffmpeg": {
             "ok": ff_ok,
             "path": ff_path,
@@ -353,6 +361,22 @@ async def analyze(payload: dict) -> dict:
         ok, why = translate.engine_available(cfg.get("engine", "google"))
         if not ok:
             raise HTTPException(400, why)
+
+    # Kiểm tra nhận diện người nói TRƯỚC khi chạy: bước này nằm sau khâu nghe
+    # lời thoại, để lỗi ở đó thì người dùng đã chờ mất cả chục phút.
+    if cfg.get("diarize"):
+        ok, why = diarize.available(cfg.get("hf_token", ""))
+        if not ok:
+            raise HTTPException(400, why)
+        for key in ("num_speakers", "max_speakers"):
+            raw = cfg.get(key)
+            if raw in (None, "", 0):
+                cfg[key] = None
+                continue
+            try:
+                cfg[key] = max(1, min(20, int(raw)))
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"Số nhân vật không hợp lệ ({key}).") from None
 
     # Đang làm cho một tập cụ thể của một bộ phim? Kiểm tra trước khi chạy, để
     # không phải nghe cả video xong mới phát hiện bộ/tập không tồn tại.
