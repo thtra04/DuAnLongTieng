@@ -115,13 +115,20 @@ def _load(token: str = "", on_log: Callable[[str], None] | None = None):
         if _pipeline is not None and _pipeline_key == key:
             return _pipeline
 
+        # Phải đặt TRƯỚC dòng import: pyannote đọc biến này lúc nạp module và
+        # mặc định gửi thời lượng audio của người dùng về otel.pyannote.ai.
+        # config.py đã đặt rồi; lặp lại ở đây để không phụ thuộc thứ tự import.
+        os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
+
         from pyannote.audio import Pipeline
 
         auth = hf_token(token) or None
         if on_log:
             on_log("Đang nạp model phân đoạn người nói (lần đầu tải ~1 GB)…")
         try:
-            pipeline = Pipeline.from_pretrained(MODEL_ID, use_auth_token=auth)
+            # pyannote 4.x đổi tên tham số: `token=`, không còn `use_auth_token=`
+            # (không có **kwargs nên truyền tên cũ là TypeError ngay).
+            pipeline = Pipeline.from_pretrained(MODEL_ID, token=auth)
         except Exception as exc:
             raise DiarizeError(_explain_load_error(exc)) from exc
         if pipeline is None:

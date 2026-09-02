@@ -375,5 +375,34 @@ Model đã tải nằm trong `data/models/` (Whisper, NLLB) và cache mặc đ�
 
 ---
 
-Chỉ xử lý video bạn có quyền sử dụng. Toàn bộ xử lý chạy trên máy bạn — video không rời khỏi máy,
-trừ phần văn bản gửi đi khi dùng engine dịch online (Google / MyMemory / Claude / OpenAI).
+## Dữ liệu nào rời khỏi máy — và khi nào
+
+Video và âm thanh của bạn **không bao giờ** rời khỏi máy. Bảng dưới liệt kê *mọi* kết nối ra ngoài
+mà tool có thể tạo, theo kết quả rà soát mã nguồn và toàn bộ 190 gói thư viện đang cài (9/2026).
+
+| Khi bạn làm gì | Cái gì được gửi | Gửi tới đâu |
+|---|---|---|
+| Dán link video | Link đó (và mã BV nếu là bilibili) | Trang video · `api.bilibili.com` để lấy tên phần |
+| Dịch bằng **Google** | Chữ phụ đề | `translate.google.com` |
+| Dịch bằng **MyMemory** | Chữ phụ đề — **qua HTTP thường, không mã hoá** | `api.mymemory.translated.net` |
+| Dịch bằng **Claude / OpenAI** | Chữ phụ đề + ô "Bối cảnh video" + bộ thuật ngữ, kèm API key | Anthropic / OpenAI, hoặc `base_url` bạn tự đặt |
+| Tải model lần đầu | Token Hugging Face (nếu có) và phiên bản Python/torch trong User-Agent | `huggingface.co` |
+| Cài ffmpeg đầy đủ | Không gì cả, chỉ tải về | `gyan.dev` / `johnvansickle.com` |
+
+Không gửi trong mọi trường hợp: tên file, nội dung video, audio, phụ đề khi dịch offline (NLLB),
+và không có thống kê sử dụng nào của riêng tool.
+
+**Telemetry của thư viện — đã tắt sẵn.** `pyannote.audio` (nhận diện người nói) mặc định gửi
+thời lượng file audio, số nhân vật và tên model về `otel.pyannote.ai` mỗi lần chạy. Tool đặt
+`PYANNOTE_METRICS_ENABLED=false` (cùng `HF_HUB_DISABLE_TELEMETRY`, `GRADIO_ANALYTICS_ENABLED`)
+ngay lúc khởi động, trước khi bất kỳ thư viện nào được nạp — xem [app/config.py](app/config.py).
+Muốn bật lại thì đặt biến môi trường trước khi chạy; tool không ghi đè lựa chọn của bạn.
+
+**Giọng lồng tiếng có dấu ẩn.** VieNeu-TTS đóng một watermark không nghe thấy (thư viện Perth)
+vào mọi đoạn tiếng nó sinh ra, để nhận diện được đó là giọng tổng hợp. Watermark này không mang
+thông tin về bạn và không gửi gì đi đâu.
+
+Server mặc định chỉ nghe ở `127.0.0.1`. Chạy `--host 0.0.0.0` thì mọi máy trong mạng LAN dùng
+được tool mà không cần mật khẩu — chỉ làm vậy trong mạng bạn tin.
+
+Chỉ xử lý video bạn có quyền sử dụng.
