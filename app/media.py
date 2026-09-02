@@ -107,8 +107,24 @@ def _exe_name(stem: str) -> str:
     return stem + (".exe" if sys.platform == "win32" else "")
 
 
+_libass: bool | None = None
+
+
 def has_libass() -> bool:
-    """ffmpeg hiện tại có filter `subtitles` (cần libass) để nung phụ đề không."""
+    """ffmpeg hiện tại có filter `subtitles` (cần libass) để nung phụ đề không.
+
+    Nhớ kết quả: mỗi lần hỏi là một lần chạy `ffmpeg -filters` (~0,3 giây), mà
+    `/api/system` hỏi ngay lúc mở trang. Bản ffmpeg không đổi giữa chừng nên
+    hỏi một lần là đủ.
+    """
+    global _libass
+    if _libass is not None:
+        return _libass
+    _libass = _probe_libass()
+    return _libass
+
+
+def _probe_libass() -> bool:
     try:
         out = subprocess.run(
             [ffmpeg_exe(), "-hide_banner", "-filters"],

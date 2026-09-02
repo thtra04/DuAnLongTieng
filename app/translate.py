@@ -138,37 +138,42 @@ class TranslateError(RuntimeError):
     pass
 
 
+# Mỗi engine cần những gói nào, và bảo người dùng cài thế nào nếu thiếu.
+_ENGINE_NEEDS: dict[str, tuple[tuple[str, ...], str]] = {
+    "google": (("deep_translator",), "Thiếu gói `deep-translator`."),
+    "mymemory": (("deep_translator",), "Thiếu gói `deep-translator`."),
+    "nllb": (("torch", "transformers"), "Chưa cài nhóm offline: uv sync --extra offline"),
+    "claude": (("anthropic",), "Chưa cài: uv sync --extra ai"),
+    "openai": (("openai",), "Chưa cài: uv sync --extra ai"),
+}
+
+
 def engine_available(engine: str) -> tuple[bool, str]:
-    if engine in ("google", "mymemory"):
-        try:
-            import deep_translator  # noqa: F401
+    """Engine dịch này dùng được chưa, kèm lý do nếu chưa.
 
-            return True, ""
-        except ImportError:
-            return False, "Thiếu gói `deep-translator`."
-    if engine == "nllb":
-        try:
-            import torch  # noqa: F401
-            import transformers  # noqa: F401
+    Dùng `find_spec` chứ KHÔNG `import` thật. `/api/system` gọi hàm này cho cả
+    5 engine mỗi lần mở trang, mà riêng nhánh `nllb` phải nạp torch và
+    transformers — đo thật: 3,5 giây cho một lần mở trang, mỗi lần. `find_spec`
+    chỉ tra xem gói có tồn tại hay không nên gần như tức thì.
 
-            return True, ""
-        except ImportError:
-            return False, "Chưa cài nhóm offline: uv sync --extra offline"
-    if engine == "claude":
-        try:
-            import anthropic  # noqa: F401
+    Đánh đổi: gói có mặt nhưng hỏng (thiếu DLL, sai phiên bản) vẫn bị báo là
+    dùng được. Lỗi đó sẽ bung ra lúc dịch thật, kèm thông báo cụ thể hơn nhiều
+    so với một dòng "chưa cài" chung chung ở đây.
+    """
+    import importlib.util
 
-            return True, ""
-        except ImportError:
-            return False, "Chưa cài: uv sync --extra ai"
-    if engine == "openai":
-        try:
-            import openai  # noqa: F401
+    need = _ENGINE_NEEDS.get(engine)
+    if need is None:
+        return False, f"Engine không hợp lệ: {engine}"
 
-            return True, ""
-        except ImportError:
-            return False, "Chưa cài: uv sync --extra ai"
-    return False, f"Engine không hợp lệ: {engine}"
+    modules, how_to_fix = need
+    try:
+        for name in modules:
+            if importlib.util.find_spec(name) is None:
+                return False, how_to_fix
+    except (ImportError, ValueError):
+        return False, how_to_fix
+    return True, ""
 
 
 # ------------------------------------------------------- gom cue thành câu

@@ -98,3 +98,38 @@ def test_khong_lay_duoc_file_ngoai_thu_muc_job(client):
 
 def test_du_an_khong_ton_tai_tra_404(client):
     assert client.get("/api/projects/khongcothat").status_code == 404
+
+
+# ------------------------------------------------- /api/system phải nhẹ
+
+
+def test_system_khong_nap_thu_vien_nang():
+    """Mở trang không được kéo torch/transformers vào.
+
+    `/api/system` hỏi cả 5 engine dịch xem dùng được chưa. Nếu hỏi bằng `import`
+    thật thì riêng nhánh NLLB nạp torch + transformers, tốn 3,5 giây MỖI LẦN mở
+    trang. Test này khoá lại cách kiểm nhẹ.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from app import translate, diarize;"
+        "[translate.engine_available(e) for e in "
+        "('google','mymemory','nllb','claude','openai')];"
+        "diarize.available();"
+        "heavy=[m for m in ('torch','transformers','pyannote.audio') if m in sys.modules];"
+        "print(','.join(heavy))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=180
+    )
+    assert out.returncode == 0, out.stderr[-500:]
+    assert out.stdout.strip() == "", f"kiểm tra engine đã nạp: {out.stdout.strip()}"
+
+
+def test_engine_khong_hop_le_bao_ro(client):
+    from app import translate
+
+    ok, why = translate.engine_available("khong-ton-tai")
+    assert not ok and "không hợp lệ" in why
