@@ -1,0 +1,47 @@
+[project]
+name = "vsub-studio"
+version = "0.1.0"
+description = "VSub Studio - Tao phu de & dich video (Whisper + Google/NLLB/AI), san sang long tieng VieNeu-TTS"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "faster-whisper>=1.0.3",
+    "deep-translator>=1.11.4",
+    "yt-dlp>=2024.8.6",
+    "imageio-ffmpeg>=0.5.1",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Tang toc GPU cho faster-whisper tren Windows (CUDA 12 + cuDNN 9)
+cuda = [
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12>=9,<10",
+]
+# Dich offline bang NLLB-200 (can torch, model ~2.5GB)
+offline = [
+    "torch",
+    "transformers>=4.44",
+    "sentencepiece",
+]
+# Dich bang AI API (Claude / OpenAI)
+ai = [
+    "anthropic>=0.40",
+    "openai>=1.40",
+]
+# Long tieng Viet bang VieNeu-TTS (https://github.com/pnnbao97/VieNeu-TTS)
+# v3 Turbo doc bang onnxruntime nen KHONG can torch -> nhom nay nhe.
+tts = [
+    "vieneu",
+]
+# Nhan ban giong noi trong video: vieneu goi prepare_reference() -> can torch.
+# Tach rieng vi torch nang ~2.5GB, khong nen bat buoc chi de long tieng.
+clone = [
+    "torch",
+    "torchaudio",
+]
+
+[tool.uv]
+package = false
