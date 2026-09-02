@@ -5,6 +5,35 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# ----------------------------------------------------------- riêng tư
+#
+# Tắt mọi kênh "gọi về nhà" của thư viện bên thứ ba TRƯỚC khi chúng được nạp —
+# module này được import đầu tiên ở khắp nơi nên đặt ở đây là chắc ăn nhất.
+# Dùng setdefault: ai cố ý muốn bật thì đặt biến môi trường trước khi chạy.
+#
+# Rà soát thực tế trên các gói đang cài (9/2026):
+#
+# * pyannote.audio 4.x có module telemetry riêng, MẶC ĐỊNH BẬT, gửi qua
+#   OpenTelemetry tới https://otel.pyannote.ai/v1/traces mỗi lần nạp pipeline
+#   và mỗi lần chạy: tên model, phiên bản, một UUID phiên, THỜI LƯỢNG FILE
+#   AUDIO của người dùng và số nhân vật yêu cầu. Nó đọc biến này lúc import,
+#   nên phải đặt trước.
+# * huggingface_hub có send_telemetry (không thấy chỗ nào trong đường chạy
+#   của ta gọi tới, nhưng tắt sẵn cho chắc).
+# * gradio (kéo theo từ vieneu, ta không import) gửi thống kê tới
+#   api.gradio.app lúc launch() — tắt phòng khi có thư viện nào gọi tới.
+#
+# Những gì VẪN rời khỏi máy khi người dùng chủ động dùng: link video (yt-dlp),
+# chữ phụ đề khi chọn engine dịch online, token HF khi tải model — xem README.
+for _name, _value in (
+    ("PYANNOTE_METRICS_ENABLED", "false"),
+    ("HF_HUB_DISABLE_TELEMETRY", "1"),
+    ("GRADIO_ANALYTICS_ENABLED", "False"),
+    ("DISABLE_TELEMETRY", "1"),
+    ("DO_NOT_TRACK", "1"),
+):
+    os.environ.setdefault(_name, _value)
+
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
 DATA_DIR = Path(os.environ.get("VSUB_DATA_DIR", ROOT / "data"))
