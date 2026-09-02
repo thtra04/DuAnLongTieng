@@ -31,6 +31,20 @@ from .jobs import create_job, get_job, run_in_thread
 from .languages import LANGUAGES
 from .subtitles import DEFAULT_STYLE
 
+def safe_id(value: str | None) -> str:
+    """Chỉ lấy phần tên cuối của một id, bỏ mọi thành phần đường dẫn.
+
+    `media_id` và `job_id` được ghép thẳng vào đường dẫn thư mục. Không lọc thì
+    `"../../.."` trỏ ra ngoài `data/`, và `/api/analyze` sẽ nhận file đầu tiên
+    tìm được ở đó rồi đem đi nhận dạng — đọc trộm file bất kỳ trên máy chủ. Ca
+    này có thật, đã dựng lại được bằng test.
+
+    Trả về "" cho id rỗng hoặc chỉ gồm dấu chấm, để bên gọi báo lỗi bình thường.
+    """
+    name = Path(str(value or "")).name.strip()
+    return "" if name in ("", ".", "..") else name
+
+
 VIDEO_EXT = {
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".m4v", ".ts", ".wmv",
     ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg",
@@ -275,6 +289,16 @@ async def upload(file: UploadFile = File(...)) -> dict:
         shutil.rmtree(target_dir, ignore_errors=True)
         raise HTTPException(400, f"Không đọc được video: {exc}") from exc
 
+    # `probe` trả về số 0 chứ không ném lỗi khi file không phải media, nên một
+    # file rác vẫn qua được tới tận bước nghe rồi mới hỏng. Chặn ngay ở đây.
+    if not info.get("duration") and not info.get("width") and not info.get("has_audio"):
+        shutil.rmtree(target_dir, ignore_errors=True)
+        raise HTTPException(
+            400,
+            "File này không phải video hay âm thanh đọc được. "
+            "Kiểm tra lại file, hoặc thử đổi sang .mp4 rồi tải lên lại.",
+        )
+
     return {
         "media_id": media_id,
         "name": dest.name,
@@ -286,6 +310,9 @@ async def upload(file: UploadFile = File(...)) -> dict:
 
 @app.get("/api/media/{media_id}/stream")
 def stream_media(media_id: str, request: Request):
+    media_id = safe_id(media_id)
+    if not media_id:
+        raise HTTPException(404, "Không tìm thấy media.")
     folder = UPLOAD_DIR / media_id
     if not folder.is_dir():
         # cũng cho phép xem video đã tải từ URL trong job
@@ -351,9 +378,10 @@ async def analyze(payload: dict) -> dict:
     source_type = cfg.get("source_type", "file")
 
     if source_type == "file":
-        media_id = cfg.get("media_id")
-        folder = UPLOAD_DIR / (media_id or "")
-        files = [p for p in folder.glob("*") if p.is_file()] if folder.is_dir() else []
+        media_id = safe_id(cfg.get("media_id"))
+        cfg["media_id"] = media_id
+        folder = UPLOAD_DIR / media_id if media_id else None
+        files = [p for p in folder.glob("*") if p.is_file()] if folder and folder.is_dir() else []
         if not files:
             raise HTTPException(400, "Chưa chọn video (media_id không hợp lệ).")
         cfg["video_path"] = str(files[0])
@@ -442,6 +470,10 @@ async def analyze(payload: dict) -> dict:
 
 def _find_source_video(job_id: str, media_id: str | None) -> Path | None:
     """Tìm lại file video gốc: thư mục job trước, rồi tới thư mục upload."""
+    job_id = safe_id(job_id)
+    media_id = safe_id(media_id)
+    if not job_id:
+        return None
     for folder in (JOB_DIR / job_id / "source", JOB_DIR / job_id):
         if folder.is_dir():
             for p in sorted(folder.glob("*")):

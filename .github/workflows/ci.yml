@@ -1,0 +1,38 @@
+name: Kiểm thử
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Người dùng chạy trên Windows, CI chạy Linux cho nhanh — giữ cả hai để
+        # bắt sớm mấy chỗ khác nhau về đường dẫn và xuống dòng.
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cài uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Cài dependencies
+        # Cố ý KHÔNG cài các nhóm tuỳ chọn: torch nặng ~2,5 GB và pyannote cần
+        # token Hugging Face. Bộ test được viết để chạy đủ mà không cần chúng —
+        # đó cũng là một điều kiện cần kiểm, vì người dùng có thể chưa cài.
+        run: uv sync --group dev
+
+      - name: Chạy test
+        run: uv run python -m pytest tests/ --cov=app --cov-report=term --cov-fail-under=50
+
+      - name: Kiểm tra cú pháp JavaScript
+        run: node --check web/app.js

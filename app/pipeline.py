@@ -14,7 +14,15 @@ SAFE_NAME = re.compile(r"[^\w\-. ]+", re.UNICODE)
 
 
 def safe_stem(name: str, fallback: str = "video") -> str:
+    """Tên file an toàn lấy từ tên video, để đặt cho các file xuất ra.
+
+    Đòi hỏi còn ít nhất một chữ hoặc số: dấu chấm và khoảng trắng lọt qua bộ lọc
+    ký tự, nên tên kiểu "..." hay "  ." sẽ sinh ra file "....vi.srt" — tên hợp lệ
+    về mặt kỹ thuật nhưng chẳng ai đọc ra là file gì.
+    """
     stem = SAFE_NAME.sub("", Path(name).stem).strip()
+    if not re.search(r"\w", stem):
+        stem = ""
     return (stem or fallback)[:60]
 
 
