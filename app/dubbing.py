@@ -41,7 +41,25 @@ class DubError(RuntimeError):
 # --------------------------------------------------------------- engine
 
 
-def available() -> tuple[bool, str]:
+def available(deep: bool = False) -> tuple[bool, str]:
+    """VieNeu-TTS dùng được chưa.
+
+    `deep=False` (mặc định) chỉ tra xem gói có tồn tại không — `/api/system` gọi
+    hàm này mỗi lần mở trang, mà `import vieneu` kéo theo onnxruntime mất mấy
+    giây. `deep=True` nạp thật, dùng ở `/api/tts/voices` — chỗ đó vốn đã phải
+    chờ nạp model nên thêm vài giây không ai để ý, và đổi lại thì lỗi kiểu
+    "thiếu DLL onnxruntime" được báo đúng tên thay vì im lặng.
+    """
+    if not deep:
+        import importlib.util
+
+        try:
+            if importlib.util.find_spec("vieneu") is None:
+                return False, "Chưa cài VieNeu-TTS: uv sync --extra tts"
+        except (ImportError, ValueError):
+            return False, "Chưa cài VieNeu-TTS: uv sync --extra tts"
+        return True, ""
+
     try:
         import vieneu  # noqa: F401
 

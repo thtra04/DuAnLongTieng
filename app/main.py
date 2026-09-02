@@ -7,7 +7,9 @@ import mimetypes
 import os
 import re
 import shutil
+import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -34,7 +36,32 @@ VIDEO_EXT = {
     ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg",
 }
 
-app = FastAPI(title="VSub Studio", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Nạp trước những thứ nặng mà `/api/system` cần, ngay khi server chạy.
+
+    `asr.gpu_available()` phải `import ctranslate2` thật mới hỏi được số GPU —
+    mất ~3,4 giây. Không nạp trước thì cái giá đó rơi đúng vào lần mở trang đầu
+    tiên của người dùng. Hâm nóng ở đây thì lúc trình duyệt tải xong HTML/CSS/JS
+    rồi mới gọi `/api/system`, thư viện đã nằm sẵn trong bộ nhớ.
+
+    Chạy trong thread nền và nuốt mọi lỗi: đây chỉ là hâm nóng, hỏng thì
+    `/api/system` tự nạp lại như cũ — không được phép làm server không lên.
+    """
+    def warm() -> None:
+        try:
+            from . import asr
+
+            asr.gpu_available()
+            media.has_libass()
+        except Exception:
+            pass
+
+    threading.Thread(target=warm, daemon=True, name="warmup").start()
+    yield
+
+
+app = FastAPI(title="VSub Studio", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 if (WEB_DIR / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=WEB_DIR / "assets"), name="assets")
@@ -150,7 +177,9 @@ def tts_voices() -> dict:
     Chỗ này mới kiểm tra torch, không kiểm ở `/api/system`, vì `import torch`
     mất vài giây và sẽ làm chậm lúc mở trang.
     """
-    ok, reason = dubbing.available()
+    # deep=True: chỗ này vốn đã phải chờ nạp model nên kiểm kỹ được, và lỗi kiểu
+    # thiếu DLL onnxruntime sẽ hiện đúng tên thay vì báo chung chung "chưa cài".
+    ok, reason = dubbing.available(deep=True)
     if not ok:
         return {"available": False, "reason": reason, "voices": [], "styles": dubbing.STYLES}
     try:
