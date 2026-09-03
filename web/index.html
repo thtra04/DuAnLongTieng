@@ -216,6 +216,13 @@
           </select>
           <small class="muted">AI giữ đúng số dòng và ưu tiên độ dài vừa khung.</small>
         </label>
+        <label class="switch" style="margin:4px 0 14px">
+          <input type="checkbox" id="budgetLoop">
+          <span class="track"></span>
+          <span class="txt"><b>Rút gọn câu vượt khung thời gian</b>
+            <small>Dự đoán trước câu nào đọc không kịp, nhắc AI viết lại ngắn hơn (tối đa 2 lượt)
+              rồi mới lồng tiếng — thay vì nén âm thanh cho gấp gáp. Chỉ có tác dụng khi bật dịch.</small></span>
+        </label>
         <label class="field">
           <span>Bộ thuật ngữ <span class="muted">(tuỳ chọn — mỗi dòng một quy tắc)</span></span>
           <textarea id="glossary" rows="3" placeholder="John = anh John&#10;The Guild = Hội Đồng&#10;bro = ông bạn"></textarea>

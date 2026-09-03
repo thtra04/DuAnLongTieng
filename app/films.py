@@ -69,10 +69,17 @@ def _clean_name(name: str) -> str:
 
 
 def all_films() -> list[dict]:
-    """Mọi bộ, mới tạo trước."""
+    """Mọi bộ, mới tạo trước.
+
+    Hai bộ tạo trong cùng một nhịp đồng hồ (Windows: ~15 ms) có `created` bằng
+    nhau; chỉ sắp theo `created` thì sort ổn định giữ nguyên thứ tự chèn, tức
+    bộ CŨ đứng trước. Lấy vị trí trong kho làm khoá phụ: chèn sau = mới hơn.
+    """
     films = [f for f in _load()["films"] if isinstance(f, dict)]
-    films.sort(key=lambda f: f.get("created") or 0, reverse=True)
-    return films
+    indexed = sorted(
+        enumerate(films), key=lambda t: (t[1].get("created") or 0, t[0]), reverse=True
+    )
+    return [f for _, f in indexed]
 
 
 def create(name: str, url: str = "", parts: list[dict] | None = None) -> dict:

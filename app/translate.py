@@ -508,6 +508,89 @@ def _translate_nllb(texts, source, target, on_progress=None, on_log=None) -> lis
     return [r.strip() for r in results]
 
 
+# ----------------------------------------------- rút gọn có kiểm soát (HP-5)
+
+_TIGHTEN_PROMPT = """Bạn là biên tập viên lồng tiếng {tgt}. Mỗi dòng dưới đây là một câu thoại
+ĐANG DÀI HƠN khung thời gian được phép đọc. Hãy viết lại từng câu NGẮN HƠN để đọc kịp.
+
+Định dạng đầu vào: `<số dòng>|<số âm tiết tối đa>|<câu>`.
+Quy tắc bắt buộc:
+- Câu viết lại KHÔNG được quá số âm tiết tối đa đã cho ở dòng đó.
+- Giữ nguyên ý chính, sắc thái, tên riêng và số liệu; bỏ từ đệm, rút gọn cách diễn đạt.
+- Không thêm ý mới, không chú thích, không xuống dòng bên trong một câu.
+- Trả về ĐÚNG số dòng, mỗi dòng dạng `<số dòng>|<câu đã rút gọn>`, không thêm lời dẫn."""
+
+
+def _chat(engine: str, system: str, user: str, api_key: str, model: str, base_url: str) -> str:
+    """Một lượt hỏi–đáp với Claude hoặc OpenAI, thử lại 3 lần. Trả về text thô."""
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            if engine == "claude":
+                import anthropic
+
+                key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+                client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
+                resp = client.messages.create(
+                    model=model or "claude-opus-5",
+                    max_tokens=4000,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                )
+                if resp.stop_reason == "refusal":
+                    raise TranslateError("Claude từ chối xử lý nội dung này.")
+                return "".join(b.text for b in resp.content if b.type == "text")
+            from openai import OpenAI
+
+            key = api_key or os.environ.get("OPENAI_API_KEY", "")
+            args = {"api_key": key} if key else {}
+            if base_url.strip():
+                args["base_url"] = base_url.strip().rstrip("/")
+            resp = OpenAI(**args).chat.completions.create(
+                model=model or "gpt-4o-mini",
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            )
+            return resp.choices[0].message.content or ""
+        except TranslateError:
+            raise
+        except Exception as exc:
+            last = exc
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+    raise TranslateError(f"Lỗi gọi {engine}: {last}")
+
+
+def make_tightener(
+    engine: str,
+    api_key: str = "",
+    model: str = "",
+    base_url: str = "",
+    target: str = "vi",
+):
+    """Hàm rút gọn có kiểm soát cho `budget.run_loop`, hoặc None nếu engine không hỗ trợ.
+
+    Google/MyMemory không điều khiển được độ dài; NLLB thường cũng không — đó là
+    việc của mô hình đẳng thời (HP-4) với token ngân sách. Với Claude/OpenAI thì
+    nhắc lại kèm giới hạn âm tiết cho từng câu là cách siết có kiểm soát.
+
+    Câu nào model bỏ sót thì giữ nguyên văn cũ — vòng lặp sẽ thấy nó vẫn vượt và
+    tự quyết định thử lượt nữa hay để atempo lo.
+    """
+    if engine not in ("claude", "openai"):
+        return None
+    system = _TIGHTEN_PROMPT.format(tgt=name_en(target))
+
+    def tighten(requests: list[dict]) -> list[str]:
+        payload = "\n".join(
+            f"{i + 1}|{int(r.get('target_syllables') or 1)}|{r['text']}" for i, r in enumerate(requests)
+        )
+        raw = _chat(engine, system, payload, api_key, model, base_url)
+        parsed = _parse_numbered(raw, 0, len(requests))
+        return [p if p else r["text"] for p, r in zip(parsed, requests)]
+
+    return tighten
+
+
 # ------------------------------------------------------------------ Claude
 
 _SYS_PROMPT = """Bạn là chuyên gia dịch phụ đề phim/video.

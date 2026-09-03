@@ -255,6 +255,39 @@ khoản: mở trang model, bấm đồng ý, tạo token ở mục *Access Token
 uv sync --extra diarize
 ```
 
+### ⏱ Vừa khung thời gian: dự đoán trước, rút gọn trước, nén sau cùng
+
+Bản dịch tiếng Việt thường dài hơn lời gốc. Cách cũ: dịch xong, lúc lồng tiếng câu nào dài
+quá khung thì **nén âm thanh** (`atempo`) — giọng gấp và máy móc. Đo thật trên một clip 392 s:
+48/69 câu phải nén, nén tối đa 1,48×.
+
+Cách mới, bật bằng tuỳ chọn **Rút gọn câu vượt khung thời gian** ở bước 2 (`budget_loop`):
+
+```
+dịch  →  dự đoán số giây TTS sẽ đọc (mô hình HP-3)  →  so với khung thoại
+      →  câu nào vượt: nhắc AI viết lại ngắn hơn, kèm giới hạn âm tiết (tối đa 2 lượt)
+      →  vẫn vượt thì mới để atempo lo, và log chỉ rõ dòng nào
+```
+
+Chỉ engine Claude / OpenAI rút gọn có kiểm soát được; Google / MyMemory thì vòng lặp chỉ đo và báo.
+
+| Việc | Lệnh |
+|---|---|
+| Sinh dữ liệu thời lượng đọc bằng VieNeu-TTS (tự động, không gán nhãn tay) | `uv run python scripts/gen_duration_data.py --input scripts/seed_vi.txt` |
+| Huấn luyện mô hình dự đoán thời lượng | `uv run python scripts/train_duration.py` |
+
+Mô hình lưu ở `data/models/duration_vi.json`; chưa có thì tool dùng ước lượng thô ~4,3 âm tiết/giây.
+Với `scripts/seed_vi.txt` (90 câu) chỉ là chạy thử đường ống — dữ liệu thật cần vài chục nghìn câu
+từ corpus phụ đề, mất khoảng một giây mỗi câu trên CPU.
+
+**Khung đo tự động.** Mỗi lần lồng tiếng, tool ghi `data/jobs/<id>/eval.json`: tỉ lệ câu phải nén,
+hệ số nén lớn nhất, tổng thời gian tràn, hệ số thời gian thực, kèm nhãn cấu hình C0…C4 (xem
+`app/metrics.py`). Gom và in bảng so sánh:
+
+```bash
+uv run python scripts/eval_report.py
+```
+
 **Đọc theo câu trọn, không đọc từng dòng phụ đề.** Đây là chỗ quyết định chất lượng.
 
 Phụ đề bị cắt theo **giới hạn ký tự**, không theo ngữ pháp — Whisper tiếng Trung gần như không
