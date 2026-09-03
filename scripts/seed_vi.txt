@@ -1,0 +1,88 @@
+# Câu tiếng Việt mồi để chạy thử gen_duration_data.py — đủ dải độ dài 1–25 âm tiết,
+# đủ loại dấu câu, có số và tên riêng. Dữ liệu thật phải lấy từ corpus phụ đề.
+Dạ.
+Không.
+Cứu tôi!
+Anh đi đâu đấy?
+Tôi không biết.
+Trẫm đã quyết rồi.
+Thần tuân chỉ.
+Hôm nay trời đẹp quá.
+Chúng ta đi thôi.
+Ngươi dám!
+Cẩn thận phía sau!
+Xin lỗi, tôi đến muộn.
+Đừng lo, mọi chuyện sẽ ổn.
+Anh có nhớ em không?
+Chuyện này không thể để lộ ra ngoài.
+Ta chưa từng thấy ai kiên cường như ngươi.
+Ngày mai lúc tám giờ chúng ta gặp nhau ở cổng thành.
+Nếu người đó biết được, mọi kế hoạch sẽ đổ bể hết.
+Hoàng thượng đã ban chiếu, không ai được phép cãi lệnh.
+Ba năm trước, cha tôi rời khỏi làng và không bao giờ quay lại.
+Cô ấy nói rằng sẽ chờ tôi ở nhà ga cho đến khi chuyến tàu cuối cùng đi qua.
+Tôi đã tìm anh suốt mười năm, và bây giờ anh đứng đây mà không nhận ra tôi.
+Nghe này, chuyện xảy ra hôm qua không phải lỗi của cậu, đừng tự trách mình nữa.
+Vào lúc nửa đêm, tiếng gõ cửa vang lên ba lần, rồi im bặt như chưa từng có gì.
+Ta muốn biết kẻ nào đã dám đưa tin này cho quân địch, và hắn phải trả giá thế nào.
+Anh Minh, chị Lan và bé Na sẽ về quê vào thứ bảy tuần sau.
+Số điện thoại của tôi là không chín không, một hai ba, bốn năm sáu bảy.
+Năm 2024, công ty đạt doanh thu hơn 120 tỷ đồng.
+Bạn có thể nhắc lại câu hỏi được không?
+Chúng tôi xin chân thành cảm ơn quý vị đã theo dõi.
+Ơ, sao lại thế này?
+Hả? Anh nói gì cơ?
+Được rồi, được rồi, tôi hiểu rồi.
+Thôi đi, đừng có mà giả vờ.
+Mẹ ơi, con đói.
+Con yêu mẹ nhiều lắm.
+Chào buổi sáng, hôm nay bạn thế nào?
+Cảm ơn bạn rất nhiều vì đã giúp đỡ tôi trong lúc khó khăn này.
+Bản tin thời sự tối nay xin được bắt đầu.
+Theo dự báo, ngày mai khu vực Nam Bộ có mưa rào và dông rải rác.
+Thị trường chứng khoán phiên sáng nay tăng nhẹ với thanh khoản thấp.
+Cuộc họp dự kiến kéo dài khoảng hai tiếng rưỡi.
+Hắn ta cười khẩy, quay lưng bước đi không thèm ngoảnh lại.
+Nàng nhìn theo bóng chàng khuất dần sau rặng tre đầu làng.
+Gió thổi qua cánh đồng lúa chín, mang theo mùi rơm rạ nồng nàn của buổi chiều tà.
+Đêm ấy, cả kinh thành không ai ngủ được vì tiếng trống trận vang dội từ phía bắc.
+Sư phụ từng dạy rằng kẻ mạnh không phải là kẻ thắng, mà là kẻ biết dừng đúng lúc.
+Chuyện gì vậy?
+Nhanh lên!
+Đợi đã!
+Không được!
+Lại đây.
+Im lặng.
+Đi ngay!
+Cái gì cơ?
+Tôi xin thề, tôi chưa bao giờ nói dối anh dù chỉ một lần.
+Nếu hôm nay không đi, ngày mai chúng ta sẽ hối hận.
+Anh ấy là bác sĩ ở bệnh viện Chợ Rẫy, làm việc ở đó đã hơn hai mươi năm.
+Cửa hàng mở cửa từ bảy giờ sáng đến chín giờ tối, kể cả chủ nhật.
+Giá vé là một trăm năm mươi nghìn đồng một người, trẻ em dưới sáu tuổi miễn phí.
+Chương trình học kỳ này gồm sáu môn bắt buộc và hai môn tự chọn.
+Mật khẩu của bạn phải có ít nhất tám ký tự, gồm chữ hoa, chữ thường và số.
+Hệ thống sẽ tự động khởi động lại sau khi cập nhật hoàn tất.
+Xin quý khách vui lòng giữ máy, cuộc gọi của quý khách sẽ được kết nối trong giây lát.
+Ta là Hoàng đế của Đại Hán, kẻ nào dám vô lễ trước mặt ta?
+Tướng quân, quân địch đã vượt sông, xin ngài định đoạt.
+Nương nương, hoàng thượng đang trên đường tới đây.
+Bẩm đại nhân, người này khai rằng hắn chỉ là kẻ qua đường.
+Hoàng thượng vạn tuế, vạn tuế, vạn vạn tuế!
+Người này võ công cao cường, chúng ta không phải đối thủ.
+Tiểu thư, phu nhân cho gọi người về ngay.
+Ngươi có biết ngươi đang nói chuyện với ai không?
+Chuyện đó để sau, bây giờ quan trọng nhất là cứu người đã.
+Không sao đâu, có tôi ở đây rồi.
+Anh hứa với em, anh sẽ quay về.
+Đừng khóc nữa, mọi chuyện rồi sẽ qua.
+Em nhớ anh.
+Anh cũng vậy.
+Tạm biệt.
+Hẹn gặp lại.
+Chúc ngủ ngon.
+Chào mừng bạn đến với chương trình.
+Kết quả cuối cùng sẽ được công bố vào tuần tới.
+Máy bay sẽ hạ cánh xuống sân bay Tân Sơn Nhất sau mười lăm phút nữa.
+Điều quan trọng nhất là bạn phải tin vào chính mình, ngay cả khi không ai tin bạn cả.
+Trong suốt ba tháng qua, đội ngũ của chúng tôi đã làm việc không ngừng nghỉ để hoàn thành dự án này đúng thời hạn.

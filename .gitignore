@@ -8,3 +8,5 @@ __pycache__/
 # Kết quả thực nghiệm (nặng, sinh lại được)
 eval_out/
 runs/
+.coverage
+htmlcov/

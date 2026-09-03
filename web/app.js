@@ -1091,6 +1091,8 @@ async function startAnalyze() {
     diarize: $('#diarizeOn').checked,
     num_speakers: +$('#numSpeakers').value || null,
     hf_token: $('#hfToken').value.trim(),
+    // HP-5: chỉ có nghĩa với engine AI — máy chủ tự bỏ qua với Google/MyMemory
+    budget_loop: !!($('#budgetLoop') && $('#budgetLoop').checked),
   };
   savePrefs();
 

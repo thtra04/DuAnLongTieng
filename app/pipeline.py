@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
-from . import align, asr, diarize, dubbing, media, subtitles, translate
+from . import align, asr, budget, diarize, dubbing, media, metrics, subtitles, translate
 from .jobs import Job, Step
 from .subtitles import Cue
 
@@ -57,6 +58,8 @@ def analyze_steps(cfg: dict) -> list[Step]:
         steps.append(Step("diarize", "Nhận diện người nói", weight=4.0))
     if cfg.get("translate"):
         steps.append(Step("translate", "Dịch phụ đề", weight=3.0))
+        if cfg.get("budget_loop"):
+            steps.append(Step("budget", "Rút gọn câu vượt khung thời gian", weight=1.5))
     steps.append(Step("write", "Tạo file phụ đề", weight=0.3))
     return steps
 
@@ -190,6 +193,31 @@ def run_analyze(job: Job, cfg: dict) -> None:
         job.finish_step("translate")
         job.log("Dịch xong.")
 
+    # 4.5. Vòng lặp ngân sách thời gian (HP-5): câu nào dự đoán đọc không kịp
+    # khung thì dịch lại ngắn hơn TRƯỚC, thay vì để atempo nén âm thanh SAU.
+    budget_stats: dict = {}
+    if cfg.get("translate") and target and cfg.get("budget_loop"):
+        job.start_step("budget")
+        tightener = translate.make_tightener(
+            cfg.get("engine", "google"),
+            api_key=cfg.get("api_key", ""),
+            model=cfg.get("ai_model", ""),
+            base_url=cfg.get("ai_base_url", ""),
+            target=target,
+        )
+        budget_stats = budget.run_loop(cues, tightener, on_log=job.log)
+        job.finish_step(
+            "budget",
+            f"còn {budget_stats['over_after']}/{budget_stats['groups']} câu vượt "
+            f"(trước: {budget_stats['over_before']})",
+        )
+        for item in budget_stats.get("unresolved", [])[:5]:
+            job.log(
+                f"   dòng {item['lines']}: dự đoán {item['predicted_s']:.1f}s trong khung "
+                f"{item['budget_s']:.1f}s — rút gọn tay ở bước 4 hoặc để tăng tốc."
+            )
+        job.check_cancel()
+
     # Nới cue hiện quá nhanh so với tốc độ đọc (áp dụng cả khi không dịch)
     align.retime_translation(cues)
     job.check_cancel()
@@ -204,6 +232,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
         "target_lang": target if cfg.get("translate") else "",
         "cues": [c.to_dict() for c in cues],
         "speakers": speakers,
+        "budget": budget_stats,
         # hf_token cũng là bí mật như api_key — không được ghi xuống đĩa
         "cfg": {
             k: v for k, v in cfg.items()
@@ -609,6 +638,31 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
     if dcfg.get("keep_wav"):
         files.append({"name": dub_wav.name, "size": dub_wav.stat().st_size, "kind": "wav"})
     job.finish_step("dubmux")
+
+    # Khung đo tự động (đề cương, mục 5.2): thống kê đẳng thời trước giờ chỉ
+    # nằm trong log, không gom lại được. Ghi thành bản ghi máy đọc được, để
+    # bảng so sánh C0…C4 trong báo cáo sinh ra từ dữ liệu thật.
+    try:
+        clean = {k: v for k, v in stats.items() if k != "worst"}
+        job.result["dub_stats"] = clean
+        record = metrics.build_record(
+            job_id=job.id,
+            cfg={**(state.get("cfg") or {}), **cfg, "engine": (state.get("cfg") or {}).get("engine", "")},
+            dub_stats=stats,
+            duration_s=duration,
+            elapsed_s=time.time() - job.created,
+            extra={"speakers": len(dubbing.speaker_ids(cues)), "voices": len(
+                {v for v in (dcfg.get("voices") or {}).values() if v}
+            )},
+        )
+        metrics.write_record(workdir / "eval.json", record)
+        job.log(
+            f"Đo đẳng thời: {record['compress_count']}/{record['units']} câu phải nén "
+            f"({record['compress_ratio'] * 100:.1f}%), nén tối đa {record['max_factor']:.2f}×, "
+            f"tràn {record['overflow_s']:.1f}s — cấu hình {record['config']}."
+        )
+    except Exception as exc:  # đo đạc không được phép làm hỏng bản xuất
+        job.log(f"Không ghi được bản ghi đo đạc: {exc}")
 
 
 def _fallback_voice(voice: str) -> str:

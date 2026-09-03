@@ -50,6 +50,12 @@ diarize = [
     "torchaudio",
 ]
 
+# Khung do tu dong (de cuong, muc 5.2): BLEU bang sacreBLEU. COMET nang (torch +
+# model ~2 GB) nen de nguoi dung tu cai khi can: uv pip install unbabel-comet
+eval = [
+    "sacrebleu>=2.4",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8",
