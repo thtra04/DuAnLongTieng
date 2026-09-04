@@ -6,7 +6,7 @@ hai phim khác nhau bị nhập làm một, hoặc các tập cùng phim nằm r
 
 from __future__ import annotations
 
-from app.series import STANDALONE, key_for
+from backend.store.series import STANDALONE, key_for
 
 
 # ------------------------------------------------------------ bilibili

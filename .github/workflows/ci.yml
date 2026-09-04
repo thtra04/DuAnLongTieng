@@ -32,7 +32,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Chạy test
-        run: uv run python -m pytest tests/ --cov=app --cov-report=term --cov-fail-under=50
+        run: uv run python -m pytest tests/ --cov=backend --cov-report=term --cov-fail-under=50
 
       - name: Kiểm tra cú pháp JavaScript
-        run: node --check web/app.js
+        run: for f in frontend/js/*.js frontend/config.js; do node --check "$f" || exit 1; done

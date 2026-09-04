@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from app import budget
-from app.budget import assess, over_budget, run_loop, target_syllables, window_seconds
-from app.duration import DurationModel
-from app.subtitles import Cue
+from backend.core import budget
+from backend.core.budget import assess, over_budget, run_loop, target_syllables, window_seconds
+from backend.core.duration import DurationModel
+from backend.core.subtitles import Cue
 
 
 def c(start, end, text, text2):
@@ -21,7 +21,7 @@ class MoHinhGia(DurationModel):
         super().__init__(weights=[1.0], meta={})
 
     def predict(self, text):
-        from app.duration import syllables
+        from backend.core.duration import syllables
         return syllables(text) * 0.25
 
 
@@ -56,7 +56,7 @@ def test_vao_som_khong_qua_khoang_trong_phia_truoc():
 
 def test_ngan_sach_dong_bo_voi_luc_long_tieng():
     """Vòng lặp và TTS phải cùng một cách tính, nếu không 'vừa' bên này 'tràn' bên kia."""
-    from app import dubbing
+    from backend.core import dubbing
     assert budget.LEAD_IN == dubbing.MAX_LEAD_IN
 
 
@@ -156,7 +156,7 @@ def test_ban_dich_rut_gon_duoc_chia_lai_vao_tung_cue():
         c(0.5, 1.0, "bbbb.", "sáu bảy tám chín mười"),
         c(1.05, 10, "c.", "ổn"),
     ]
-    from app.duration import syllables
+    from backend.core.duration import syllables
 
     truoc = syllables(cues[0].text2) + syllables(cues[1].text2)
     stats = run_loop(cues, cat_ngan, MoHinhGia())

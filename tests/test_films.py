@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from app import films
-from app.films import FilmError
+from backend.store import films
+from backend.store.films import FilmError
 
 
 @pytest.fixture(autouse=True)

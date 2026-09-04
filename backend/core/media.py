@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from .config import TOOLS_DIR
+from ..config import TOOLS_DIR
 
 _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
@@ -45,7 +45,7 @@ def ffmpeg_exe() -> str:
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception as exc:  # pragma: no cover
         raise MediaError(
-            "Không tìm thấy ffmpeg. Chạy: uv run python -m app.setup_ffmpeg"
+            "Không tìm thấy ffmpeg. Chạy: uv run python -m backend.core.setup_ffmpeg"
         ) from exc
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from backend.main import app
 
 
 @pytest.fixture(scope="module")
@@ -45,7 +45,7 @@ def test_analyze_tu_choi_khi_thieu_video(client):
 
 def test_analyze_chan_som_khi_chua_du_dieu_kien_diarize(client, monkeypatch):
     """Thiếu điều kiện thì phải báo NGAY, đừng để chạy xong ASR mới lỗi."""
-    from app import diarize
+    from backend.core import diarize
 
     monkeypatch.setattr(diarize, "available", lambda token="": (False, "Thiếu token thử nghiệm."))
     r = client.post(
@@ -57,7 +57,7 @@ def test_analyze_chan_som_khi_chua_du_dieu_kien_diarize(client, monkeypatch):
 
 
 def test_analyze_tu_choi_so_nhan_vat_sai_kieu(client, monkeypatch):
-    from app import diarize
+    from backend.core import diarize
 
     monkeypatch.setattr(diarize, "available", lambda token="": (True, ""))
     r = client.post(
@@ -114,7 +114,7 @@ def test_system_khong_nap_thu_vien_nang():
     import sys
 
     code = (
-        "import sys; from app import translate, diarize;"
+        "import sys; from backend.core import translate, diarize;"
         "[translate.engine_available(e) for e in "
         "('google','mymemory','nllb','claude','openai')];"
         "diarize.available();"
@@ -129,7 +129,7 @@ def test_system_khong_nap_thu_vien_nang():
 
 
 def test_engine_khong_hop_le_bao_ro(client):
-    from app import translate
+    from backend.core import translate
 
     ok, why = translate.engine_available("khong-ton-tai")
     assert not ok and "không hợp lệ" in why

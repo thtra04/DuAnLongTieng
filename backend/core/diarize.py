@@ -26,7 +26,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from .config import MODEL_DIR
+from ..config import MODEL_DIR
 from .subtitles import Cue
 
 # Model mặc định. Cần chấp nhận điều khoản trên trang model rồi mới tải được.

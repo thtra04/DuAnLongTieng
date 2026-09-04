@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from app import translate
-from app.pipeline import analyze_steps
-from app.translate import make_tightener
+from backend.core import translate
+from backend.core.pipeline import analyze_steps
+from backend.core.translate import make_tightener
 
 
 # ----------------------------------------------------------- bộ rút gọn

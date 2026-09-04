@@ -35,7 +35,8 @@ for _name, _value in (
     os.environ.setdefault(_name, _value)
 
 ROOT = Path(__file__).resolve().parent.parent
-WEB_DIR = ROOT / "web"
+FRONTEND_DIR = ROOT / "frontend"
+WEB_DIR = FRONTEND_DIR  # tên cũ, giữ cho tương thích
 DATA_DIR = Path(os.environ.get("VSUB_DATA_DIR", ROOT / "data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 JOB_DIR = DATA_DIR / "jobs"

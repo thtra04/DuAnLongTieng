@@ -7,8 +7,9 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app import films, main, projects
-from app.main import app
+from backend.store import films, projects
+from backend import main
+from backend.main import app
 
 
 @pytest.fixture(scope="module")
@@ -23,7 +24,9 @@ def kho_tam(workdir, monkeypatch):
     uploads = workdir / "uploads"
     jobs.mkdir()
     uploads.mkdir()
-    for mod in (projects, main):
+    from backend.api import deps, jobs as api_jobs, media as api_media
+
+    for mod in (projects, deps, api_jobs, api_media):
         monkeypatch.setattr(mod, "JOB_DIR", jobs, raising=False)
         monkeypatch.setattr(mod, "UPLOAD_DIR", uploads, raising=False)
     monkeypatch.setattr(films, "STORE", workdir / "films.json")
@@ -43,8 +46,8 @@ def test_trang_chu_tra_html(client):
 def test_trang_chu_gan_dau_thoi_gian_de_pha_cache(client):
     """Sửa code mà trình duyệt vẫn chạy bản cũ là lỗi rất khó lần ra."""
     r = client.get("/")
-    assert "/app.js?v=" in r.text
-    assert "/style.css?v=" in r.text
+    assert "/js/core.js?v=" in r.text
+    assert "/css/style.css?v=" in r.text
 
 
 def test_trang_chu_khong_cho_cache(client):
@@ -52,8 +55,8 @@ def test_trang_chu_khong_cho_cache(client):
 
 
 def test_phuc_vu_js_va_css(client):
-    js = client.get("/app.js")
-    css = client.get("/style.css")
+    js = client.get("/js/core.js")
+    css = client.get("/css/style.css")
     assert js.status_code == 200 and "javascript" in js.headers["content-type"]
     assert css.status_code == 200 and "css" in css.headers["content-type"]
 
@@ -201,7 +204,7 @@ def test_huy_job_khong_ton_tai(client):
 
 
 def test_huy_job_dang_chay(client):
-    from app.jobs import create_job
+    from backend.core.jobs import create_job
 
     job = create_job("analyze", [])
     r = client.post(f"/api/jobs/{job.id}/cancel")
@@ -209,7 +212,7 @@ def test_huy_job_dang_chay(client):
 
 
 def test_trang_thai_job(client):
-    from app.jobs import create_job
+    from backend.core.jobs import create_job
 
     job = create_job("analyze", [])
     data = client.get(f"/api/jobs/{job.id}").json()

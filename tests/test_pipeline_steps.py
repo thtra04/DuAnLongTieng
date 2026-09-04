@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from app import dubbing, pipeline
-from app.pipeline import (
+from backend.core import dubbing, pipeline
+from backend.core.pipeline import (
     _coverage_warning,
     _fallback_voice,
     _hms,
@@ -16,7 +16,7 @@ from app.pipeline import (
     safe_stem,
     write_utf8,
 )
-from app.subtitles import Cue
+from backend.core.subtitles import Cue
 
 
 class JobGia:

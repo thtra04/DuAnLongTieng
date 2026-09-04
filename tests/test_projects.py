@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from app import films, projects
+from backend.store import films, projects
 
 
 @pytest.fixture(autouse=True)

@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from app.jobs import Job, JobCancelled, Step, create_job, get_job, run_in_thread
+from backend.core.jobs import Job, JobCancelled, Step, create_job, get_job, run_in_thread
 
 
 def steps():

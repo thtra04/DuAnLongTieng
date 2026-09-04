@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from app.dubbing import _clean_neighbours, _split_by_speaker, speaker_ids, speech_units
-from app.subtitles import Cue
+from backend.core.dubbing import _clean_neighbours, _split_by_speaker, speaker_ids, speech_units
+from backend.core.subtitles import Cue
 
 
 def c(start: float, end: float, text: str, speaker: str = "", text2: str = "") -> Cue:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.subtitles import (
+from backend.core.subtitles import (
     Cue,
     cues_from_words,
     fmt_ass_time,

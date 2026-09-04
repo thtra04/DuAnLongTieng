@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.align import CPS_CJK, CPS_LATIN, MAX_STRETCH, align_text, retime_translation
-from app.subtitles import Cue
+from backend.core.align import CPS_CJK, CPS_LATIN, MAX_STRETCH, align_text, retime_translation
+from backend.core.subtitles import Cue
 
 
 def words(*items):

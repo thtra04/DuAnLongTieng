@@ -1,6 +1,6 @@
 """Tải bản ffmpeg đầy đủ (kèm ffprobe + libass) về thư mục tools/.
 
-Chạy:  uv run python -m app.setup_ffmpeg
+Chạy:  uv run python -m backend.core.setup_ffmpeg
 
 Bản ffmpeg đi kèm gói `imageio-ffmpeg` thường đã đủ để nung phụ đề, nhưng
 thiếu `ffprobe`. Script này tải bản essentials của gyan.dev (Windows) hoặc
@@ -17,7 +17,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from .config import TOOLS_DIR
+from ..config import TOOLS_DIR
 
 WIN_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 LINUX_URL = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"

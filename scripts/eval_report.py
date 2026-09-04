@@ -17,8 +17,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app import metrics  # noqa: E402
-from app.config import JOB_DIR  # noqa: E402
+from backend.core import metrics  # noqa: E402
+from backend.config import JOB_DIR  # noqa: E402
 
 
 def main() -> int:

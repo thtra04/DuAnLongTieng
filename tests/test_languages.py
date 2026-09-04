@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.languages import BY_CODE, LANGUAGES, RTL, google_code, name_en, name_vi, nllb_code
+from backend.core.languages import BY_CODE, LANGUAGES, RTL, google_code, name_en, name_vi, nllb_code
 
 
 def test_moi_ngon_ngu_du_khoa():

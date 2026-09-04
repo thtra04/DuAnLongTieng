@@ -20,7 +20,7 @@ import math
 import re
 from pathlib import Path
 
-from .config import MODEL_DIR
+from ..config import MODEL_DIR
 
 MODEL_PATH = MODEL_DIR / "duration_vi.json"
 
