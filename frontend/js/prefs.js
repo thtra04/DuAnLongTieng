@@ -38,7 +38,7 @@ function restorePrefs() {
 }
 ['#tgtLang', '#srcLang', '#asrModel', '#device', '#translationMode']
   .forEach(id => $(id).addEventListener('change', savePrefs));
-['#contextNote', '#glossary'].forEach(id => $(id).addEventListener('input', savePrefs));
+['#contextNote', '#glossary', '#aiModel', '#aiBaseUrl'].forEach(id => $(id).addEventListener('input', savePrefs));
 
 /* ------------------------------ phím tắt -------------------------------- */
 document.addEventListener('keydown', e => {

@@ -68,6 +68,14 @@ def test_js_khong_ghep_cung_dia_chi_backend():
     assert not bad, bad
 
 
+def test_o_model_ai_go_tu_do_duoc():
+    """Endpoint OpenAI-compatible có model riêng (qwen3.8-flash...), danh sách cố định không đủ."""
+    html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+    line = next(ln for ln in html.splitlines() if 'id="aiModel"' in ln)
+    assert "<input" in line and 'list="aiModelList"' in line, line
+    assert 'id="aiModelList"' in html
+
+
 def test_logic_ai_nam_rieng_trong_ai_js():
     """Mọi thứ về engine AI (key, model, endpoint, cache) gom một chỗ, không rải khắp nơi."""
     own = ("function fillEngines", "function syncAiBox", "function aiPayload",
