@@ -44,9 +44,19 @@ function syncAiBox() {
   $('#baseUrlField').classList.toggle('hide', S.engine !== 'openai');
   if (!isAi) return;
   const provider = aiProvider();
-  const sel = $('#aiModel');
-  sel.innerHTML = (S.sys.ai_models[provider] || [])
+  // Ô model là ô gõ tự do có gợi ý: endpoint OpenAI-compatible (9Router, b.ai,
+  // Ollama...) có model riêng, không thể liệt kê hết. Gợi ý theo provider. Đổi
+  // provider thì về model mặc định của bên đó, trừ khi giá trị đang có vốn là
+  // một model quen của bên đó; còn ở nguyên provider thì giữ đúng thứ đang gõ.
+  const models = S.sys.ai_models[provider] || [];
+  $('#aiModelList').innerHTML = models
     .map(m => `<option value="${m.id}">${m.label}</option>`).join('');
+  const field = $('#aiModel');
+  const known = models.some(m => m.id === field.value.trim());
+  if (!field.value.trim() || (S.aiProvider !== provider && !known)) {
+    field.value = models[0]?.id || '';
+  }
+  S.aiProvider = provider;
   const varName = provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
   $('#keyHint').textContent = aiEnvKey()
     ? `— đã có ${varName} trong môi trường, để trống là dùng key đó`

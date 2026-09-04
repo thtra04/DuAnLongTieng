@@ -194,8 +194,10 @@
             <input type="password" id="apiKey" placeholder="sk-…" autocomplete="off">
           </label>
           <label class="field">
-            <span>Model</span>
-            <select id="aiModel"></select>
+            <span>Model <span class="muted">(chọn trong gợi ý, hoặc gõ tên model của endpoint bạn dùng)</span></span>
+            <input type="text" id="aiModel" list="aiModelList" autocomplete="off" spellcheck="false"
+                   placeholder="VD: qwen3.8-flash">
+            <datalist id="aiModelList"></datalist>
           </label>
         </div>
         <label class="field hide" id="baseUrlField">
