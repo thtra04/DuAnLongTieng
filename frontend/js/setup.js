@@ -1,4 +1,4 @@
-/* frontend/js/setup.js — bước 2: cấu hình dịch & nhận dạng, gửi /api/analyze.
+/* frontend/js/setup.js — bước 2: cấu hình dịch & nhận dạng, gửi /api/analyze (phần AI ở ai.js).
    Các file js dùng chung một phạm vi toàn cục; thứ tự nạp ghi trong index.html. */
 /* --------------------------- bước 2: cấu hình --------------------------- */
 $('#doTranslate').addEventListener('change', e => {
@@ -23,12 +23,7 @@ bindRange('#crf', '#crfOut');
 $('#startBtn').addEventListener('click', startAnalyze);
 
 async function startAnalyze() {
-  if ($('#doTranslate').checked && (S.engine === 'claude' || S.engine === 'openai')) {
-    const hasEnvKey = S.engine === 'claude' ? S.sys.has_anthropic_key : S.sys.has_openai_key;
-    if (!$('#apiKey').value.trim() && !hasEnvKey) {
-      return toast('Hãy nhập API key hoặc đặt biến môi trường cho engine AI đã chọn.', 'warn', 7000);
-    }
-  }
+  if (!aiReady()) return;
   const payload = {
     source_type: S.sourceType,
     media_id: S.mediaId,
@@ -45,13 +40,7 @@ async function startAnalyze() {
     source_lang: $('#srcLang').value || null,
     target_lang: $('#tgtLang').value,
     translate: $('#doTranslate').checked,
-    engine: S.engine,
-    api_key: $('#apiKey').value.trim(),
-    ai_model: $('#aiModel').value || '',
-    ai_base_url: S.engine === 'openai' ? $('#aiBaseUrl').value.trim() : '',
-    context_note: $('#contextNote').value.trim(),
-    translation_mode: $('#translationMode').value,
-    glossary: $('#glossary').value.trim(),
+    ...aiPayload(),   // engine, key, model, endpoint, phong cách, thuật ngữ, budget_loop — ai.js
     asr_model: $('#asrModel').value,
     device: $('#device').value,
     vad: $('#vad').checked,
@@ -61,8 +50,6 @@ async function startAnalyze() {
     diarize: $('#diarizeOn').checked,
     num_speakers: +$('#numSpeakers').value || null,
     hf_token: $('#hfToken').value.trim(),
-    // HP-5: chỉ có nghĩa với engine AI — máy chủ tự bỏ qua với Google/MyMemory
-    budget_loop: !!($('#budgetLoop') && $('#budgetLoop').checked),
   };
   savePrefs();
 

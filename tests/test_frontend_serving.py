@@ -24,7 +24,7 @@ def client():
 
 def test_trang_chu_nap_dung_thu_tu_js(client):
     html = client.get("/").text
-    order = ["core", "boot", "films", "source", "setup", "progress", "editor", "dubbing", "export", "prefs", "main"]
+    order = ["core", "boot", "films", "source", "setup", "ai", "progress", "editor", "dubbing", "export", "prefs", "main"]
     positions = [html.index(f"/js/{n}.js?v=") for n in order]
     assert positions == sorted(positions), "core phải nạp trước, main (boot()) phải nạp sau cùng"
     assert html.index("/config.js?v=") < positions[0], "config.js phải nạp trước core.js"
@@ -66,6 +66,20 @@ def test_js_khong_ghep_cung_dia_chi_backend():
                     and not s.startswith(("/*", "*")):
                 bad.append(f"{p.name}:{n}")
     assert not bad, bad
+
+
+def test_logic_ai_nam_rieng_trong_ai_js():
+    """Mọi thứ về engine AI (key, model, endpoint, cache) gom một chỗ, không rải khắp nơi."""
+    own = ("function fillEngines", "function syncAiBox", "function aiPayload",
+           "function aiReady", "async function refreshCacheInfo")
+    ai = (FRONTEND_DIR / "js" / "ai.js").read_text(encoding="utf-8")
+    assert all(d in ai for d in own)
+    for p in (FRONTEND_DIR / "js").glob("*.js"):
+        if p.name == "ai.js":
+            continue
+        src = p.read_text(encoding="utf-8")
+        assert not any(d in src for d in own), f"{p.name} còn định nghĩa hàm AI"
+        assert "#apiKey" not in src, f"{p.name} đọc API key trực tiếp — phải qua aiPayload()"
 
 
 # ------------------------------------------------------------- API
