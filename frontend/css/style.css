@@ -592,3 +592,17 @@ footer.foot a { color: var(--muted); }
   .spkline { flex-wrap: wrap; }
   .spkname { max-width: none; }
 }
+
+/* ----------------------------- hộp xác nhận ----------------------------- */
+.modal-wrap {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px;
+  background: rgba(59, 31, 46, .35); backdrop-filter: blur(4px);
+  animation: fadeDown .2s var(--ease) both;
+}
+.modal {
+  width: min(460px, 100%); padding: 20px 22px; border-radius: 16px;
+  background: var(--card-solid); border: 1px solid var(--stroke-2); box-shadow: var(--shadow);
+}
+.modal-msg { margin: 0 0 16px; font-size: 14px; line-height: 1.6; white-space: pre-line; }
+.modal .m-input { margin: -4px 0 16px; }
+.modal .actions { margin: 0; }

@@ -82,6 +82,19 @@ def test_logic_ai_nam_rieng_trong_ai_js():
         assert "#apiKey" not in src, f"{p.name} đọc API key trực tiếp — phải qua aiPayload()"
 
 
+def test_khong_dung_hop_thoai_goc_cua_trinh_duyet():
+    """confirm()/alert()/prompt() bị trình duyệt nhúng nuốt: trả về false ngay, không hỏi.
+
+    Từng gây lỗi "bấm xoá nhưng không xoá". Phải dùng askConfirm() trong core.js.
+    """
+    native = re.compile(r"(?<![\w.])(confirm|alert|prompt)\(")
+    bad = [f"{p.name}:{n}" for p in (FRONTEND_DIR / "js").glob("*.js")
+           for n, ln in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+           if native.search(ln) and not ln.strip().startswith(("//", "*", "/*"))]
+    assert not bad, bad
+    assert "function askConfirm" in (FRONTEND_DIR / "js" / "core.js").read_text(encoding="utf-8")
+
+
 # ------------------------------------------------------------- API
 
 

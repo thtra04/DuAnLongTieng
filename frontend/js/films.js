@@ -262,7 +262,7 @@ async function createFilm() {
 }
 
 async function renameFilm(f) {
-  const name = prompt('Tên bộ phim:', f.name);
+  const name = await askInput('Tên bộ phim:', f.name);
   if (name === null) return;
   try {
     await api(`/api/films/${f.id}`, {
@@ -277,7 +277,7 @@ async function renameFilm(f) {
 }
 
 async function deleteFilm(f) {
-  const ok = confirm(
+  const ok = await askConfirm(
     `Xoá bộ "${f.name}"?\n\n`
     + `Bộ này có ${f.total} tập, trong đó ${f.done} tập đã có phụ đề.\n`
     + 'Xoá bộ là mất luôn phụ đề và file đã xuất của những tập đó.\n'
@@ -296,7 +296,7 @@ async function deleteFilm(f) {
 async function addEpisode(f) {
   const used = f.episodes.map(e => e.no);
   const next = used.length ? Math.max(...used) + 1 : 1;
-  const raw = prompt(`Thêm tập số mấy?\n\n(bộ đang có: ${used.join(', ') || 'chưa có tập nào'})`, next);
+  const raw = await askInput(`Thêm tập số mấy?\n\n(bộ đang có: ${used.join(', ') || 'chưa có tập nào'})`, next);
   if (raw === null) return;
   const no = parseInt(raw, 10);
   if (!Number.isFinite(no) || no < 1) return toast('Số tập phải là số từ 1 trở lên.', 'warn');
@@ -315,7 +315,7 @@ async function addEpisode(f) {
 
 async function removeEpisode(f, ep, hasJob) {
   if (!ep) return;
-  const ok = confirm(hasJob
+  const ok = await askConfirm(hasJob
     ? `Xoá tập ${ep.no} của "${f.name}"?\n\nMất phụ đề và file đã xuất của tập này.\nCác tập khác vẫn còn.`
     : `Bỏ tập ${ep.no} khỏi bộ "${f.name}"?\n\nTập này chưa có video nên không mất gì cả.`);
   if (!ok) return;
@@ -384,14 +384,14 @@ async function assignLoose(p) {
   if (!films.length) return toast('Chưa có bộ phim nào. Tạo bộ trước đã.', 'warn', 6000);
 
   const menu = films.map((f, i) => `${i + 1}. ${f.name} (${f.done}/${f.total} tập)`).join('\n');
-  const pick = prompt(`Gán "${p.video_name}" vào bộ nào?\n\n${menu}\n\nNhập số:`, '1');
+  const pick = await askInput(`Gán "${p.video_name}" vào bộ nào?\n\n${menu}\n\nNhập số:`, '1');
   if (pick === null) return;
   const film = films[parseInt(pick, 10) - 1];
   if (!film) return toast('Số không hợp lệ.', 'warn');
 
   const free = film.episodes.filter(e => !e.project).map(e => e.no);
   if (!free.length) return toast(`Bộ "${film.name}" không còn tập nào trống.`, 'warn', 7000);
-  const rawNo = prompt(`Gán vào tập số mấy của "${film.name}"?\n\nCác tập còn trống: ${free.join(', ')}`,
+  const rawNo = await askInput(`Gán vào tập số mấy của "${film.name}"?\n\nCác tập còn trống: ${free.join(', ')}`,
     free[0]);
   if (rawNo === null) return;
 
@@ -444,7 +444,7 @@ async function deleteProject(ep, group) {
   const what = group && !group.standalone && ep.part
     ? `tập ${ep.part} của bộ "${group.name}"`
     : `"${ep.video_name}"`;
-  const ok = confirm(
+  const ok = await askConfirm(
     `Xoá ${what}?\n\n`
     + 'CHỈ xoá tập này, các tập khác trong bộ vẫn còn.\n\n'
     + 'Mất: phụ đề đã làm, các file đã xuất, và bản video mà tool đang giữ.\n'
