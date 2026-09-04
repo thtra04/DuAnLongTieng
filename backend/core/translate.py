@@ -530,43 +530,153 @@ Quy tắc bắt buộc:
 - Trả về ĐÚNG số dòng, mỗi dòng dạng `<số dòng>|<câu đã rút gọn>`, không thêm lời dẫn."""
 
 
-def _chat(engine: str, system: str, user: str, api_key: str, model: str, base_url: str) -> str:
-    """Một lượt hỏi–đáp với Claude hoặc OpenAI, thử lại 3 lần. Trả về text thô."""
+# ---------------------------------------------------------- gọi API AI
+
+
+def ai_timeout() -> float:
+    """Thời gian chờ tối đa cho MỘT lượt gọi API AI (giây), đặt qua VSUB_AI_TIMEOUT.
+
+    Mặc định 120 s: đủ cho một lô 40 dòng ở model chậm. Không đặt thì SDK chờ
+    600 s và tự thử lại 2 lần; nhân với vòng thử ở đây là cả tiếng cho một
+    endpoint treo — người dùng chỉ thấy job "đang chạy" mà không biết vì sao.
+    """
+    try:
+        return max(5.0, float(os.environ.get("VSUB_AI_TIMEOUT", "120")))
+    except ValueError:
+        return 120.0
+
+
+def _openai_client(api_key: str, base_url: str = "", timeout: float | None = None, retries: int = 1):
+    from openai import OpenAI
+
+    key = api_key or os.environ.get("OPENAI_API_KEY", "")
+    if not key:
+        raise TranslateError("Chưa có API key: nhập ở bước 2 hoặc đặt biến môi trường OPENAI_API_KEY.")
+    args: dict = {"api_key": key}
+    if base_url.strip():
+        args["base_url"] = base_url.strip().rstrip("/")
+    # max_retries: SDK tự thử lại khi lỗi mạng / 429 / 5xx; phần còn lại do _with_retry lo
+    return OpenAI(timeout=timeout or ai_timeout(), max_retries=retries, **args)
+
+
+def _anthropic_client(api_key: str, timeout: float | None = None, retries: int = 1):
+    import anthropic
+
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        raise TranslateError("Chưa có API key: nhập ở bước 2 hoặc đặt biến môi trường ANTHROPIC_API_KEY.")
+    return anthropic.Anthropic(api_key=key, timeout=timeout or ai_timeout(), max_retries=retries)
+
+
+def _short_error(exc: BaseException | None, timeout: float | None = None) -> str:
+    """Một dòng dễ hiểu cho lỗi API: nói đúng chuyện gì xảy ra, kèm đuôi thông báo gốc."""
+    text = str(exc or "").strip()
+    low = text.lower()
+    tail = text[:160]
+    if "timed out" in low or "timeout" in low:
+        return f"Quá {timeout or ai_timeout():.0f}s chưa trả lời (đổi bằng VSUB_AI_TIMEOUT)"
+    if "model_not_found" in low or ("404" in low and "model" in low):
+        return f"Model không tồn tại ở endpoint này — kiểm tra lại tên model · {tail}"
+    if "chưa có api key" in low:
+        return text
+    if "401" in low or "invalid_api_key" in low or "authentication" in low or "incorrect api key" in low:
+        return f"Key sai hoặc hết hạn (401) · {tail}"
+    if "429" in low or "rate limit" in low or "insufficient_quota" in low:
+        return f"Bị giới hạn tần suất hoặc hết hạn mức (429) · {tail}"
+    if "connection" in low or "connect" in low:
+        return f"Không kết nối được endpoint — kiểm tra địa chỉ và mạng · {tail}"
+    return text[:300]
+
+
+def _with_retry(call, label: str, on_log=None, attempts: int = 2) -> str:
+    """Gọi `call()` tối đa `attempts` lần; ghi log thời gian và lý do từng lượt hỏng."""
     last: Exception | None = None
-    for attempt in range(3):
+    for attempt in range(attempts):
+        t0 = time.monotonic()
         try:
-            if engine == "claude":
-                import anthropic
-
-                key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-                client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
-                resp = client.messages.create(
-                    model=model or "claude-opus-5",
-                    max_tokens=4000,
-                    system=system,
-                    messages=[{"role": "user", "content": user}],
-                )
-                if resp.stop_reason == "refusal":
-                    raise TranslateError("Claude từ chối xử lý nội dung này.")
-                return "".join(b.text for b in resp.content if b.type == "text")
-            from openai import OpenAI
-
-            key = api_key or os.environ.get("OPENAI_API_KEY", "")
-            args = {"api_key": key} if key else {}
-            if base_url.strip():
-                args["base_url"] = base_url.strip().rstrip("/")
-            resp = OpenAI(**args).chat.completions.create(
-                model=model or "gpt-4o-mini",
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            )
-            return resp.choices[0].message.content or ""
+            return call()
         except TranslateError:
             raise
         except Exception as exc:
             last = exc
-            if attempt < 2:
+            if on_log:
+                on_log(f"  Lượt {attempt + 1}/{attempts} lỗi sau {time.monotonic() - t0:.0f}s: {_short_error(exc)}")
+            if attempt < attempts - 1:
                 time.sleep(2 * (attempt + 1))
-    raise TranslateError(f"Lỗi gọi {engine}: {last}")
+    raise TranslateError(f"Lỗi gọi {label}: {_short_error(last)}")
+
+
+def _call_logged(call, label: str, model: str, index: int, total: int, lines: int, on_log=None) -> str:
+    """Một lô dịch: báo trước đang chờ ai, bao lâu tối đa; báo sau mất bao lâu thật."""
+    if on_log:
+        on_log(f"  Lô {index + 1}/{total}: {lines} câu → chờ {model} (tối đa {ai_timeout():.0f}s mỗi lượt)…")
+    t0 = time.monotonic()
+    raw = _with_retry(call, label, on_log)
+    if on_log:
+        on_log(f"  Lô {index + 1}/{total} xong sau {time.monotonic() - t0:.0f}s.")
+    return raw
+
+
+def check_connection(
+    engine: str, api_key: str = "", model: str = "", base_url: str = "", timeout: float = 30.0
+) -> dict:
+    """Gọi thử một câu ngắn để biết key, endpoint và model có dùng được không.
+
+    Trả về dict cho giao diện: ok, latency_ms, reply, model, error. Không ném lỗi:
+    dòng lỗi API chính là thứ người dùng cần đọc (key sai, model không có, chậm).
+    """
+    ok, why = engine_available(engine)
+    if not ok:
+        return {"ok": False, "error": why, "model": model, "latency_ms": 0, "reply": ""}
+    question = "Trả lời đúng một từ: OK"
+    t0 = time.monotonic()
+    try:
+        if engine == "claude":
+            model = model or "claude-opus-5"
+            resp = _anthropic_client(api_key, timeout=timeout, retries=0).messages.create(
+                model=model, max_tokens=16, messages=[{"role": "user", "content": question}]
+            )
+            reply = "".join(b.text for b in resp.content if b.type == "text")
+        elif engine == "openai":
+            model = model or "gpt-4o-mini"
+            resp = _openai_client(api_key, base_url, timeout=timeout, retries=0).chat.completions.create(
+                model=model, messages=[{"role": "user", "content": question}]
+            )
+            reply = resp.choices[0].message.content or ""
+        else:
+            return {"ok": False, "error": f"Engine {engine} không cần key, không có gì để kiểm tra.",
+                    "model": model, "latency_ms": 0, "reply": ""}
+    except Exception as exc:
+        return {"ok": False, "error": _short_error(exc, timeout), "model": model,
+                "latency_ms": int((time.monotonic() - t0) * 1000), "reply": ""}
+    return {"ok": True, "error": "", "model": model,
+            "latency_ms": int((time.monotonic() - t0) * 1000), "reply": reply.strip()[:80]}
+
+
+def _chat(engine: str, system: str, user: str, api_key: str, model: str, base_url: str, on_log=None) -> str:
+    """Một lượt hỏi–đáp với Claude hoặc OpenAI, có giới hạn thời gian và thử lại. Trả về text thô."""
+    if engine == "claude":
+        def call():
+            resp = _anthropic_client(api_key).messages.create(
+                model=model or "claude-opus-5",
+                max_tokens=4000,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            if resp.stop_reason == "refusal":
+                raise TranslateError("Claude từ chối xử lý nội dung này.")
+            return "".join(b.text for b in resp.content if b.type == "text")
+
+        return _with_retry(call, "Claude", on_log)
+
+    def call():
+        resp = _openai_client(api_key, base_url).chat.completions.create(
+            model=model or "gpt-4o-mini",
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        )
+        return resp.choices[0].message.content or ""
+
+    return _with_retry(call, "OpenAI", on_log)
 
 
 def make_tightener(
@@ -575,6 +685,7 @@ def make_tightener(
     model: str = "",
     base_url: str = "",
     target: str = "vi",
+    on_log: Callable[[str], None] | None = None,
 ):
     """Hàm rút gọn có kiểm soát cho `budget.run_loop`, hoặc None nếu engine không hỗ trợ.
 
@@ -588,12 +699,18 @@ def make_tightener(
     if engine not in ("claude", "openai"):
         return None
     system = _TIGHTEN_PROMPT.format(tgt=name_en(target))
+    label = model or ("claude-opus-5" if engine == "claude" else "gpt-4o-mini")
 
     def tighten(requests: list[dict]) -> list[str]:
         payload = "\n".join(
             f"{i + 1}|{int(r.get('target_syllables') or 1)}|{r['text']}" for i, r in enumerate(requests)
         )
+        if on_log:
+            on_log(f"  Rút gọn {len(requests)} câu → chờ {label} (tối đa {ai_timeout():.0f}s mỗi lượt)…")
+        t0 = time.monotonic()
         raw = _chat(engine, system, payload, api_key, model, base_url)
+        if on_log:
+            on_log(f"  {label} trả lời sau {time.monotonic() - t0:.0f}s.")
         parsed = _parse_numbered(raw, 0, len(requests))
         return [p if p else r["text"] for p, r in zip(parsed, requests)]
 
@@ -720,10 +837,7 @@ def _warn_long_translations(
 
 
 def _translate_claude(texts, source, target, api_key, model, note, mode, glossary, on_progress=None, on_log=None):
-    import anthropic
-
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-    client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
+    client = _anthropic_client(api_key)
     model = model or "claude-opus-5"
     system = _SYS_PROMPT.format(
         src=name_en(source), tgt=name_en(target),
@@ -739,26 +853,19 @@ def _translate_claude(texts, source, target, api_key, model, note, mode, glossar
     batches = list(_ai_batches(texts))
     for bi, batch in enumerate(batches):
         payload = _numbered([texts[i] for i in batch], batch[0])
-        raw = ""
-        for attempt in range(3):
-            try:
-                resp = client.messages.create(
-                    model=model,
-                    max_tokens=8000,
-                    system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-                    messages=[{"role": "user", "content": payload}],
-                )
-                if resp.stop_reason == "refusal":
-                    raise TranslateError("Claude từ chối xử lý nội dung này.")
-                raw = "".join(b.text for b in resp.content if b.type == "text")
-                break
-            except TranslateError:
-                raise
-            except Exception as exc:
-                if attempt == 2:
-                    raise TranslateError(f"Lỗi gọi Claude: {exc}") from exc
-                time.sleep(2 * (attempt + 1))
 
+        def call(payload=payload):
+            resp = client.messages.create(
+                model=model,
+                max_tokens=8000,
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": payload}],
+            )
+            if resp.stop_reason == "refusal":
+                raise TranslateError("Claude từ chối xử lý nội dung này.")
+            return "".join(b.text for b in resp.content if b.type == "text")
+
+        raw = _call_logged(call, "Claude", model, bi, len(batches), len(batch), on_log)
         missing += _apply_parsed(results, batch, texts, _parse_numbered(raw, batch[0], len(batch)))
         if on_progress:
             on_progress((bi + 1) / len(batches))
@@ -771,13 +878,7 @@ def _translate_claude(texts, source, target, api_key, model, note, mode, glossar
 
 
 def _translate_openai(texts, source, target, api_key, model, base_url, note, mode, glossary, on_progress=None, on_log=None):
-    from openai import OpenAI
-
-    key = api_key or os.environ.get("OPENAI_API_KEY", "")
-    client_args = {"api_key": key} if key else {}
-    if base_url.strip():
-        client_args["base_url"] = base_url.strip().rstrip("/")
-    client = OpenAI(**client_args)
+    client = _openai_client(api_key, base_url)
     model = model or "gpt-4o-mini"
     system = _SYS_PROMPT.format(
         src=name_en(source), tgt=name_en(target),
@@ -793,23 +894,18 @@ def _translate_openai(texts, source, target, api_key, model, base_url, note, mod
     batches = list(_ai_batches(texts))
     for bi, batch in enumerate(batches):
         payload = _numbered([texts[i] for i in batch], batch[0])
-        raw = ""
-        for attempt in range(3):
-            try:
-                resp = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": payload},
-                    ],
-                )
-                raw = resp.choices[0].message.content or ""
-                break
-            except Exception as exc:
-                if attempt == 2:
-                    raise TranslateError(f"Lỗi gọi OpenAI: {exc}") from exc
-                time.sleep(2 * (attempt + 1))
 
+        def call(payload=payload):
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": payload},
+                ],
+            )
+            return resp.choices[0].message.content or ""
+
+        raw = _call_logged(call, "OpenAI", model, bi, len(batches), len(batch), on_log)
         missing += _apply_parsed(results, batch, texts, _parse_numbered(raw, batch[0], len(batch)))
         if on_progress:
             on_progress((bi + 1) / len(batches))

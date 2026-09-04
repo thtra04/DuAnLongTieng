@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .api import films, jobs, media, projects, system, tts
+from .api import ai, films, jobs, media, projects, system, tts
 from .api.deps import safe_id
 from .config import FRONTEND_DIR
 from .core import media as core_media
@@ -69,7 +69,7 @@ if _origins:
         CORSMiddleware, allow_origins=_origins, allow_methods=["*"], allow_headers=["*"]
     )
 
-for router in (system.router, tts.router, media.router, jobs.router, films.router, projects.router):
+for router in (system.router, tts.router, ai.router, media.router, jobs.router, films.router, projects.router):
     app.include_router(router)
 
 

@@ -64,6 +64,16 @@ def analyze_steps(cfg: dict) -> list[Step]:
     return steps
 
 
+def _progress_cb(job, key: str):
+    """Tiến độ cho bước gọi API lâu: cập nhật % và tôn trọng nút Huỷ giữa các lô."""
+
+    def cb(value: float) -> None:
+        job.check_cancel()
+        job.set_step_progress(key, value)
+
+    return cb
+
+
 def run_analyze(job: Job, cfg: dict) -> None:
     workdir = job.dir
     video_path = Path(cfg["video_path"]) if cfg.get("video_path") else None
@@ -187,7 +197,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
             context_note=cfg.get("context_note", ""),
             translation_mode=cfg.get("translation_mode", "natural"),
             glossary=cfg.get("glossary", ""),
-            on_progress=lambda p: job.set_step_progress("translate", p),
+            on_progress=_progress_cb(job, "translate"),
             on_log=job.log,
         )
         job.finish_step("translate")
@@ -204,8 +214,11 @@ def run_analyze(job: Job, cfg: dict) -> None:
             model=cfg.get("ai_model", ""),
             base_url=cfg.get("ai_base_url", ""),
             target=target,
+            on_log=job.log,
         )
-        budget_stats = budget.run_loop(cues, tightener, on_log=job.log)
+        budget_stats = budget.run_loop(
+            cues, tightener, on_log=job.log, on_progress=_progress_cb(job, "budget")
+        )
         job.finish_step(
             "budget",
             f"còn {budget_stats['over_after']}/{budget_stats['groups']} câu vượt "
