@@ -104,6 +104,7 @@ def run_loop(
     max_passes: int = 2,
     tolerance: float = TOLERANCE,
     on_log: Callable[[str], None] | None = None,
+    on_progress: Callable[[float], None] | None = None,
 ) -> dict:
     """Chạy vòng lặp ngân sách. Sửa `cues[i].text2` tại chỗ. Trả về thống kê.
 
@@ -140,6 +141,8 @@ def run_loop(
     for n in range(1, max_passes + 1):
         stats["passes"] = n
         requests = [{**it, "target_syllables": target_syllables(it)} for it in pending]
+        if on_log:
+            on_log(f"  Lượt {n}/{max_passes}: gửi {len(requests)} câu vượt khung đi rút gọn.")
         try:
             shorter = tightener(requests)
         except Exception as exc:
@@ -157,6 +160,8 @@ def run_loop(
         pending = over_budget(items, tolerance)
         if on_log:
             on_log(f"  Lượt {n}: rút gọn {changed} câu, còn {len(pending)} câu vượt.")
+        if on_progress:
+            on_progress(n / max_passes)
         if not pending or changed == 0:
             break
 

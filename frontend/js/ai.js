@@ -105,3 +105,31 @@ $('#clearCache').addEventListener('click', async () => {
     refreshCacheInfo();
   } catch (e) { toast(e.message, 'err'); }
 });
+
+/* ---------------------------- kiểm tra kết nối --------------------------- */
+// Gọi thử một câu ngắn với key, endpoint và model đang nhập: biết ngay key sai,
+// model không tồn tại hay endpoint chậm — thay vì nghe hết video rồi mới lỗi.
+$('#aiCheck').addEventListener('click', async () => {
+  if (!isAiEngine()) return toast('Chọn engine Claude hoặc OpenAI trước đã.', 'warn');
+  if (!$('#apiKey').value.trim() && !aiEnvKey()) return toast('Hãy nhập API key trước.', 'warn');
+  const btn = $('#aiCheck');
+  btn.disabled = true;
+  btn.textContent = '⏳ Đang gọi thử (tối đa 30s)…';
+  const { engine, api_key, ai_model, ai_base_url } = aiPayload();
+  try {
+    const r = await api('/api/ai/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ engine, api_key, ai_model, ai_base_url }),
+    });
+    const s = (r.latency_ms / 1000).toFixed(1);
+    if (!r.ok) toast(`Không dùng được: ${r.error}`, 'err', 14000);
+    else if (r.latency_ms > 20000) toast(`Kết nối được nhưng chậm: ${r.model} mất ${s}s cho một câu. Mỗi lô dịch sẽ mất vài phút.`, 'warn', 12000);
+    else toast(`Kết nối OK · ${r.model} trả lời "${r.reply}" sau ${s}s.`, 'ok', 8000);
+  } catch (e) {
+    toast('Kiểm tra không được: ' + e.message, 'err', 9000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔌 Kiểm tra kết nối';
+  }
+});

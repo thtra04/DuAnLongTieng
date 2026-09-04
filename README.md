@@ -422,6 +422,7 @@ data/             Video upload, kết quả job, model đã tải  (không commi
 | `VSUB_MAX_UPLOAD` | `4294967296` | Giới hạn upload (bytes) |
 | `HF_TOKEN` | — | Token Hugging Face để tải model nhận diện người nói (khỏi nhập trên giao diện) |
 | `VSUB_DIARIZE_MODEL` | `pyannote/speaker-diarization-3.1` | Model nhận diện người nói |
+| `VSUB_AI_TIMEOUT` | `120` | Giây chờ tối đa cho mỗi lượt gọi API AI (Claude/OpenAI); quá thì thử lại một lần rồi báo lỗi |
 
 ---
 
@@ -441,6 +442,7 @@ data/             Video upload, kết quả job, model đã tải  (không commi
 | "Phiên làm việc đã hết hạn" khi xuất file | Phụ đề đã sửa vẫn còn trong trang. Chọn lại đúng file video ở bước 1 rồi bấm Xuất file — không phải nhận dạng lại |
 | Lồng tiếng bị tắt trong giao diện | Thêm `--extra tts` vào lệnh `uv sync` đang dùng, rồi khởi động lại tool |
 | Nhân bản giọng báo thiếu `torch` | Thêm `--extra clone` vào lệnh `uv sync` đang dùng. Giọng có sẵn không cần torch — chỉ tính năng nhân bản mới cần |
+| Dịch bằng AI rất lâu hoặc như treo | Bấm **🔌 Kiểm tra kết nối** ở bước 2 để xem endpoint trả lời mất bao lâu và model có tồn tại không. Log job ghi thời gian từng lô; mỗi lượt gọi bị cắt sau `VSUB_AI_TIMEOUT` giây. Bước *Rút gọn câu vượt khung* gọi thêm API, tắt nó nếu endpoint chậm |
 | Phụ đề xem trước lệch với tiếng | Ô **Lệch giờ** ở bước 4 — sửa là thấy đổi ngay. Số dương = chữ hiện muộn hơn |
 | Lần đầu mở danh sách giọng rất lâu | Bình thường — đang tải model TTS (~1 phút), lần sau sẽ nhanh |
 | Tiếng lồng bị tràn sang câu sau | Rút gọn câu dịch, hoặc kéo **Tăng tốc tối đa** lên 1.7–2.0× |
