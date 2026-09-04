@@ -204,3 +204,15 @@ def test_engine_hop_le_bao_dung_trang_thai():
 def test_engine_la_bi_tu_choi():
     ok, why = engine_available("gpt-9000")
     assert not ok and "không hợp lệ" in why
+
+
+def test_goi_y_cai_khong_dua_lenh_uv_sync_tran():
+    """`uv sync --extra ai` chạy trần sẽ gỡ các nhóm khác đã cài (torch, VieNeu, pyannote).
+
+    Câu gợi ý phải bảo người dùng THÊM --extra vào lệnh đang dùng.
+    """
+    from backend.core.translate import _ENGINE_NEEDS
+
+    for engine, (_mods, how) in _ENGINE_NEEDS.items():
+        if "uv sync" in how:
+            assert "thêm --extra" in how, f"{engine}: {how}"

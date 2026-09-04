@@ -75,6 +75,11 @@ Cài tất cả:
 uv sync --extra cuda --extra ai --extra offline --extra tts --extra clone --extra diarize
 ```
 
+> **Lưu ý:** `uv sync` làm môi trường khớp *đúng* các `--extra` nêu trong lệnh, nhóm nào
+> không nêu sẽ bị gỡ. Vì vậy khi cài thêm một nhóm, hãy ghi lại đủ các nhóm đang dùng
+> trong cùng một lệnh (ví dụ đang có `tts` mà muốn thêm `ai` thì chạy
+> `uv sync --extra cuda --extra tts --extra ai`).
+
 `ffmpeg` đã đi kèm sẵn qua gói `imageio-ffmpeg` — không cần cài gì thêm.
 Nếu muốn bản đầy đủ (kèm `ffprobe`):
 
@@ -288,7 +293,7 @@ khoản: mở trang model, bấm đồng ý, tạo token ở mục *Access Token
 (hoặc đặt biến môi trường `HF_TOKEN` cho khỏi nhập lại).
 
 ```bash
-uv sync --extra diarize
+uv sync --extra cuda --extra diarize   # nhớ ghi thêm các --extra đang dùng
 ```
 
 ### ⏱ Vừa khung thời gian: dự đoán trước, rút gọn trước, nén sau cùng
@@ -434,8 +439,8 @@ data/             Video upload, kết quả job, model đã tải  (không commi
 | Xử lý nhầm nguồn (file vs link) | Ở bước 1 có dòng xanh ghi rõ **"Sẽ xử lý…"** — tải file lên sẽ tự chuyển sang tab file |
 | Link bilibili/playlist có nhiều phần | Bước 1 bấm **🔍 Kiểm tra link** → chọn phần trong danh sách (có kèm thời lượng). Mỗi lần chạy một phần |
 | "Phiên làm việc đã hết hạn" khi xuất file | Phụ đề đã sửa vẫn còn trong trang. Chọn lại đúng file video ở bước 1 rồi bấm Xuất file — không phải nhận dạng lại |
-| Lồng tiếng bị tắt trong giao diện | `uv sync --extra tts` rồi khởi động lại tool |
-| Nhân bản giọng báo thiếu `torch` | `uv sync --extra clone`. Giọng có sẵn không cần torch — chỉ tính năng nhân bản mới cần |
+| Lồng tiếng bị tắt trong giao diện | Thêm `--extra tts` vào lệnh `uv sync` đang dùng, rồi khởi động lại tool |
+| Nhân bản giọng báo thiếu `torch` | Thêm `--extra clone` vào lệnh `uv sync` đang dùng. Giọng có sẵn không cần torch — chỉ tính năng nhân bản mới cần |
 | Phụ đề xem trước lệch với tiếng | Ô **Lệch giờ** ở bước 4 — sửa là thấy đổi ngay. Số dương = chữ hiện muộn hơn |
 | Lần đầu mở danh sách giọng rất lâu | Bình thường — đang tải model TTS (~1 phút), lần sau sẽ nhanh |
 | Tiếng lồng bị tràn sang câu sau | Rút gọn câu dịch, hoặc kéo **Tăng tốc tối đa** lên 1.7–2.0× |

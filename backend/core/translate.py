@@ -139,12 +139,21 @@ class TranslateError(RuntimeError):
 
 
 # Mỗi engine cần những gói nào, và bảo người dùng cài thế nào nếu thiếu.
+#
+# Câu gợi ý cố ý nói "thêm --extra X vào lệnh đang dùng" chứ không đưa một lệnh
+# trần kiểu `uv sync --extra ai`: `uv sync` làm môi trường khớp ĐÚNG danh sách
+# extra được nêu, nên chạy lệnh trần đó sẽ gỡ luôn torch, VieNeu, pyannote đã cài.
+def _need_extra(group: str) -> str:
+    return (f"Chưa cài nhóm {group}: thêm --extra {group} vào lệnh uv sync đang dùng "
+            f"(ví dụ: uv sync --extra cuda --extra {group}; xem README).")
+
+
 _ENGINE_NEEDS: dict[str, tuple[tuple[str, ...], str]] = {
     "google": (("deep_translator",), "Thiếu gói `deep-translator`."),
     "mymemory": (("deep_translator",), "Thiếu gói `deep-translator`."),
-    "nllb": (("torch", "transformers"), "Chưa cài nhóm offline: uv sync --extra offline"),
-    "claude": (("anthropic",), "Chưa cài: uv sync --extra ai"),
-    "openai": (("openai",), "Chưa cài: uv sync --extra ai"),
+    "nllb": (("torch", "transformers"), _need_extra("offline")),
+    "claude": (("anthropic",), _need_extra("ai")),
+    "openai": (("openai",), _need_extra("ai")),
 }
 
 
