@@ -188,3 +188,52 @@ $$('.step-btn').forEach(b => b.addEventListener('click', () => {
 }));
 $$('[data-goto]').forEach(b => b.addEventListener('click', () => goStep(+b.dataset.goto)));
 
+/* ------------------------- hộp xác nhận / nhập liệu ---------------------- */
+/* Không dùng window.confirm() / prompt(): trong trình duyệt nhúng (khung xem
+   của Claude, webview Electron...) chúng không hiện gì mà trả về false/null
+   ngay lập tức, nên mọi nút xoá, đổi tên, thêm tập "bấm mà không làm gì".
+   Hai hộp dưới đây vẽ trong trang và trả về Promise. */
+function _dialog({ message, input = null, ok = 'OK', cancel = 'Thôi', danger = false }) {
+  return new Promise(resolve => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-wrap';
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <p class="modal-msg"></p>
+        ${input === null ? '' : '<input type="text" class="m-input">'}
+        <div class="actions right">
+          <button class="btn sm ghost m-cancel" type="button"></button>
+          <button class="btn sm ${danger ? 'danger' : 'primary'} m-ok" type="button"></button>
+        </div>
+      </div>`;
+    // textContent chứ không phải innerHTML: tên file/bộ phim là dữ liệu người dùng
+    $('.modal-msg', wrap).textContent = message;
+    $('.m-cancel', wrap).textContent = cancel;
+    $('.m-ok', wrap).textContent = ok;
+    const field = $('.m-input', wrap);
+    if (field) field.value = input == null ? '' : String(input);
+    const value = () => (field ? field.value : true);
+    const done = v => { document.removeEventListener('keydown', onKey); wrap.remove(); resolve(v); };
+    const onKey = e => {
+      if (e.key === 'Escape') done(null);
+      else if (e.key === 'Enter' && field && e.target === field) done(value());
+    };
+    $('.m-cancel', wrap).addEventListener('click', () => done(null));
+    $('.m-ok', wrap).addEventListener('click', () => done(value()));
+    wrap.addEventListener('click', e => { if (e.target === wrap) done(null); });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(wrap);
+    if (field) { field.focus(); field.select(); }
+    else $('.m-cancel', wrap).focus();   // Enter vô tình thì huỷ, không xoá
+  });
+}
+
+// Thay confirm(): true khi bấm nút xác nhận, false khi huỷ.
+async function askConfirm(message, { ok = 'Xoá', cancel = 'Thôi', danger = true } = {}) {
+  return (await _dialog({ message, ok, cancel, danger })) === true;
+}
+
+// Thay prompt(): chuỗi đã nhập, hoặc null khi huỷ (giống prompt để code gọi khỏi đổi).
+function askInput(message, def = '', { ok = 'OK', cancel = 'Thôi' } = {}) {
+  return _dialog({ message, input: def, ok, cancel });
+}

@@ -88,7 +88,7 @@ async function refreshCacheInfo() {
 }
 
 $('#clearCache').addEventListener('click', async () => {
-  if (!confirm('Xoá toàn bộ cache dịch AI?')) return;
+  if (!(await askConfirm('Xoá toàn bộ cache dịch AI?'))) return;
   try {
     const result = await api('/api/translation-cache', { method: 'DELETE' });
     toast(`Đã xoá ${result.deleted} mục cache AI.`, 'ok');
