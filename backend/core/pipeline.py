@@ -430,7 +430,7 @@ def run_render(job: Job, state: dict, cfg: dict) -> None:
         if not media.has_libass():
             raise RuntimeError(
                 "ffmpeg hiện tại không hỗ trợ nung phụ đề (thiếu libass). "
-                "Chạy: uv run python -m app.setup_ffmpeg"
+                "Chạy: uv run python -m backend.core.setup_ffmpeg"
             )
         job.start_step("burn", "Đang encode…")
         out_name = f"{stem}.hardsub.mp4"

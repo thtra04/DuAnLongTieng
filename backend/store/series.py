@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .config import DATA_DIR
+from ..config import DATA_DIR
 
 INDEX_PATH = DATA_DIR / "series.json"
 

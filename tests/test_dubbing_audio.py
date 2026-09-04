@@ -12,8 +12,8 @@ import re
 import numpy as np
 import pytest
 
-from app import dubbing
-from app.dubbing import (
+from backend.core import dubbing
+from backend.core.dubbing import (
     GAIN_LIMIT_DB,
     SR,
     VOICE_ABOVE_BG_DB,
@@ -30,7 +30,7 @@ from app.dubbing import (
     balance,
     wav_levels,
 )
-from app.subtitles import Cue
+from backend.core.subtitles import Cue
 
 
 # --------------------------------------------------- chuỗi atempo

@@ -47,7 +47,7 @@ def main() -> None:
     import uvicorn
 
     uvicorn.run(
-        "app.main:app",
+        "backend.main:app",
         host=args.host,
         port=args.port,
         reload=args.reload,

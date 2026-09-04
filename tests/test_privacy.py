@@ -30,7 +30,7 @@ import pytest
 )
 def test_import_config_tat_telemetry(name, expected):
     """Kiểm trong tiến trình sạch, vì biến đã được đặt sẵn ở tiến trình pytest."""
-    code = f"import os; from app import config; print(os.environ.get({name!r}, ''))"
+    code = f"import os; from backend import config; print(os.environ.get({name!r}, ''))"
     env = {k: v for k, v in os.environ.items() if k != name}
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=60)
     assert out.returncode == 0, out.stderr[-400:]
@@ -39,7 +39,7 @@ def test_import_config_tat_telemetry(name, expected):
 
 def test_nguoi_dung_co_y_bat_thi_khong_bi_ghi_de():
     """setdefault chứ không phải gán đè — ai muốn bật telemetry thì vẫn bật được."""
-    code = "import os; from app import config; print(os.environ['PYANNOTE_METRICS_ENABLED'])"
+    code = "import os; from backend import config; print(os.environ['PYANNOTE_METRICS_ENABLED'])"
     env = dict(os.environ, PYANNOTE_METRICS_ENABLED="true")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=60)
     assert out.stdout.strip() == "true"
@@ -65,7 +65,7 @@ class PipelineGia:
 @pytest.fixture
 def pyannote_gia(monkeypatch):
     """Cắm module pyannote giả vào sys.modules; xoá cache pipeline của diarize."""
-    from app import diarize
+    from backend.core import diarize
 
     pkg = types.ModuleType("pyannote")
     audio = types.ModuleType("pyannote.audio")
@@ -114,7 +114,7 @@ def test_pipeline_duoc_cache_khong_nap_lai(pyannote_gia):
 
 def test_from_pretrained_tra_none_thi_bao_ro_ly_do(pyannote_gia, monkeypatch):
     """pyannote trả None (không raise) khi chưa chấp nhận điều khoản — phải dịch ra lời người."""
-    from app.diarize import DiarizeError
+    from backend.core.diarize import DiarizeError
 
     monkeypatch.setattr(PipelineGia, "from_pretrained", classmethod(lambda cls, m, **k: None))
     with pytest.raises(DiarizeError, match="chấp nhận điều khoản"):
@@ -126,12 +126,13 @@ def test_from_pretrained_tra_none_thi_bao_ro_ly_do(pyannote_gia, monkeypatch):
 
 def test_giao_dien_khong_tai_tai_nguyen_tu_ben_ngoai():
     """Không script/style/font/ảnh từ CDN — mở trang là không có request nào ra ngoài."""
-    from app.config import WEB_DIR
+    from backend.config import FRONTEND_DIR
     import re
 
-    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
-    css = (WEB_DIR / "style.css").read_text(encoding="utf-8")
+    html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+    js = "\n".join(p.read_text(encoding="utf-8") for p in sorted((FRONTEND_DIR / "js").glob("*.js")))
+    js += (FRONTEND_DIR / "config.js").read_text(encoding="utf-8")
+    css = (FRONTEND_DIR / "css" / "style.css").read_text(encoding="utf-8")
 
     for src in re.findall(r'<(?:script|link|img|iframe)[^>]+(?:src|href)="([^"]+)"', html):
         assert not src.startswith(("http://", "https://", "//")), f"tài nguyên ngoài: {src}"
@@ -141,9 +142,9 @@ def test_giao_dien_khong_tai_tai_nguyen_tu_ben_ngoai():
 
 
 def test_khong_ghi_bi_mat_xuong_localStorage():
-    from app.config import WEB_DIR
+    from backend.config import FRONTEND_DIR
 
-    js = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    js = (FRONTEND_DIR / "js" / "core.js").read_text(encoding="utf-8")
     # Khối saveJobRecovery phải xoá cả hai khoá bí mật trước khi lưu
     block = js[js.index("function saveJobRecovery") : js.index("function clearJobRecovery")]
     assert "delete safe.api_key" in block

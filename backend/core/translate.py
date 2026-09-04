@@ -19,7 +19,7 @@ _CACHE_FILE = None
 
 
 def _translation_cache_file():
-    from .config import DATA_DIR
+    from ..config import DATA_DIR
 
     global _CACHE_FILE
     if _CACHE_FILE is None:
@@ -456,7 +456,7 @@ def _load_nllb():
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
     from . import hf_cache
-    from .config import MODEL_DIR
+    from ..config import MODEL_DIR
 
     with _nllb_lock:
         if NLLB_MODEL in _nllb_cache:

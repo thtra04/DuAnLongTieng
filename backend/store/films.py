@@ -20,7 +20,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .config import DATA_DIR
+from ..config import DATA_DIR
 
 STORE = DATA_DIR / "films.json"
 

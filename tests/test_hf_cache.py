@@ -8,7 +8,7 @@ viện đọc file text đó rồi báo lỗi rất khó hiểu (CTranslate2 đ�
 
 from __future__ import annotations
 
-from app.hf_cache import repair
+from backend.core.hf_cache import repair
 
 BLOB = "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae"
 NOI_DUNG = b"day-la-model-that" * 100

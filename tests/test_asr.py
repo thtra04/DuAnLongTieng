@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.asr import _collect, _is_cuda_failure, coverage, find_gaps, voiced_time
+from backend.core.asr import _collect, _is_cuda_failure, coverage, find_gaps, voiced_time
 
 
 def seg(start, end, text="chữ", **kw):

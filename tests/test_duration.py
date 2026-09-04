@@ -6,8 +6,8 @@ import random
 
 import pytest
 
-from app import duration
-from app.duration import (
+from backend.core import duration
+from backend.core.duration import (
     FEATURE_NAMES,
     DurationModel,
     default_model,

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import hf_cache
-from .config import MODEL_DIR
+from ..config import MODEL_DIR
 
 _lock = threading.Lock()
 _cache: dict[tuple, object] = {}

@@ -13,8 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app import dubbing
-from app.subtitles import Cue
+from backend.core import dubbing
+from backend.core.subtitles import Cue
 
 
 class FakeEngine:

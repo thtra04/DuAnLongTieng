@@ -6,8 +6,8 @@ vẫn hiện đủ chữ, không có lỗi nào bung ra — chỉ là chữ lệ
 
 from __future__ import annotations
 
-from app.subtitles import Cue
-from app.translate import (
+from backend.core.subtitles import Cue
+from backend.core.translate import (
     _ai_batches,
     _length_units,
     _parse_numbered,

@@ -15,6 +15,42 @@ Tool tạo **phụ đề** và **dịch video** chạy hoàn toàn trên máy b�
 
 ---
 
+## Kiến trúc: frontend và backend tách rời
+
+```
+backend/                 API + lõi xử lý (Python, FastAPI)
+  main.py                dựng app, ghép router, phục vụ giao diện, CORS
+  config.py              đường dẫn, cấu hình, tắt telemetry của thư viện
+  api/                   router HTTP theo miền — chỉ nhận và trả JSON
+    system  tts  media  jobs  films  projects  deps
+  core/                  lõi xử lý, không biết gì về HTTP — gọi được từ CLI, test hay server
+    asr  align  diarize  translate  budget  duration  dubbing  media
+    pipeline  metrics  subtitles  languages  jobs  hf_cache  setup_ffmpeg
+  store/                 lưu trữ JSON: films  projects  series
+frontend/                giao diện tĩnh HTML/CSS/JS, không cần build
+  index.html  config.js  (config.js: địa chỉ backend, window.VSUB_API_BASE)
+  css/style.css
+  js/                    core → boot → films → source → setup → progress → editor → dubbing → export → prefs → main
+scripts/                 công cụ dòng lệnh: sinh dữ liệu, huấn luyện, gom kết quả đo
+tests/                   pytest — chạy được không cần torch / pyannote / vieneu
+```
+
+Hai bên chỉ nói chuyện qua HTTP JSON dưới `/api/...`; tài liệu API tự sinh ở
+<http://127.0.0.1:8000/api/docs>. Backend phục vụ giao diện cho tiện, nhưng giao diện chạy
+độc lập được bằng bất kỳ máy chủ tĩnh nào:
+
+```bash
+# cửa sổ 1 — backend, cho phép origin của giao diện (Windows: set VSUB_CORS_ORIGINS=...)
+VSUB_CORS_ORIGINS=http://127.0.0.1:5500 uv run python run.py --no-browser
+
+# cửa sổ 2 — giao diện; trước đó sửa frontend/config.js:
+#   window.VSUB_API_BASE = 'http://127.0.0.1:8000';
+python -m http.server -d frontend 5500
+```
+
+Mọi đường dẫn `/api/...` trong giao diện đều đi qua `apiUrl()` / `API_BASE` ở `frontend/js/core.js`
+— không có chỗ nào ghép cứng địa chỉ backend.
+
 ## Cài đặt
 
 Cần [uv](https://docs.astral.sh/uv/) (quản lý Python & thư viện):
@@ -43,7 +79,7 @@ uv sync --extra cuda --extra ai --extra offline --extra tts --extra clone --extr
 Nếu muốn bản đầy đủ (kèm `ffprobe`):
 
 ```bash
-uv run python -m app.setup_ffmpeg
+uv run python -m backend.core.setup_ffmpeg
 ```
 
 ## Chạy
@@ -282,7 +318,7 @@ từ corpus phụ đề, mất khoảng một giây mỗi câu trên CPU.
 
 **Khung đo tự động.** Mỗi lần lồng tiếng, tool ghi `data/jobs/<id>/eval.json`: tỉ lệ câu phải nén,
 hệ số nén lớn nhất, tổng thời gian tràn, hệ số thời gian thực, kèm nhãn cấu hình C0…C4 (xem
-`app/metrics.py`). Gom và in bảng so sánh:
+`backend/core/metrics.py`). Gom và in bảng so sánh:
 
 ```bash
 uv run python scripts/eval_report.py
@@ -388,7 +424,7 @@ data/             Video upload, kết quả job, model đã tải  (không commi
 
 | Hiện tượng | Cách xử lý |
 |---|---|
-| Pill "không nung được" | `uv run python -m app.setup_ffmpeg` |
+| Pill "không nung được" | `uv run python -m backend.core.setup_ffmpeg` |
 | ASR chạy CPU dù có GPU | `uv sync --extra cuda` — cần driver NVIDIA hỗ trợ CUDA 12 |
 | Hết VRAM khi dùng `large-v3` | Chọn model nhỏ hơn, hoặc đặt Thiết bị = CPU |
 | Google Translate lỗi/bị chặn | Chuyển sang MyMemory hoặc NLLB-200 |
@@ -428,7 +464,7 @@ và không có thống kê sử dụng nào của riêng tool.
 **Telemetry của thư viện — đã tắt sẵn.** `pyannote.audio` (nhận diện người nói) mặc định gửi
 thời lượng file audio, số nhân vật và tên model về `otel.pyannote.ai` mỗi lần chạy. Tool đặt
 `PYANNOTE_METRICS_ENABLED=false` (cùng `HF_HUB_DISABLE_TELEMETRY`, `GRADIO_ANALYTICS_ENABLED`)
-ngay lúc khởi động, trước khi bất kỳ thư viện nào được nạp — xem [app/config.py](app/config.py).
+ngay lúc khởi động, trước khi bất kỳ thư viện nào được nạp — xem [backend/config.py](backend/config.py).
 Muốn bật lại thì đặt biến môi trường trước khi chạy; tool không ghi đè lựa chọn của bạn.
 
 **Giọng lồng tiếng có dấu ẩn.** VieNeu-TTS đóng một watermark không nghe thấy (thư viện Perth)

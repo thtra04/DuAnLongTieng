@@ -18,7 +18,7 @@ import shutil
 from pathlib import Path
 
 from . import series
-from .config import JOB_DIR, UPLOAD_DIR
+from ..config import JOB_DIR, UPLOAD_DIR
 
 # Đuôi file được coi là kết quả xuất ra, đáng cho người dùng tải lại
 _OUTPUT_EXT = {".srt", ".vtt", ".txt", ".ass", ".mp4", ".mkv", ".webm", ".wav"}

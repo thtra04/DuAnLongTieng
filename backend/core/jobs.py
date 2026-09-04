@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import JOB_DIR
+from ..config import JOB_DIR
 
 
 @dataclass

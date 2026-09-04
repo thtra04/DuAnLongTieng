@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from app.diarize import assign, relabel_by_talktime, speakers_of
-from app.subtitles import Cue
+from backend.core.diarize import assign, relabel_by_talktime, speakers_of
+from backend.core.subtitles import Cue
 
 
 def turn(start: float, end: float, speaker: str) -> dict:
@@ -158,7 +158,7 @@ def test_available_khong_nap_thu_vien_nang():
     import sys
 
     code = (
-        "import sys; from app import diarize; diarize.available();"
+        "import sys; from backend.core import diarize; diarize.available();"
         "heavy=[m for m in ('torch','pyannote.audio','speechbrain') if m in sys.modules];"
         "print(','.join(heavy))"
     )

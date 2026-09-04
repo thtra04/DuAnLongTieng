@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from app import metrics
-from app.metrics import (
+from backend.core import metrics
+from backend.core.metrics import (
     CONFIGS,
     aggregate,
     bleu,
@@ -23,7 +23,7 @@ from app.metrics import (
     to_markdown,
     write_record,
 )
-from app.subtitles import Cue
+from backend.core.subtitles import Cue
 
 
 def c(i, speaker=""):
