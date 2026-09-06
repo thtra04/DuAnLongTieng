@@ -28,6 +28,7 @@ from backend.core.dubbing import (
     _trim_silence,
     _write_wav,
     balance,
+    untranslated_lines,
     wav_levels,
 )
 from backend.core.subtitles import Cue
@@ -148,6 +149,43 @@ def test_khong_co_gi_doc_duoc_tra_rong():
 def test_chu_viet_thuong_van_doc_duoc():
     assert _clean_for_tts("Ừ") != ""
     assert _clean_for_tts("123") != ""
+
+
+# ------------------------------------- bản dịch còn sót chữ tiếng gốc
+
+
+def test_bo_chu_han_con_sot_trong_dong_nua_viet_nua_trung():
+    """Engine dịch trả nguyên văn đoạn nó chịu thua -> dòng nửa Việt nửa Trung.
+
+    Để nguyên thì giọng tiếng Việt đọc sai hoặc chạy loạn; phải bỏ phần chữ Hán
+    mà vẫn giữ đủ phần tiếng Việt.
+    """
+    out = _clean_for_tts("我們獲勝了只顧哔哔哔Công ty có thể cung cấp")
+    assert out == "Công ty có thể cung cấp."
+
+
+def test_giu_nguyen_dau_tieng_viet():
+    assert _clean_for_tts("Đường phố Hà Nội rất đẹp") == "Đường phố Hà Nội rất đẹp."
+
+
+@pytest.mark.parametrize("raw", ["こんにちは", "안녕하세요", "第一集"])
+def test_dong_toan_chu_tieng_goc_thi_rong(raw):
+    assert _clean_for_tts(raw) == ""
+
+
+def test_ke_ten_dong_dich_do_dang():
+    """Phải gọi tên dòng nào còn chữ tiếng gốc — im lặng bỏ là 'chỗ dịch chỗ mất'."""
+    cues = [
+        Cue(0, 1, "a", "Xin chào"),
+        Cue(1, 2, "b", "我們獲勝了Công ty"),
+        Cue(2, 3, "c", "我是獨眼巨人"),
+    ]
+    assert untranslated_lines(cues) == [2, 3]
+
+
+def test_khong_bao_nham_khi_dich_sach():
+    cues = [Cue(0, 1, "a", "Xin chào"), Cue(1, 2, "b", "Tạm biệt nhé")]
+    assert untranslated_lines(cues) == []
 
 
 # ------------------------------------------- chẻ đơn vị đọc quá dài
