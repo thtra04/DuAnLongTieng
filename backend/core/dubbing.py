@@ -263,6 +263,24 @@ _CUE_TAG = re.compile(r"\[[^\]]{1,20}\]")
 # thì đưa vào TTS là vô nghĩa.
 _READABLE = re.compile(r"[0-9A-Za-zÀ-ỹ]")
 
+# Chữ của tiếng nguồn mà giọng tiếng Việt không đọc được: Hán, Kana, Hangul.
+_SOURCE_SCRIPT = re.compile(
+    r"[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]+"
+)
+
+
+def untranslated_lines(cues: list[Cue]) -> list[int]:
+    """Số thứ tự (từ 1) những dòng mà bản dịch còn sót chữ tiếng nguồn.
+
+    Engine dịch gặp đoạn khó (tiếng động, chữ nhoè) hay trả lại nguyên văn. Phần
+    đó không đọc thành tiếng Việt được nên sẽ biến mất khỏi bản lồng tiếng —
+    đúng kiểu "chỗ dịch chỗ mất". Phải gọi tên ra chứ không được im lặng bỏ.
+    """
+    return [
+        i + 1 for i, c in enumerate(cues)
+        if _SOURCE_SCRIPT.search(c.text2 or "")
+    ]
+
 
 def _clean_for_tts(text: str, add_stop: bool = True) -> str:
     """Bỏ xuống dòng, ký tự lạ; giữ lại cue cảm xúc dạng [cười].
@@ -280,6 +298,12 @@ def _clean_for_tts(text: str, add_stop: bool = True) -> str:
     """
     text = text.replace("\n", " ").replace("♪", " ")
     text = re.sub(r"<[^>]+>", " ", text)
+    # Chữ Hán / Kana / Hangul còn sót trong bản dịch: engine dịch trả nguyên văn
+    # cho đoạn nó chịu thua, nên một dòng có thể nửa Việt nửa Trung. Giọng tiếng
+    # Việt không đọc được phần đó — để nguyên thì TTS đọc sai hoặc chạy loạn, mà
+    # log vẫn báo thành công. Bỏ đi ở đây; ai bị mất chữ thì `untranslated_lines`
+    # kể tên ra cho người dùng dịch lại.
+    text = _SOURCE_SCRIPT.sub(" ", text)
     text = re.sub(r"\s+", " ", text).strip()
     if not _READABLE.search(text):
         return ""
@@ -656,6 +680,17 @@ def build_dub_track(
             + ("…" if len(skipped) > 12 else "")
             + "). Thường là chưa có bản dịch, hoặc dòng chỉ có dấu câu / chữ gốc."
         )
+    # Dòng dịch dở: còn nguyên chữ tiếng nguồn. Phần đó bị bỏ khi đọc nên khán
+    # giả nghe tiếng gốc chưa dịch ở đúng chỗ ấy — nói rõ là dòng nào.
+    half_done = untranslated_lines(cues) if use_translation else []
+    stats_untranslated = len(half_done)
+    if half_done and on_log:
+        head = ", ".join(str(n) for n in half_done[:12])
+        on_log(
+            f"⚠ {len(half_done)} dòng bản dịch còn sót chữ tiếng gốc (dòng {head}"
+            + ("…" if len(half_done) > 12 else "")
+            + "). Phần chữ đó không đọc được nên sẽ lặng — dịch lại mấy dòng này ở bước 4."
+        )
     if on_log and not per_cue and units:
         on_log(
             f"Đọc theo câu trọn: {len(cues)} dòng phụ đề gộp thành {len(units)} câu "
@@ -670,6 +705,7 @@ def build_dub_track(
         "count": 0, "sped_up": 0, "overflow": 0, "failed": 0, "max_factor": 1.0,
         "trimmed_ms": 0.0, "overflow_s": 0.0, "worst": [], "runaway": 0,
         "skipped": len(skipped),
+        "untranslated": stats_untranslated,
     }
     first_error = ""
     stats["units"] = len(units)

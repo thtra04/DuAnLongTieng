@@ -8,11 +8,78 @@ from __future__ import annotations
 
 import pytest
 
-from backend.core.asr import _collect, _is_cuda_failure, coverage, find_gaps, voiced_time
+from backend.core.asr import (
+    GAP_RESCAN,
+    _collect,
+    _is_cuda_failure,
+    coverage,
+    find_gaps,
+    looks_like_speech,
+    voiced_time,
+)
 
 
 def seg(start, end, text="chữ", **kw):
     return {"start": start, "end": end, "text": text, **kw}
+
+
+def rescan_seg(text="Xin chào", no_speech=0.2, logprob=-0.5, compression=1.4):
+    return {"start": 0, "end": 1, "text": text, "no_speech_prob": no_speech,
+            "avg_logprob": logprob, "compression_ratio": compression}
+
+
+# ------------------------------------------- giữ/bỏ đoạn quét bù
+
+
+def test_giu_thoai_that_ro_rang():
+    assert looks_like_speech(rescan_seg())
+
+
+def test_giu_loi_hat_de_nhac_du_no_speech_cao():
+    """Đo thật: lời hát "我愛你" trên nhạc to bị chấm no_speech 0,84 nhưng là tiếng thật.
+
+    Mất đoạn này thì khán giả nghe tiếng gốc chưa dịch — đúng lỗi 'chỗ dịch chỗ mất'.
+    """
+    assert looks_like_speech(rescan_seg(no_speech=0.84, logprob=-1.1))
+
+
+def test_bo_van_ban_lap_vi_la_whisper_bia():
+    """Lời bịa trên nhạc lặp đi lặp lại nên tỉ lệ nén cao — chặn ở đây."""
+    assert not looks_like_speech(rescan_seg(text="啦啦啦啦啦啦啦啦", compression=3.5))
+
+
+def test_bo_doan_do_tin_qua_thap():
+    assert not looks_like_speech(rescan_seg(logprob=-2.0))
+
+
+@pytest.mark.parametrize("text", [
+    "字幕by索兰娅",
+    "請不吝點贊訂閱轉發打賞支持明鏡與點點欄目",
+    "谢谢观看",
+    "Subtitles by the Amara.org community",
+])
+def test_bo_cau_ghi_cong_va_keu_goi_dang_ky(text):
+    """Whisper bịa mấy câu này trên nhạc dù độ tin cao — thoại phim không có."""
+    assert not looks_like_speech(rescan_seg(text=text, no_speech=0.2, logprob=-0.3))
+
+
+def test_thoai_that_khong_bi_chan_nham():
+    for text in ("我愛你", "我是独眼巨人", "我们获胜了", "Tôi yêu bạn"):
+        assert looks_like_speech(rescan_seg(text=text)), text
+
+
+def test_bo_doan_rong():
+    assert not looks_like_speech(rescan_seg(text="   "))
+
+
+def test_bo_khi_gan_chac_la_khong_co_tieng():
+    assert not looks_like_speech(rescan_seg(no_speech=0.95))
+
+
+def test_nguong_quet_bu_bat_duoc_khoang_ngan():
+    """Từng để 20s nên đoạn thoại 4–13s lọt lưới; nay phải bắt được khoảng ~4s."""
+    assert GAP_RESCAN <= 4.0
+    assert find_gaps([seg(0, 10), seg(14, 20)], 20) == [(10, 14)]
 
 
 # -------------------------------------------------------- thời gian có lời

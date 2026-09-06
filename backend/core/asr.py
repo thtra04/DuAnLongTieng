@@ -27,11 +27,63 @@ _cuda_broken = False
 
 # Coi là "hụt" nếu phụ đề phủ dưới ngần này so với thời lượng video
 COVERAGE_TARGET = 0.85
-# Khoảng trống dài hơn ngần này (giây) thì quét bù
-GAP_RESCAN = 20.0
-# Ngưỡng lọc kết quả quét bù, tránh Whisper bịa lời trên đoạn nhạc/im lặng
-RESCAN_MAX_NO_SPEECH = 0.5
+# Khoảng trống dài hơn ngần này (giây) thì quét bù. Để 3,5s: đo trên video thật
+# (recap phim nhanh, nhạc nền to) thấy nhiều đoạn thoại 4–13s lọt lưới vì ngưỡng
+# cũ 20s — khán giả nghe nguyên tiếng gốc chưa dịch ở mấy đoạn đó.
+GAP_RESCAN = 3.5
+# Quét bù tối đa ngần này khoảng trống một lần, để video im lặng dài không kéo
+# thời gian nhận dạng lên vô tận.
+GAP_RESCAN_MAX = 40
+# Ngưỡng lọc kết quả quét bù, tránh Whisper bịa lời trên đoạn nhạc/im lặng.
+# no_speech nới tới 0,85: lời HÁT hoặc thoại đè nhạc to bị Whisper chấm
+# no_speech rất cao (đo thật: "我愛你" hát trên nhạc = 0,84) tuy vẫn là tiếng
+# người thật. Chốt chặn thứ thiệt là tỉ lệ nén: lời bịa trên nhạc luôn lặp đi
+# lặp lại nên nén rất cao.
+RESCAN_MAX_NO_SPEECH = 0.85
 RESCAN_MIN_LOGPROB = -1.2
+# Đoạn có tỉ lệ nén cao hơn ngần này là văn bản lặp — dấu hiệu Whisper bịa
+# (chuẩn của openai-whisper). Onomatopoeia lặp ("啪啪啪…") cũng rơi vào đây,
+# bỏ đúng vì đó là tiếng động chứ không phải thoại.
+RESCAN_MAX_COMPRESSION = 2.4
+
+
+# Câu Whisper hay bịa trên nhạc/đoạn lặng: dòng ghi công người làm phụ đề và lời
+# kêu gọi đăng ký kênh. Thoại phim gần như không bao giờ chứa mấy chữ này, nên
+# thấy là bỏ — kể cả khi độ tin cao. (Đo thật trên video mẫu bắt được
+# "字幕by索兰娅" và "請不吝點贊訂閱轉發打賞…".)
+_HALLUCINATION_MARKERS = (
+    "字幕", "订阅", "訂閱", "点赞", "點贊", "打赏", "打賞", "转发", "轉發",
+    "明镜", "明鏡", "点点栏目", "點點欄目", "字幕组", "字幕組", "志愿者", "志願者",
+    "谢谢观看", "謝謝觀看", "感谢观看", "感謝觀看", "关注", "關注",
+    "amara", "subscribe", "subtitles by", "thanks for watching",
+)
+
+
+def _is_boilerplate(text: str) -> bool:
+    low = text.lower()
+    return any(m in low for m in _HALLUCINATION_MARKERS)
+
+
+def looks_like_speech(seg: dict) -> bool:
+    """Đoạn quét bù này là tiếng người thật, hay Whisper bịa trên nhạc/im lặng?
+
+    Ưu tiên KHÔNG bỏ sót thoại thật: mất một đoạn thoại là khán giả nghe tiếng
+    gốc chưa dịch, còn lỡ giữ một dòng bịa thì người dùng xoá tay ở bước 4. Nên
+    ngưỡng nới rộng, chỉ chặn những thứ chắc chắn là rác: văn bản lặp (nén cao),
+    độ tin quá thấp, và mấy câu ghi công / kêu gọi đăng ký kênh Whisper hay bịa.
+    """
+    text = (seg.get("text") or "").strip()
+    if not text:
+        return False
+    if _is_boilerplate(text):
+        return False
+    if seg.get("compression_ratio", 1.0) > RESCAN_MAX_COMPRESSION:
+        return False
+    if seg.get("avg_logprob", 0.0) < RESCAN_MIN_LOGPROB:
+        return False
+    if seg.get("no_speech_prob", 0.0) > RESCAN_MAX_NO_SPEECH:
+        return False
+    return True
 
 
 def _prepare_cuda_dlls() -> None:
@@ -154,6 +206,7 @@ def _collect(segments, on_seg=None) -> list[dict]:
             "text": seg.text,
             "no_speech_prob": float(getattr(seg, "no_speech_prob", 0.0) or 0.0),
             "avg_logprob": float(getattr(seg, "avg_logprob", 0.0) or 0.0),
+            "compression_ratio": float(getattr(seg, "compression_ratio", 1.0) or 1.0),
             "words": [
                 {"word": w.word, "start": float(w.start), "end": float(w.end)}
                 for w in (seg.words or [])
@@ -326,11 +379,12 @@ def transcribe(
 
     # ------- lượt 3: quét bù các khoảng trống lớn
     if auto_fix and total > 0:
-        gaps = [g for g in find_gaps(segs, total) if g[1] - g[0] >= GAP_RESCAN]
+        gaps = [g for g in find_gaps(segs, total) if g[1] - g[0] >= GAP_RESCAN][:GAP_RESCAN_MAX]
         if gaps:
             if on_log:
                 pretty = ", ".join(f"{int(a)}–{int(b)}s" for a, b in gaps[:5])
-                on_log(f"Còn {len(gaps)} khoảng trống dài ({pretty}) — đang quét bù…")
+                on_log(f"Còn {len(gaps)} khoảng trống ({pretty}"
+                       + ("…" if len(gaps) > 5 else "") + ") — đang quét bù…")
             added = 0
             for gi, (a, b) in enumerate(gaps):
                 def p3(x: float, gi=gi) -> None:
@@ -345,13 +399,9 @@ def transcribe(
                     if on_log:
                         on_log(f"Quét bù {int(a)}–{int(b)}s lỗi, bỏ qua: {exc}")
                     continue
-                # lọc chặt để tránh Whisper bịa lời trên đoạn nhạc/im lặng
-                keep = [
-                    s for s in extra
-                    if s["no_speech_prob"] < RESCAN_MAX_NO_SPEECH
-                    and s["avg_logprob"] > RESCAN_MIN_LOGPROB
-                    and s["text"].strip()
-                ]
+                # Giữ đoạn nào nghe như tiếng người thật, bỏ đoạn Whisper bịa
+                # trên nhạc/im lặng (xem looks_like_speech).
+                keep = [s for s in extra if looks_like_speech(s)]
                 segs.extend(keep)
                 added += len(keep)
             if added:
