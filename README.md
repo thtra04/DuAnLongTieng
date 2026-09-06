@@ -31,7 +31,7 @@ frontend/                giao diện tĩnh HTML/CSS/JS, không cần build
   index.html  config.js  (config.js: địa chỉ backend, window.VSUB_API_BASE)
   css/style.css
   js/                    core → boot → films → source → setup → progress → editor → dubbing → export → prefs → main
-scripts/                 công cụ dòng lệnh: sinh dữ liệu, huấn luyện, gom kết quả đo
+training/                notebook huấn luyện AI (.ipynb): sinh dữ liệu, train, khung đo
 tests/                   pytest — chạy được không cần torch / pyannote / vieneu
 ```
 
@@ -312,22 +312,27 @@ dịch  →  dự đoán số giây TTS sẽ đọc (mô hình HP-3)  →  so v�
 
 Chỉ engine Claude / OpenAI rút gọn có kiểm soát được; Google / MyMemory thì vòng lặp chỉ đo và báo.
 
-| Việc | Lệnh |
+Phần huấn luyện nằm trong notebook, xem [training/README.md](training/README.md):
+
+| Việc | Notebook |
 |---|---|
-| Sinh dữ liệu thời lượng đọc bằng VieNeu-TTS (tự động, không gán nhãn tay) | `uv run python scripts/gen_duration_data.py --input scripts/seed_vi.txt` |
-| Huấn luyện mô hình dự đoán thời lượng | `uv run python scripts/train_duration.py` |
+| Sinh dữ liệu thời lượng đọc bằng VieNeu-TTS (tự động, không gán nhãn tay) | `training/01_sinh_du_lieu_thoi_luong.ipynb` |
+| Huấn luyện mô hình dự đoán thời lượng | `training/02_huan_luyen_duration.ipynb` |
+
+```bash
+uv run jupyter lab training/
+```
 
 Mô hình lưu ở `data/models/duration_vi.json`; chưa có thì tool dùng ước lượng thô ~4,3 âm tiết/giây.
-Với `scripts/seed_vi.txt` (90 câu) chỉ là chạy thử đường ống — dữ liệu thật cần vài chục nghìn câu
-từ corpus phụ đề, mất khoảng một giây mỗi câu trên CPU.
+Với `training/data/seed_vi.txt` (86 câu) chỉ là chạy thử đường ống — dữ liệu thật cần vài chục nghìn
+câu từ corpus phụ đề, mất khoảng một giây mỗi câu trên CPU.
 
 **Khung đo tự động.** Mỗi lần lồng tiếng, tool ghi `data/jobs/<id>/eval.json`: tỉ lệ câu phải nén,
 hệ số nén lớn nhất, tổng thời gian tràn, hệ số thời gian thực, kèm nhãn cấu hình C0…C4 (xem
 `backend/core/metrics.py`). Gom và in bảng so sánh:
 
-```bash
-uv run python scripts/eval_report.py
-```
+Mở `training/04_khung_do_ket_qua.ipynb` — nó in bảng Markdown dán thẳng vào báo cáo
+và xuất kèm CSV.
 
 **Đọc theo câu trọn, không đọc từng dòng phụ đề.** Đây là chỗ quyết định chất lượng.
 
