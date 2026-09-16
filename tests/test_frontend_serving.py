@@ -24,7 +24,7 @@ def client():
 
 def test_trang_chu_nap_dung_thu_tu_js(client):
     html = client.get("/").text
-    order = ["core", "boot", "films", "source", "setup", "ai", "progress", "editor", "dubbing", "export", "prefs", "main"]
+    order = ["core", "theme", "boot", "films", "source", "setup", "ai", "progress", "editor", "dubbing", "export", "prefs", "main"]
     positions = [html.index(f"/js/{n}.js?v=") for n in order]
     assert positions == sorted(positions), "core phải nạp trước, main (boot()) phải nạp sau cùng"
     assert html.index("/config.js?v=") < positions[0], "config.js phải nạp trước core.js"
