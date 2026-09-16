@@ -30,7 +30,8 @@ backend/                 API + lõi xử lý (Python, FastAPI)
 frontend/                giao diện tĩnh HTML/CSS/JS, không cần build
   index.html  config.js  (config.js: địa chỉ backend, window.VSUB_API_BASE)
   css/style.css
-  js/                    core → boot → films → source → setup → progress → editor → dubbing → export → prefs → main
+  js/                    core → theme → boot → films → source → setup → ai → progress → editor → dubbing → export → prefs → main
+                         (theme.js: 6 bảng màu + màu nhấn tuỳ ý, chọn ở góc phải header, nhớ cho lần sau)
 training/                notebook huấn luyện AI (.ipynb): sinh dữ liệu, train, khung đo
 tests/                   pytest — chạy được không cần torch / pyannote / vieneu
 ```
