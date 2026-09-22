@@ -33,9 +33,11 @@ def _report(done: int, block: int, total: int) -> None:
 
 def main() -> int:
     dest = TOOLS_DIR / "ffmpeg"
-    exe = dest / "bin" / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
-    if exe.exists():
-        print(f"✓ Đã có ffmpeg tại: {exe}")
+    ext = ".exe" if sys.platform == "win32" else ""
+    exe = dest / "bin" / f"ffmpeg{ext}"
+    probe = dest / "bin" / f"ffprobe{ext}"
+    if exe.exists() and probe.exists():
+        print(f"✓ Đã có ffmpeg + ffprobe tại: {dest / 'bin'}")
         return 0
 
     url = WIN_URL if sys.platform == "win32" else LINUX_URL

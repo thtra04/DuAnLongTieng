@@ -1,12 +1,10 @@
-"""Kiểm thử kho bộ phim & tập (`films.json`).
+"""Kiểm thử kho bộ phim & tập — SQLite qua SQLAlchemy.
 
 Luồng đúng thứ tự: tạo bộ -> tạo tập -> gắn video vào tập. Một tập tồn tại
 TRƯỚC khi có video, nên `job` của nó ban đầu là None.
 """
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
@@ -15,9 +13,8 @@ from backend.store.films import FilmError
 
 
 @pytest.fixture(autouse=True)
-def kho_tam(workdir, monkeypatch):
-    """Mỗi test một file films.json riêng — không đụng dữ liệu thật của người dùng."""
-    monkeypatch.setattr(films, "STORE", workdir / "films.json")
+def kho_tam(tmp_db):
+    """Mỗi test một DB riêng — không đụng dữ liệu thật của người dùng."""
 
 
 # ------------------------------------------------------------ tạo bộ
@@ -196,24 +193,8 @@ def test_go_job_khong_gan_o_dau_thi_khong_doi_gi():
     assert films.unbind_job("job-la") is False
 
 
-# ------------------------------------------------------- file hỏng
+# ------------------------------------------------------- DB rỗng
 
 
-def test_file_khong_ton_tai_thi_kho_rong():
+def test_db_rong_thi_kho_rong():
     assert films.all_films() == []
-
-
-def test_file_json_hong_khong_lam_no_chuong_trinh():
-    films.STORE.write_text("{ đây không phải json", encoding="utf-8")
-    assert films.all_films() == []
-
-
-def test_file_dung_json_nhung_sai_cau_truc():
-    films.STORE.write_text('["không phải object"]', encoding="utf-8")
-    assert films.all_films() == []
-
-
-def test_ghi_ra_utf8_doc_duoc():
-    films.create("Tên có dấu tiếng Việt")
-    data = json.loads(films.STORE.read_text(encoding="utf-8"))
-    assert data["films"][0]["name"] == "Tên có dấu tiếng Việt"

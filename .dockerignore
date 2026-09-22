@@ -1,0 +1,14 @@
+.venv/
+.git/
+.github/
+__pycache__/
+*.pyc
+data/
+tools/
+tests/
+training/data/
+*.egg-info/
+.claude/
+.mypy_cache/
+.pytest_cache/
+node_modules/
