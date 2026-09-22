@@ -26,17 +26,14 @@ from .api import ai, films, jobs, media, projects, system, tts
 from .api.deps import safe_id
 from .config import FRONTEND_DIR
 from .core import media as core_media
+from .db import init_db
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """Hâm nóng những thứ nặng mà `/api/system` cần, ngay khi server chạy.
+    """Khởi tạo DB và hâm nóng những thứ nặng khi server chạy."""
+    init_db()
 
-    `asr.gpu_available()` phải `import ctranslate2` thật mới hỏi được số GPU —
-    mất ~3,4 giây. Không nạp trước thì cái giá đó rơi đúng vào lần mở trang đầu
-    tiên. Chạy trong thread nền và nuốt mọi lỗi: hỏng thì `/api/system` tự nạp
-    lại như cũ, không được phép làm server không lên.
-    """
     def warm() -> None:
         try:
             from .core import asr

@@ -14,7 +14,7 @@ from backend.store import films, projects
 
 
 @pytest.fixture(autouse=True)
-def kho_tam(workdir, monkeypatch):
+def kho_tam(workdir, monkeypatch, tmp_db):
     """Thư mục job / upload / kho phim riêng cho mỗi test."""
     jobs = workdir / "jobs"
     uploads = workdir / "uploads"
@@ -22,7 +22,6 @@ def kho_tam(workdir, monkeypatch):
     uploads.mkdir()
     monkeypatch.setattr(projects, "JOB_DIR", jobs)
     monkeypatch.setattr(projects, "UPLOAD_DIR", uploads)
-    monkeypatch.setattr(films, "STORE", workdir / "films.json")
     return workdir
 
 

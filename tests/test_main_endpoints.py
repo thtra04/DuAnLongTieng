@@ -19,7 +19,7 @@ def client():
 
 
 @pytest.fixture
-def kho_tam(workdir, monkeypatch):
+def kho_tam(workdir, monkeypatch, tmp_db):
     jobs = workdir / "jobs"
     uploads = workdir / "uploads"
     jobs.mkdir()
@@ -29,7 +29,6 @@ def kho_tam(workdir, monkeypatch):
     for mod in (projects, deps, api_jobs, api_media):
         monkeypatch.setattr(mod, "JOB_DIR", jobs, raising=False)
         monkeypatch.setattr(mod, "UPLOAD_DIR", uploads, raising=False)
-    monkeypatch.setattr(films, "STORE", workdir / "films.json")
     return workdir
 
 

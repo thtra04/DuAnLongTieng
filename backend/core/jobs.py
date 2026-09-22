@@ -133,11 +133,17 @@ _jobs: dict[str, Job] = {}
 _jobs_lock = threading.Lock()
 
 
-def create_job(kind: str, steps: list[Step]) -> Job:
+def create_job(kind: str, steps: list[Step], config: dict | None = None) -> Job:
     job = Job(id=uuid.uuid4().hex[:12], kind=kind, steps=steps)
     with _jobs_lock:
         _jobs[job.id] = job
         _prune()
+    try:
+        from .queue import get_queue
+
+        get_queue().enqueue(job.id, kind, config or {})
+    except Exception:
+        pass
     return job
 
 
@@ -166,14 +172,17 @@ def run_in_thread(job: Job, target) -> None:
         # status trước thì lần hỏi cuối có thể bắt được job đã lỗi mà bước vẫn
         # ghi "đang chạy", hoặc thiếu mất dòng log cuối.
         try:
+            _sync_queue(job.id, "running")
             target(job)
             if job.status == "running":
                 job.log("Hoàn tất.")
                 job.status = "done"
+                _sync_queue(job.id, "done")
         except JobCancelled:
             job.error = "Đã huỷ theo yêu cầu."
             job.log("Đã huỷ.")
             job.status = "cancelled"
+            _sync_queue(job.id, "cancelled")
         except Exception as exc:
             job.error = str(exc) or exc.__class__.__name__
             job.log(f"LỖI: {job.error}")
@@ -184,7 +193,17 @@ def run_in_thread(job: Job, target) -> None:
                 if s.status == "running":
                     s.status = "error"
             job.status = "error"
+            _sync_queue(job.id, "error", error=job.error)
         finally:
             job.updated = time.time()
 
     threading.Thread(target=wrapper, daemon=True, name=f"job-{job.id}").start()
+
+
+def _sync_queue(job_id: str, status: str, **extra) -> None:
+    try:
+        from .queue import get_queue
+
+        get_queue().set_status(job_id, status, **extra)
+    except Exception:
+        pass
