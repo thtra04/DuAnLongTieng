@@ -8,6 +8,11 @@ viện đọc file text đó rồi báo lỗi rất khó hiểu (CTranslate2 đ�
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+import pytest
+
 from backend.core.hf_cache import repair
 
 BLOB = "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae"
@@ -91,3 +96,66 @@ def test_sua_nhieu_file_cung_luc(workdir):
         (snap.parent / ten).write_bytes(f"../../blobs/{BLOB}".encode())
 
     assert len(repair(workdir)) == 3
+
+
+# ------------------------------------------------------------ dereference
+
+
+def _make_symlink(link, target):
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("máy này không tạo được symlink (Windows cần Developer Mode)")
+
+
+def test_dereference_thay_symlink_bang_hardlink(tmp_path):
+    from backend.core import hf_cache
+
+    repo = tmp_path / "models--pnnbao-ump--VieNeu-TTS-v3-Turbo"
+    blobs = repo / "blobs"
+    snap = repo / "snapshots" / "abc" / "onnx_int8"
+    blobs.mkdir(parents=True)
+    snap.mkdir(parents=True)
+    (blobs / "b1").write_bytes(b"graph")
+    (blobs / "b2").write_bytes(b"external data")
+    _make_symlink(snap / "model.onnx", blobs / "b1")
+    _make_symlink(snap / "model.data", blobs / "b2")
+    assert (snap / "model.data").is_symlink()
+
+    changed = hf_cache.dereference(tmp_path)
+
+    assert sorted(changed) == [
+        str(Path("models--pnnbao-ump--VieNeu-TTS-v3-Turbo/snapshots/abc/onnx_int8/model.data")),
+        str(Path("models--pnnbao-ump--VieNeu-TTS-v3-Turbo/snapshots/abc/onnx_int8/model.onnx")),
+    ]
+    # Không còn symlink, nội dung giữ nguyên, và resolve() nằm đúng trong snapshot
+    for name, content in (("model.onnx", b"graph"), ("model.data", b"external data")):
+        p = snap / name
+        assert not p.is_symlink()
+        assert p.read_bytes() == content
+        assert p.resolve().parent == snap.resolve()
+    # Chạy lại vô hại
+    assert hf_cache.dereference(tmp_path) == []
+
+
+def test_dereference_chi_dung_repo_duoc_chon(tmp_path):
+    from backend.core import hf_cache
+
+    for repo_name in ("models--a--x", "models--b--y"):
+        blobs = tmp_path / repo_name / "blobs"
+        snap = tmp_path / repo_name / "snapshots" / "r"
+        blobs.mkdir(parents=True)
+        snap.mkdir(parents=True)
+        (blobs / "b").write_bytes(b"x")
+        _make_symlink(snap / "f.onnx", blobs / "b")
+
+    changed = hf_cache.dereference(tmp_path, repos=("models--a--x",))
+
+    assert changed == [str(Path("models--a--x/snapshots/r/f.onnx"))]
+    assert (tmp_path / "models--b--y/snapshots/r/f.onnx").is_symlink()
+
+
+def test_dereference_thu_muc_khong_ton_tai(tmp_path):
+    from backend.core import hf_cache
+
+    assert hf_cache.dereference(tmp_path / "khong-co") == []

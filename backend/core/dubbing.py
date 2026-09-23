@@ -17,7 +17,7 @@ import wave
 from pathlib import Path
 from typing import Callable
 
-from . import media
+from . import hf_cache, media
 from .subtitles import Cue
 
 SR = 48000  # VieNeu-TTS v3 Turbo xuất 48 kHz
@@ -105,8 +105,43 @@ def get_engine():
             raise DubError(reason)
         from vieneu import Vieneu  # type: ignore
 
-        _engine = Vieneu()
+        _fix_symlinked_onnx()
+        try:
+            _engine = Vieneu()
+        except Exception as exc:
+            # Cache HF vừa tải xong lần đầu -> symlink mới xuất hiện sau lượt
+            # trên. Hardlink lại rồi thử thêm một lần trước khi bó tay.
+            if "External data path" not in str(exc) or not _fix_symlinked_onnx():
+                raise
+            _engine = Vieneu()
         return _engine
+
+
+# Hai repo VieNeu-TTS v3 Turbo tải về (backbone + codec). Chỉ đụng tới đúng
+# hai thư mục này trong cache HuggingFace, không quét cả cache của máy.
+_VIENEU_REPOS = (
+    "models--pnnbao-ump--VieNeu-TTS-v3-Turbo",
+    "models--OpenMOSS-Team--MOSS-Audio-Tokenizer-Nano-ONNX",
+)
+
+
+def _fix_symlinked_onnx() -> bool:
+    """Đổi symlink trong cache HF của VieNeu thành hardlink — xem `hf_cache.dereference`.
+
+    onnxruntime mới từ chối graph ONNX có file `.data` nằm sau symlink
+    ("External data path escapes model directory"), mà cache HuggingFace trên
+    Windows bật Developer Mode thì toàn symlink. Trả về True nếu có đổi gì.
+    """
+    try:
+        from huggingface_hub import constants  # type: ignore
+
+        root = Path(constants.HF_HUB_CACHE)
+    except Exception:
+        return False
+    try:
+        return bool(hf_cache.dereference(root, _VIENEU_REPOS))
+    except Exception:
+        return False
 
 
 def list_voices() -> list[dict]:

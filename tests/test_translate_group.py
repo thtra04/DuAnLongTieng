@@ -216,3 +216,35 @@ def test_goi_y_cai_khong_dua_lenh_uv_sync_tran():
     for engine, (_mods, how) in _ENGINE_NEEDS.items():
         if "uv sync" in how:
             assert "thêm --extra" in how, f"{engine}: {how}"
+
+
+# ------------------------------- chữ Hán: không gộp qua ranh giới đoạn Whisper
+
+
+def _cue_seg(text, start, end, seg):
+    return Cue(start, end, text, words=[{"word": text, "start": start, "end": end, "seg": seg}])
+
+
+def test_chu_han_khac_doan_whisper_thi_moi_cue_mot_nhom():
+    cues = [_cue_seg("在下朱大生", 0, 1, 0), _cue_seg("最会疼人", 1, 2, 1), _cue_seg("管教你锦衣玉食", 2, 3, 2)]
+    assert group_cues(cues) == [[0], [1], [2]]
+
+
+def test_chu_han_cung_doan_bi_tach_vi_dai_thi_van_gom():
+    cues = [_cue_seg("在下朱大生", 0, 1, 0), _cue_seg("最会疼人", 1, 2, 0)]
+    assert group_cues(cues) == [[0, 1]]
+
+
+def test_chu_han_co_dau_ket_cau_van_tach_nhu_cu():
+    cues = [_cue_seg("在下朱大生。", 0, 1, 0), _cue_seg("最会疼人", 1, 2, 0)]
+    assert group_cues(cues) == [[0], [1]]
+
+
+def test_chu_latin_khac_doan_van_gom_thanh_cau():
+    cues = [_cue_seg("I think that", 0, 1, 0), _cue_seg("he is right.", 1, 2, 1)]
+    assert group_cues(cues) == [[0, 1]]
+
+
+def test_cue_khong_co_words_thi_khong_doi_hanh_vi():
+    cues = [Cue(0, 1, "在下朱大生"), Cue(1, 2, "最会疼人")]
+    assert group_cues(cues) == [[0, 1]]

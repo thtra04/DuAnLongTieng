@@ -79,3 +79,58 @@ def _stub_target(path: Path, blobs: Path) -> Path | None:
         return None
     blob = blobs / match.group(1).decode()
     return blob if blob.is_file() else None
+
+
+# ---------------------------------------------------------------- symlink thật
+
+
+def dereference(root: str | Path, repos: tuple[str, ...] | None = None) -> list[str]:
+    """Thay symlink trong `snapshots/` bằng hardlink tới blob (không tốn thêm chỗ).
+
+    Vấn đề ngược với `repair()`: khi Windows *tạo được* symlink, cache
+    HuggingFace dùng symlink thật. onnxruntime ≥ 1.24 kiểm tra file dữ liệu
+    ngoài (`*.data`) của một graph ONNX phải nằm *trong* thư mục của graph —
+    nó resolve symlink ra `blobs/` rồi báo::
+
+        External data path escapes model directory
+
+    và VieNeu-TTS không nạp được. Hardlink thì không có gì để resolve, nên
+    đường dẫn nằm đúng trong `snapshots/<rev>/…` và onnxruntime chấp nhận.
+    huggingface_hub vẫn đọc cache bình thường (trên máy không tạo được
+    symlink nó vốn để file thật ở đây).
+
+    `repos` giới hạn vào vài repo (tên thư mục `models--…`); không truyền thì
+    quét cả cache. Chạy lại vô hại. Trả về danh sách file đã đổi.
+    """
+    root = Path(root)
+    changed: list[str] = []
+    if not root.is_dir():
+        return changed
+
+    for snapshots in root.glob("models--*/snapshots"):
+        if repos and snapshots.parent.name not in repos:
+            continue
+        for path in snapshots.rglob("*"):
+            try:
+                if not path.is_symlink():
+                    continue
+                target = path.resolve()
+                if not target.is_file():
+                    continue
+            except OSError:
+                continue
+            tmp = path.with_name(path.name + ".vsub-relink")
+            try:
+                tmp.unlink(missing_ok=True)
+                try:
+                    os.link(target, tmp)
+                except OSError:
+                    shutil.copy2(target, tmp)
+                path.unlink()
+                os.replace(tmp, path)
+            except OSError:
+                tmp.unlink(missing_ok=True)
+                continue
+            changed.append(str(path.relative_to(root)))
+
+    return changed
