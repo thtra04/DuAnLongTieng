@@ -448,6 +448,189 @@ def _fill_bilibili_parts(url: str, parts: list[dict]) -> None:
             part["duration"] = float(page.get("duration") or 0.0)
 
 
+# Lỗi yt-dlp báo khi máy chủ đóng kết nối trước khi gửi đủ dữ liệu.
+_TRUNCATED_RE = re.compile(
+    r"bytes read, \d+ more expected|IncompleteRead|ContentTooShort|Connection (?:reset|aborted)",
+    re.I,
+)
+# Mỗi lần xin một khúc ngần này; đo thật với bilibili: 4 MB không bao giờ bị ngắt.
+_RANGE_CHUNK = 4 * 1024 * 1024
+
+
+def _looks_truncated(exc: BaseException) -> bool:
+    return bool(_TRUNCATED_RE.search(str(exc)))
+
+
+def _pick_entry(info: dict, part: int | None) -> dict:
+    """Chọn 1 phần khi yt-dlp gói kết quả trong playlist."""
+    if info.get("entries") is None:
+        return info
+    picked = [e for e in list(info["entries"]) if e]
+    if not picked:
+        raise MediaError(f"Không tải được phần {part} — link có thể không có phần này.")
+    return picked[0]
+
+
+def _content_length(url: str, headers: dict, opener=None) -> int:
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={**headers, "Range": "bytes=0-0"})
+    with (opener or urllib.request).urlopen(req, timeout=30) as resp:
+        rng = resp.headers.get("Content-Range", "")
+        if "/" in rng and rng.rsplit("/", 1)[1].isdigit():
+            return int(rng.rsplit("/", 1)[1])
+        length = resp.headers.get("Content-Length")
+        if length and length.isdigit() and resp.status == 200:
+            return int(length)
+    raise MediaError("Máy chủ không cho tải từng khúc (không trả Content-Range).")
+
+
+def _fetch_ranges(
+    url: str,
+    headers: dict,
+    dest: Path,
+    size: int,
+    on_progress: Callable[[int], None] | None = None,
+    opener=None,
+    retries: int = 6,
+) -> None:
+    """Tải `url` về `dest` bằng từng khúc Range, nối tiếp nếu `dest` đã có một phần."""
+    import time
+    import urllib.request
+
+    opener = opener or urllib.request
+    pos = dest.stat().st_size if dest.exists() else 0
+    if pos > size:
+        dest.unlink()
+        pos = 0
+    with open(dest, "ab") as fh:
+        while pos < size:
+            hi = min(size - 1, pos + _RANGE_CHUNK - 1)
+            last: BaseException | None = None
+            for attempt in range(retries):
+                try:
+                    req = urllib.request.Request(url, headers={**headers, "Range": f"bytes={pos}-{hi}"})
+                    with opener.urlopen(req, timeout=60) as resp:
+                        data = resp.read()
+                    if len(data) != hi - pos + 1:
+                        raise MediaError(f"khúc {pos}-{hi} chỉ nhận {len(data)} byte")
+                    break
+                except Exception as exc:  # noqa: BLE001 — thử lại mọi lỗi mạng
+                    last = exc
+                    time.sleep(min(8.0, 1.0 * (attempt + 1)))
+            else:
+                raise MediaError(f"Tải từng khúc thất bại tại byte {pos}: {last}")
+            fh.write(data)
+            pos += len(data)
+            if on_progress:
+                on_progress(len(data))
+
+
+def _alternatives(info: dict, f: dict) -> list[dict]:
+    """Các stream cùng loại (chỉ hình / chỉ tiếng) khác `f`, tốt nhất xếp trước.
+
+    Dùng khi stream yt-dlp chọn bị hỏng trên CDN: video thì lấy độ phân giải
+    không cao hơn, H.264 đứng trước; audio thì bitrate cao trước.
+    """
+    is_video = (f.get("vcodec") or "none") != "none"
+    out: list[dict] = []
+    for g in info.get("formats") or []:
+        if g.get("format_id") == f.get("format_id") or not g.get("url"):
+            continue
+        has_v = (g.get("vcodec") or "none") != "none"
+        has_a = (g.get("acodec") or "none") != "none"
+        if is_video:
+            if not has_v or has_a or (g.get("height") or 0) > (f.get("height") or 0):
+                continue
+        elif has_v or not has_a:
+            continue
+        out.append(g)
+    if is_video:
+        out.sort(key=lambda g: (-(g.get("height") or 0), 0 if str(g.get("vcodec", "")).startswith("avc1") else 1))
+    else:
+        out.sort(key=lambda g: -(g.get("abr") or g.get("tbr") or 0))
+    return out
+
+
+def _download_in_ranges(ydl, url: str, part: int | None, on_progress, on_log) -> Path:
+    """Đường dự phòng: lấy link stream từ yt-dlp, tự tải từng khúc, ghép bằng ffmpeg."""
+    import yt_dlp
+
+    try:
+        info = ydl.extract_info(url, download=False)
+    except yt_dlp.utils.YoutubeDLError as exc:
+        raise MediaError(_ytdlp_message(exc)) from exc
+    if not info:
+        raise MediaError("yt-dlp không trả về thông tin video.")
+    info = _pick_entry(info, part)
+    final = Path(ydl.prepare_filename(info))
+    if final.suffix.lower() not in (".mp4", ".mkv", ".webm"):
+        final = final.with_suffix(".mp4")
+    final.parent.mkdir(parents=True, exist_ok=True)
+
+    streams = info.get("requested_formats") or [info]
+    jobs: list[tuple[dict, Path, int]] = []
+    for f in streams:
+        if not f.get("url"):
+            raise MediaError("yt-dlp không đưa ra link stream để tải từng khúc.")
+        headers = dict(f.get("http_headers") or info.get("http_headers") or {})
+        size = f.get("filesize") or _content_length(f["url"], headers)
+        ext = f.get("ext") or "bin"
+        jobs.append((f, final.with_name(f"{final.stem}.f{f.get('format_id', 'x')}.{ext}.part"), int(size)))
+
+    total = sum(j[2] for j in jobs) or 1
+    done = 0
+
+    def bump(n: int) -> None:
+        nonlocal done
+        done += n
+        if on_progress:
+            on_progress(min(0.99, done / total))
+
+    done_jobs: list[tuple[dict, Path, int]] = []
+    for f, tmp, size in jobs:
+        candidates = [(f, tmp, size)]
+        for alt in _alternatives(info, f)[:3]:
+            try:
+                alt_size = int(alt.get("filesize") or _content_length(alt["url"], dict(alt.get("http_headers") or {})))
+            except Exception:  # noqa: BLE001 — stream thay thế không hỏi được cỡ thì bỏ
+                continue
+            candidates.append((alt, final.with_name(f"{final.stem}.f{alt.get('format_id', 'x')}.{alt.get('ext') or 'bin'}.part"), alt_size))
+        last: Exception | None = None
+        for k, (cand, ctmp, csize) in enumerate(candidates):
+            if on_log:
+                note = " (stream thay thế)" if k else ""
+                on_log(f"  Tải {ctmp.name} ({csize / 1e6:.0f} MB) từng khúc {_RANGE_CHUNK // (1024 * 1024)} MB…{note}")
+            try:
+                _fetch_ranges(cand["url"], dict(cand.get("http_headers") or {}), ctmp, csize, bump)
+                done_jobs.append((cand, ctmp, csize))
+                break
+            except MediaError as exc:
+                last = exc
+                if on_log:
+                    on_log(f"  Stream {cand.get('format_id')} hỏng trên CDN: {exc}")
+                ctmp.unlink(missing_ok=True)
+        else:
+            raise MediaError(f"Không tải được stream nào của video này: {last}")
+    jobs = done_jobs
+
+    if len(jobs) == 1:
+        os.replace(jobs[0][1], final)
+    else:
+        cmd = [ffmpeg_exe(), "-y", "-loglevel", "error"]
+        for _f, tmp, _s in jobs:
+            cmd += ["-i", str(tmp)]
+        cmd += ["-c", "copy", "-movflags", "+faststart", str(final)]
+        run(cmd)
+        for _f, tmp, _s in jobs:
+            tmp.unlink(missing_ok=True)
+    if on_progress:
+        on_progress(1.0)
+    if on_log:
+        on_log(f"Đã tải: {final.name}")
+    return final
+
+
 def download_url(
     url: str,
     outdir: str | Path,
@@ -480,7 +663,12 @@ def download_url(
     prefix = f"p{part}." if part else ""
     opts = {
         "outtmpl": str(outdir / f"{prefix}%(title).80B.%(ext)s"),
-        "format": "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
+        # H.264 trước: ffmpeg giải mã nhanh nhất, và đo thật (bilibili 9/2026) stream
+        # AV1 bị hỏng trên CDN — đứt cố định ở một byte — trong khi H.264 nguyên vẹn.
+        "format": (
+            "bv*[vcodec^=avc1][height<=1080]+ba/bv*[height<=1080]+ba"
+            "/b[height<=1080]/bv*+ba/b"
+        ),
         "merge_output_format": "mp4",
         "noplaylist": part is None,
         "quiet": True,
@@ -500,16 +688,17 @@ def download_url(
         try:
             info = ydl.extract_info(url, download=True)
         except yt_dlp.utils.YoutubeDLError as exc:
-            raise MediaError(_ytdlp_message(exc)) from exc
+            if not _looks_truncated(exc):
+                raise MediaError(_ytdlp_message(exc)) from exc
+            # CDN (đo thật: Akamai của bilibili) đóng kết nối sau vài trăm byte
+            # dù đã thử lại 5 lần — nhưng vẫn trả đúng dữ liệu nếu xin từng
+            # khúc nhỏ bằng Range. Tự tải từng khúc rồi ghép bằng ffmpeg.
+            if on_log:
+                on_log("Máy chủ ngắt kết nối giữa chừng — chuyển sang tải từng khúc nhỏ…")
+            return _download_in_ranges(ydl, url, part, on_progress, on_log)
         if not info:
             raise MediaError("yt-dlp không trả về thông tin video.")
-        if info.get("entries") is not None:  # chọn 1 phần -> yt-dlp gói trong playlist
-            picked = [e for e in list(info["entries"]) if e]
-            if not picked:
-                raise MediaError(
-                    f"Không tải được phần {part} — link có thể không có phần này."
-                )
-            info = picked[0]
+        info = _pick_entry(info, part)
         result["title"] = info.get("title") or "video"
         path = Path(ydl.prepare_filename(info))
 

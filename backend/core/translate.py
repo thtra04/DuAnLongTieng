@@ -203,6 +203,24 @@ def _ends_sentence(text: str) -> bool:
     return bool(text) and text.rstrip().rstrip(_CLOSERS)[-1:] in SENTENCE_END
 
 
+def _cue_seg(cue: Cue):
+    """Chỉ số đoạn Whisper mà cue này thuộc về (asr gắn vào từng từ), nếu có."""
+    words = getattr(cue, "words", None) or []
+    return words[0].get("seg") if words and isinstance(words[0], dict) else None
+
+
+def _cjk_segment_break(prev: Cue, cue: Cue) -> bool:
+    """Chữ Hán/Nhật không có dấu câu nên không biết câu kết thúc ở đâu; nếu hai
+    cue thuộc hai đoạn Whisper khác nhau thì coi như hai câu — gộp rồi chia
+    ngược theo tỉ lệ ký tự làm bản dịch lệch dòng (đo thật: dòng sau hiện đuôi
+    câu trước). Cue tách vì quá dài trong cùng một đoạn thì vẫn gộp như cũ."""
+    text = prev.text.strip()
+    if not _CJK.search(text) or _ends_sentence(text):
+        return False
+    a, b = _cue_seg(prev), _cue_seg(cue)
+    return a is not None and b is not None and a != b
+
+
 def group_cues(cues: list[Cue]) -> list[list[int]]:
     """Chia chỉ số cue thành từng nhóm, mỗi nhóm cố gắng là một câu trọn vẹn."""
     groups: list[list[int]] = []
@@ -218,11 +236,13 @@ def group_cues(cues: list[Cue]) -> list[list[int]]:
     for i, cue in enumerate(cues):
         text = cue.text.strip()
         if cur:
-            gap = cue.start - cues[cur[-1]].end
+            prev = cues[cur[-1]]
+            gap = cue.start - prev.end
             if (
                 gap > GROUP_MAX_GAP
                 or len(cur) >= GROUP_MAX_CUES
                 or cur_chars + len(text) > GROUP_MAX_CHARS
+                or _cjk_segment_break(prev, cue)
             ):
                 flush()
         cur.append(i)
@@ -367,6 +387,115 @@ def translate_cues(
 # ---------------------------------------------------------- deep-translator
 
 
+# Endpoint "gtx" của Google Dịch: trả JSON, giữ nguyên xuống dòng nên gộp được
+# nhiều câu một lượt mà không cần ký tự phân cách lạ. Đo thật (9/2026): trang
+# translate.google.com/m mà deep-translator dùng làm hỏng ký tự phân cách với
+# chữ Hán -> tool rơi về dịch từng dòng, 270 lượt liên tiếp -> Google chặn IP
+# ("too many requests") và toàn bộ bản dịch trống. Đường gtx đi trước; đường
+# cũ giữ làm dự phòng, có giãn nhịp.
+_GTX_URL = "https://translate.googleapis.com/translate_a/single"
+_GTX_MAX_LINES = 40
+_GTX_MAX_CHARS = 1500
+# Google cho ~5 lượt/giây; dịch từng dòng thì giãn ra cho chắc.
+_LINE_PAUSE = 0.35
+# Bị chặn ("too many requests") thì chờ ngần này giây trước mỗi lần thử lại.
+_BLOCK_BACKOFF = (10.0, 20.0, 40.0)
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+    low = str(exc).lower()
+    return "too many requests" in low or "429" in low
+
+
+def _gtx_call(text: str, src: str, tgt: str, timeout: float = 30.0) -> str:
+    """Một lượt gọi gtx. Trả về chuỗi dịch, xuống dòng giữ nguyên như đầu vào."""
+    import urllib.parse
+    import urllib.request
+
+    body = urllib.parse.urlencode(
+        {"client": "gtx", "sl": src, "tl": tgt, "dt": "t", "q": text}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        _GTX_URL,
+        data=body,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    parts = data[0] if isinstance(data, list) and data else []
+    return "".join(p[0] for p in parts if isinstance(p, list) and p and p[0])
+
+
+def _gtx_batches(texts: list[str]) -> list[list[int]]:
+    batches: list[list[int]] = []
+    cur: list[int] = []
+    cur_len = 0
+    for i, t in enumerate(texts):
+        add = len(t) + 1
+        if cur and (cur_len + add > _GTX_MAX_CHARS or len(cur) >= _GTX_MAX_LINES):
+            batches.append(cur)
+            cur, cur_len = [], 0
+        cur.append(i)
+        cur_len += add
+    if cur:
+        batches.append(cur)
+    return batches
+
+
+def _translate_gtx(
+    texts: list[str], src: str, tgt: str, on_progress=None, on_log=None, call=None
+) -> list[str]:
+    """Dịch qua gtx: mỗi lô nhiều dòng nối bằng xuống dòng; lô nào tách sai thì
+    dịch từng dòng của lô đó (có giãn nhịp). Bị chặn thì lùi rồi thử lại; hết
+    kiên nhẫn thì ném lỗi để người dùng biết, thay vì trả bản dịch trống."""
+    call = call or _gtx_call
+    results = [""] * len(texts)
+    clean = [re.sub(r"\s*\n\s*", " ", t).strip() for t in texts]
+
+    def attempt(payload: str) -> str:
+        last: BaseException | None = None
+        for k, wait in enumerate((0.0,) + _BLOCK_BACKOFF):
+            if wait:
+                if on_log:
+                    on_log(f"Google tạm chặn vì gọi quá nhiều — chờ {wait:.0f}s rồi thử lại…")
+                time.sleep(wait)
+            try:
+                return call(payload, src, tgt)
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                if not _is_rate_limited(exc):
+                    raise
+        raise TranslateError(
+            "Google Dịch đang chặn máy này vì gọi quá nhiều lượt. Đợi vài phút rồi "
+            f"thử lại, hoặc chọn engine dịch khác. ({last})"
+        )
+
+    batches = _gtx_batches(clean)
+    done = 0
+    for bi, batch in enumerate(batches):
+        joined = "\n".join(clean[i] or "…" for i in batch)
+        raw = attempt(joined)
+        parts = [p.strip() for p in raw.split("\n")]
+        if len(parts) != len(batch):
+            if on_log:
+                on_log(f"Lô {bi + 1}: Google gộp/tách dòng khác đầu vào — dịch từng dòng của lô này.")
+            parts = []
+            for i in batch:
+                parts.append(attempt(clean[i]).strip() if clean[i] else "")
+                time.sleep(_LINE_PAUSE)
+        for i, val in zip(batch, parts):
+            results[i] = val if clean[i] else ""
+        done += len(batch)
+        if on_progress:
+            on_progress(done / max(1, len(texts)))
+        if bi + 1 < len(batches):
+            time.sleep(_LINE_PAUSE)
+    return results
+
+
 def _translate_deep(
     texts: list[str],
     source: str | None,
@@ -375,10 +504,19 @@ def _translate_deep(
     on_progress=None,
     on_log=None,
 ) -> list[str]:
-    from deep_translator import GoogleTranslator, MyMemoryTranslator
-
     src = google_code(source) if source else "auto"
     tgt = google_code(target)
+
+    if engine == "google":
+        try:
+            return _translate_gtx(texts, src, tgt, on_progress, on_log)
+        except TranslateError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — mạng/endpoint đổi -> đường cũ
+            if on_log:
+                on_log(f"Đường gtx không dùng được ({str(exc)[:80]}) — dùng deep-translator…")
+
+    from deep_translator import GoogleTranslator, MyMemoryTranslator
 
     if engine == "mymemory":
         if src == "auto":
@@ -439,18 +577,34 @@ def _translate_deep(
 
 
 def _translate_one(tr, text: str, on_log=None) -> str:
+    """Dịch một dòng bằng deep-translator, có giãn nhịp và lùi khi bị chặn.
+
+    Bị chặn liên tục thì ném TranslateError: bản dịch trống lặng lẽ tệ hơn
+    một thông báo rõ ràng (đo thật: cả video ra phụ đề rỗng mà không ai biết).
+    """
     if not text.strip():
         return ""
-    for attempt in range(3):
+    time.sleep(_LINE_PAUSE)
+    last: BaseException | None = None
+    for attempt, wait in enumerate((0.0,) + _BLOCK_BACKOFF):
+        if wait:
+            if on_log:
+                on_log(f"Google tạm chặn vì gọi quá nhiều — chờ {wait:.0f}s rồi thử lại…")
+            time.sleep(wait)
         try:
             return (tr.translate(text) or "").strip()
-        except Exception as exc:
-            if attempt == 2:
-                if on_log:
-                    on_log(f"Bỏ qua 1 dòng do lỗi: {exc}")
-                return ""
-            time.sleep(1.0 * (attempt + 1))
-    return ""
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if not _is_rate_limited(exc):
+                if attempt >= 2:
+                    if on_log:
+                        on_log(f"Bỏ qua 1 dòng do lỗi: {exc}")
+                    return ""
+                time.sleep(1.0 * (attempt + 1))
+    raise TranslateError(
+        "Google Dịch đang chặn máy này vì gọi quá nhiều lượt. Đợi vài phút rồi "
+        f"thử lại, hoặc chọn engine dịch khác. ({last})"
+    )
 
 
 # ---------------------------------------------------------------- NLLB-200

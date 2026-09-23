@@ -394,7 +394,14 @@ def cues_from_words(
             gap = w["start"] - buf[-1]["end"]
             cur_len = len("".join(x["word"] for x in buf).strip())
             cur_dur = buf[-1]["end"] - buf[0]["start"]
-            if gap >= gap_split or cur_len >= max_chars or cur_dur >= max_dur:
+            # Sang đoạn Whisper khác cũng là một ranh giới: đoạn thường là câu/vế
+            # trọn, và với chữ Hán (không dấu câu, không dấu cách) đó là mốc duy nhất.
+            new_seg = (
+                w.get("seg") is not None
+                and buf[-1].get("seg") is not None
+                and w["seg"] != buf[-1]["seg"]
+            )
+            if new_seg or gap >= gap_split or cur_len >= max_chars or cur_dur >= max_dur:
                 flush()
         buf.append(w)
 

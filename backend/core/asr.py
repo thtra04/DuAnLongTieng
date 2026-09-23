@@ -416,12 +416,17 @@ def transcribe(
     if on_progress:
         on_progress(1.0)
 
+    # Mỗi từ mang chỉ số đoạn Whisper của nó ("seg"): đoạn Whisper thường là một
+    # câu/vế trọn, còn tiếng Trung/Nhật thì không có dấu câu lẫn dấu cách nên
+    # subtitles.cues_from_words không còn mốc nào khác để ngắt dòng cho đúng.
+    # Đo thật (video 271 dòng thoại): ngắt theo đoạn thì 235 dòng khớp 1 cue,
+    # ngắt theo độ dài như trước chỉ 46.
     words: list[dict] = []
-    for s in segs:
+    for k, s in enumerate(segs):
         if s["words"]:
-            words.extend(s["words"])
+            words.extend({**w, "seg": k} for w in s["words"])
         else:
-            words.append({"word": s["text"], "start": s["start"], "end": s["end"]})
+            words.append({"word": s["text"], "start": s["start"], "end": s["end"], "seg": k})
     words.sort(key=lambda w: w["start"])
 
     voiced = voiced_time(segs)

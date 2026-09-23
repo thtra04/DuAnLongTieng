@@ -291,3 +291,36 @@ def test_cue_chuyen_qua_lai_dict():
 def test_cue_from_dict_thieu_khoa():
     c = Cue.from_dict({})
     assert c.start == 0.0 and c.text == "" and c.speaker == ""
+
+
+# ------------------------------------------ ngắt dòng theo đoạn Whisper
+
+
+def _w(word, start, end, seg=None):
+    d = {"word": word, "start": start, "end": end}
+    if seg is not None:
+        d["seg"] = seg
+    return d
+
+
+def test_sang_doan_whisper_khac_thi_xuong_dong():
+    """Chữ Hán không dấu câu, không khoảng lặng: chỉ còn ranh giới đoạn để ngắt."""
+    ws = [_w("在下", 0.0, 0.5, 0), _w("朱大生", 0.5, 1.0, 0), _w("最会", 1.0, 1.5, 1), _w("疼人", 1.5, 2.0, 1)]
+    out = cues_from_words(ws)
+    assert [c.text for c in out] == ["在下朱大生", "最会疼人"]
+
+
+def test_cung_mot_doan_thi_van_gom_nhu_cu():
+    ws = [_w("在下", 0.0, 0.5, 0), _w("朱大生", 0.5, 1.0, 0), _w("最会", 1.0, 1.5, 0), _w("疼人", 1.5, 2.0, 0)]
+    assert [c.text for c in cues_from_words(ws)] == ["在下朱大生最会疼人"]
+
+
+def test_tu_khong_co_seg_thi_khong_doi_hanh_vi():
+    ws = [_w("在下", 0.0, 0.5), _w("朱大生", 0.5, 1.0), _w("最会", 1.0, 1.5), _w("疼人", 1.5, 2.0)]
+    assert [c.text for c in cues_from_words(ws)] == ["在下朱大生最会疼人"]
+
+
+def test_cue_giu_seg_trong_words():
+    ws = [_w("a", 0.0, 0.5, 3), _w("b", 0.5, 1.0, 3)]
+    out = cues_from_words(ws)
+    assert out[0].words[0]["seg"] == 3
