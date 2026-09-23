@@ -245,6 +245,18 @@ def test_chu_latin_khac_doan_van_gom_thanh_cau():
     assert group_cues(cues) == [[0, 1]]
 
 
-def test_cue_khong_co_words_thi_khong_doi_hanh_vi():
+def test_chu_han_khong_co_thong_tin_doan_luc_dich_thi_moi_dong_mot_cau():
+    """Phụ đề .srt tiếng Trung nạp vào: không có seg -> lúc dịch không gộp, kẻo chia lại lệch dòng."""
     cues = [Cue(0, 1, "在下朱大生"), Cue(1, 2, "最会疼人")]
+    assert group_cues(cues, split_cjk_lines=True) == [[0], [1]]
+
+
+def test_chu_han_khong_co_thong_tin_doan_luc_long_tieng_van_gom():
+    """Khâu lồng tiếng đọc theo câu dài: cue nạp lại từ state.json không có seg vẫn gộp."""
+    cues = [Cue(0, 1, "在下朱大生"), Cue(1, 2, "最会疼人")]
+    assert group_cues(cues) == [[0, 1]]
+
+
+def test_chu_latin_khong_co_thong_tin_doan_van_gom():
+    cues = [Cue(0, 1, "I think that"), Cue(1, 2, "he is right.")]
     assert group_cues(cues) == [[0, 1]]

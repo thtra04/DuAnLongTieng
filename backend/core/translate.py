@@ -209,20 +209,31 @@ def _cue_seg(cue: Cue):
     return words[0].get("seg") if words and isinstance(words[0], dict) else None
 
 
-def _cjk_segment_break(prev: Cue, cue: Cue) -> bool:
-    """Chữ Hán/Nhật không có dấu câu nên không biết câu kết thúc ở đâu; nếu hai
-    cue thuộc hai đoạn Whisper khác nhau thì coi như hai câu — gộp rồi chia
-    ngược theo tỉ lệ ký tự làm bản dịch lệch dòng (đo thật: dòng sau hiện đuôi
-    câu trước). Cue tách vì quá dài trong cùng một đoạn thì vẫn gộp như cũ."""
+def _cjk_segment_break(prev: Cue, cue: Cue, split_lines: bool = False) -> bool:
+    """Chữ Hán/Nhật không có dấu câu nên không biết câu kết thúc ở đâu; coi mỗi
+    cue là một câu, trừ khi hai cue thuộc cùng một đoạn Whisper (bị chẻ vì quá
+    dài). Gộp rồi chia ngược theo tỉ lệ ký tự làm bản dịch lệch dòng (đo thật:
+    dòng sau hiện đuôi câu trước)."""
     text = prev.text.strip()
     if not _CJK.search(text) or _ends_sentence(text):
         return False
     a, b = _cue_seg(prev), _cue_seg(cue)
-    return a is not None and b is not None and a != b
+    if a is None or b is None:
+        # Không có thông tin đoạn (phụ đề .srt nạp vào, hoặc cue nạp lại từ
+        # state.json lúc xuất). Lúc dịch thì mỗi dòng một câu; lúc lồng tiếng
+        # thì để các luật gộp thường (khoảng lặng, số cue) quyết định.
+        return split_lines
+    return a != b
 
 
-def group_cues(cues: list[Cue]) -> list[list[int]]:
-    """Chia chỉ số cue thành từng nhóm, mỗi nhóm cố gắng là một câu trọn vẹn."""
+def group_cues(cues: list[Cue], split_cjk_lines: bool = False) -> list[list[int]]:
+    """Chia chỉ số cue thành từng nhóm, mỗi nhóm cố gắng là một câu trọn vẹn.
+
+    `split_cjk_lines=True` (bước dịch): cue chữ Hán/Nhật không dấu câu mà không
+    biết chắc là cùng một đoạn Whisper thì mỗi cue một nhóm — gộp rồi chia lại
+    theo tỉ lệ ký tự làm bản dịch lệch dòng. Mặc định False cho khâu lồng tiếng:
+    ở đó gộp thành câu đọc dài vẫn hay hơn (đo thật: tách từng cue làm số câu
+    phải nén tăng từ 17 % lên 28 %)."""
     groups: list[list[int]] = []
     cur: list[int] = []
     cur_chars = 0
@@ -242,7 +253,7 @@ def group_cues(cues: list[Cue]) -> list[list[int]]:
                 gap > GROUP_MAX_GAP
                 or len(cur) >= GROUP_MAX_CUES
                 or cur_chars + len(text) > GROUP_MAX_CHARS
-                or _cjk_segment_break(prev, cue)
+                or _cjk_segment_break(prev, cue, split_cjk_lines)
             ):
                 flush()
         cur.append(i)
@@ -335,7 +346,7 @@ def translate_cues(
     if not ok:
         raise TranslateError(reason)
 
-    groups = group_cues(cues)
+    groups = group_cues(cues, split_cjk_lines=True)
     texts = [_join_fragments([cues[i].text.strip() for i in g]) for g in groups]
     if on_log and len(groups) < len(cues):
         on_log(f"Gom {len(cues)} dòng thành {len(groups)} câu để dịch trọn ý.")
