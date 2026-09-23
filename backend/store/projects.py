@@ -17,7 +17,7 @@ import json
 import shutil
 from pathlib import Path
 
-from . import series
+from . import characters, series
 from ..config import JOB_DIR, UPLOAD_DIR
 
 # Đuôi file được coi là kết quả xuất ra, đáng cho người dùng tải lại
@@ -227,6 +227,12 @@ def full(job_id: str) -> dict | None:
         return None
     item["cues"] = found[1].get("cues") or []
     item["speakers"] = found[1].get("speakers") or []
+    # Tên vai & giọng người dùng đã chọn — nằm trong DB, không nằm trong state.json.
+    # DB hỏng thì vẫn mở được dự án, chỉ mất phần này.
+    try:
+        item["characters"] = characters.list_for(job_id)
+    except Exception:
+        item["characters"] = []
     return item
 
 
@@ -284,6 +290,7 @@ def delete(job_id: str, with_source: bool = False) -> dict:
     from . import films
 
     films.unbind_job(job_id)
+    characters.delete_for(job_id)
 
     source_deleted = False
     # Chỉ xoá video upload khi không còn dự án nào khác dùng nó

@@ -421,6 +421,7 @@ async function openProject(id) {
   S.projectId = id;
   S.videoSrc = p.video_ok ? `${API_BASE}/api/projects/${id}/video` : '';
   S.cues = p.cues.map(c => ({ ...c }));
+  applyCharacters(p.characters || []);   // tên vai & giọng đã chọn lần trước
   S.analyzed = {
     source_lang: p.source_lang, target_lang: p.target_lang,
     duration: p.duration, width: p.width, height: p.height,

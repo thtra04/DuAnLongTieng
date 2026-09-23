@@ -67,6 +67,7 @@ async function restoreJobRecovery() {
     if (job.status === 'done') {
       S.analyzed = job.result;
       S.cues = (job.result.cues || []).map(c => ({ ...c }));
+      await loadCharacters(S.jobId);
       unlock(4);
       setupEditor();
       $('#toEditor').classList.remove('hide');

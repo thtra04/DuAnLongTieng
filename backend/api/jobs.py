@@ -118,6 +118,7 @@ async def analyze(payload: dict) -> dict:
 async def render(job_id: str, payload: dict) -> dict:
     cfg = dict(payload or {})
     job_id = safe_id(job_id)
+    cfg["source_job"] = job_id  # để bước lồng tiếng ghi giọng đã dùng vào đúng dự án
     state_path = JOB_DIR / job_id / "state.json" if job_id else None
 
     if state_path and state_path.exists():

@@ -99,9 +99,42 @@ $('#dubTest').addEventListener('click', async () => {
 
 /* --------------------------- nhân vật & giọng --------------------------- */
 
-/* Nhãn nhân vật từ máy chủ là S1, S2… Người dùng đổi tên được, tên đổi chỉ nằm
-   trong phiên làm việc — nó thuần tuý để nhìn cho dễ, máy chủ vẫn dùng nhãn gốc. */
+/* Nhãn nhân vật từ máy chủ là S1, S2… Người dùng đổi tên và chọn giọng được;
+   hai thứ đó lưu ở máy chủ theo dự án (bảng characters/voices) nên mở lại dự án
+   vẫn còn. Phụ đề vẫn dùng nhãn gốc. */
 const SPK_SLOTS = 6;
+
+/** Nạp tên vai & giọng đã lưu vào phiên làm việc (thay hẳn, không trộn với dự án trước). */
+function applyCharacters(list) {
+  S.speakerNames = {};
+  S.speakerVoices = {};
+  (list || []).forEach(c => {
+    if (c.name) S.speakerNames[c.label] = c.name;
+    if (c.voice) S.speakerVoices[c.label] = c.voice;
+  });
+}
+
+async function loadCharacters(id) {
+  if (!id) return applyCharacters([]);
+  try {
+    const r = await api(`/api/projects/${id}/characters`);
+    applyCharacters(r.characters);
+  } catch { applyCharacters([]); }
+}
+
+/* Gõ tên là lưu — gom lại 400 ms để không bắn một request mỗi phím. */
+const _spkSaveTimers = {};
+function saveCharacter(label, patch) {
+  const id = S.projectId || S.jobId;
+  if (!id) return;
+  clearTimeout(_spkSaveTimers[label]);
+  _spkSaveTimers[label] = setTimeout(() => {
+    api(`/api/projects/${id}/characters/${encodeURIComponent(label)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).catch(() => {});
+  }, 400);
+}
 
 function spkSlot(id) {
   const n = parseInt(String(id).replace(/\D/g, ''), 10);
@@ -191,10 +224,12 @@ function renderSpeakerVoices() {
 
   $$('.spkvoice', list).forEach(sel => sel.addEventListener('change', () => {
     S.speakerVoices[sel.dataset.spk] = sel.value;
+    saveCharacter(sel.dataset.spk, { voice: sel.value, style: $('#dubStyle').value });
   }));
   $$('.spkname', list).forEach(inp => inp.addEventListener('input', () => {
     S.speakerNames = S.speakerNames || {};
     S.speakerNames[inp.dataset.spk] = inp.value.trim();
+    saveCharacter(inp.dataset.spk, { name: inp.value.trim() });
     renderCues();
   }));
   $$('.spktest', list).forEach(btn => btn.addEventListener('click', () => {
