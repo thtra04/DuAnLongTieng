@@ -75,3 +75,8 @@ def tmp_db(workdir, monkeypatch):
 
     monkeypatch.setattr(db_mod, "_engine", engine)
     monkeypatch.setattr(db_mod, "_SessionLocal", session_factory)
+    try:
+        yield engine
+    finally:
+        # Windows không xoá được file .db còn mở -> thư mục tạm tích tụ, đầy đĩa.
+        engine.dispose()

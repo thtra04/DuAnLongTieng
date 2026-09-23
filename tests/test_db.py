@@ -102,7 +102,11 @@ def kho_json(workdir, monkeypatch):
     # init_db tự dựng engine từ DB_PATH — bỏ engine giả của tmp_db
     monkeypatch.setattr(db_mod, "_engine", None)
     monkeypatch.setattr(db_mod, "_SessionLocal", None)
-    return workdir
+    try:
+        yield workdir
+    finally:
+        if db_mod._engine is not None:
+            db_mod._engine.dispose()  # nhả file .db để workdir xoá được trên Windows
 
 
 def test_init_db_tao_bang_khi_chua_co(kho_json):

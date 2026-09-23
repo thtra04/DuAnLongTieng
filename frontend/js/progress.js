@@ -18,6 +18,7 @@ function pollJob() {
       $('#phaseText').textContent = 'hoàn tất';
       S.analyzed = j.result;
       S.cues = (j.result.cues || []).map(c => ({ ...c }));
+      await loadCharacters(S.jobId);   // dự án mới -> bảng vai mới, không dính dự án trước
       updateStepSummary();
       $('#toEditor').classList.remove('hide');
       unlock(4);

@@ -10,6 +10,7 @@ from pathlib import Path
 from . import align, asr, budget, diarize, dubbing, media, metrics, subtitles, translate
 from .jobs import Job, Step
 from .subtitles import Cue
+from ..store import characters
 
 SAFE_NAME = re.compile(r"[^\w\-. ]+", re.UNICODE)
 
@@ -298,6 +299,12 @@ def _run_diarize(job: Job, cfg: dict, video_path: Path, workdir: Path, cues) -> 
         )
         stats = diarize.assign(cues, turns)
         speakers = diarize.speakers_of(cues)
+        # Ghi bảng nhân vật vào CSDL để tên vai / giọng chọn sau này có chỗ bám.
+        # DB hỏng thì chỉ mất phần lưu, không được kéo bước phân đoạn chết theo.
+        try:
+            characters.sync(job.id, speakers)
+        except Exception as exc:
+            job.log(f"Không lưu được danh sách nhân vật vào CSDL: {exc}")
 
         job.finish_step(
             "diarize",
@@ -558,6 +565,16 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
     if voice_map:
         named = ", ".join(f"{k}→{_voice_label(v)}" for k, v in sorted(voice_map.items()))
         job.log(f"Lồng tiếng đa nhân vật: {named}")
+
+    # Giọng thực sự dùng cho từng vai (kể cả mẫu nhân bản đã cắt) -> CSDL, để báo
+    # cáo đối chiếu và để lần xuất sau mở lại đúng lựa chọn.
+    try:
+        characters.record_voices(
+            cfg.get("source_job"), present, voice_map, ref_map,
+            default_voice=_fallback_voice(voice), style=style, clone_id=dubbing.CLONE_VOICE,
+        )
+    except Exception as exc:
+        job.log(f"Không ghi được giọng đã dùng vào CSDL: {exc}")
 
     job.start_step("tts", f"{len(cues)} dòng")
     job.log("Đang nạp model VieNeu-TTS (lần đầu có thể mất vài phút)…")
