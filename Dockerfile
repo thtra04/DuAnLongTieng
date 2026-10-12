@@ -3,9 +3,15 @@ FROM python:3.12-slim AS builder
 
 RUN pip install --no-cache-dir uv
 
+# Nhóm tuỳ chọn cài vào ảnh. Mặc định: hàng đợi Redis, lồng tiếng VieNeu-TTS và dịch
+# bằng AI — đều nhẹ, không kéo torch. Muốn có nhận diện người nói / nhân bản giọng thì
+# build lại với: --build-arg EXTRAS="--extra queue --extra tts --extra ai --extra diarize --extra clone"
+# (thêm ~2,5 GB torch). Không có `cuda`: nhóm đó là thư viện CUDA cho Windows.
+ARG EXTRAS="--extra queue --extra tts --extra ai"
+
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --no-dev --frozen --no-install-project
+RUN uv sync --no-dev --frozen --no-install-project ${EXTRAS}
 
 # === Stage 2: runtime ===
 FROM python:3.12-slim
@@ -28,8 +34,10 @@ COPY training/ training/
 COPY run.py .
 COPY pyproject.toml .
 
-# Dữ liệu lưu ở volume, không ghi vào image
+# Dữ liệu lưu ở volume, không ghi vào image. Model tải về (Whisper, VieNeu-TTS,
+# pyannote) cũng để trong volume, để dựng lại container không phải tải lại.
 ENV VSUB_DATA_DIR=/data
+ENV HF_HOME=/data/hf-cache
 VOLUME /data
 
 EXPOSE 8000

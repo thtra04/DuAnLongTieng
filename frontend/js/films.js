@@ -34,7 +34,7 @@ async function loadProjects() {
 
   if (!films.length && !loose.length) {
     box.innerHTML = `<p class="muted">Chưa có bộ phim nào.
-      Bấm <b>➕ Tạo dự án phim</b> ở trên để bắt đầu.</p>`;
+      Bấm <b>Tạo dự án phim</b> ở trên để bắt đầu.</p>`;
     return;
   }
 
@@ -55,7 +55,7 @@ function filmCard(f) {
   return `
   <div class="sr${open ? ' open' : ''}" data-film="${f.id}">
     <div class="sr-top">
-      <span class="ic">🎬</span>
+      <span class="ic">${icon('film')}</span>
       <div class="sr-main">
         <span class="sr-name">${esc(f.name)}</span>
         <span class="sr-prog">
@@ -71,11 +71,11 @@ function filmCard(f) {
         </span>
       </div>
       <div class="sr-ops">
-        <button class="btn sm f-addep">➕ Thêm tập</button>
-        <button class="btn sm ghost f-rename">✏️ Đổi tên</button>
-        <button class="btn sm danger f-del">🗑 Xoá bộ</button>
+        <button class="btn sm f-addep">${icon('plus')} Thêm tập</button>
+        <button class="btn sm ghost f-rename">${icon('pencil')} Đổi tên</button>
+        <button class="btn sm danger f-del">${icon('trash')} Xoá bộ</button>
       </div>
-      <span class="sr-caret">▾</span>
+      <span class="sr-caret">${icon('chevron-down')}</span>
     </div>
 
     <div class="sr-body">
@@ -89,7 +89,7 @@ function filmCard(f) {
 
       ${!f.episodes.length ? `
         <div class="sr-sec">Bộ này chưa có tập nào</div>
-        <p class="muted">Bấm <b>➕ Thêm tập</b> ở trên để tạo tập đầu tiên.</p>` : ''}
+        <p class="muted">Bấm <b>Thêm tập</b> ở trên để tạo tập đầu tiên.</p>` : ''}
     </div>
   </div>`;
 }
@@ -121,7 +121,7 @@ function epDone(f, e) {
     </div>
     <div class="ep-ops">
       <button class="btn sm ep-open">Mở ra sửa</button>
-      <button class="btn sm danger ep-del">🗑 Xoá tập</button>
+      <button class="btn sm danger ep-del">${icon('trash')} Xoá tập</button>
     </div>
   </div>`;
 }
@@ -141,8 +141,8 @@ function epTodo(f, e) {
       </div>
     </div>
     <div class="ep-ops">
-      <button class="btn sm primary ep-src">📥 Đưa video vào</button>
-      <button class="btn sm danger ep-rm">🗑</button>
+      <button class="btn sm primary ep-src">${icon('import')} Đưa video vào</button>
+      <button class="btn sm danger ep-rm" title="Bỏ tập này khỏi bộ" aria-label="Bỏ tập ${e.no} khỏi bộ">${icon('trash')}</button>
     </div>
   </div>`;
 }
@@ -151,7 +151,7 @@ function looseSection(loose) {
   return `
   <div class="sr open loosebox" data-film="">
     <div class="sr-top" style="cursor:default">
-      <span class="ic">📼</span>
+      <span class="ic">${icon('video')}</span>
       <div class="sr-main">
         <span class="sr-name">Chưa thuộc bộ nào — ${loose.length} video</span>
         <span class="sr-when">Làm trước khi tạo bộ, hoặc upload lẻ. Gán vào bộ để gom lại.</span>
@@ -160,7 +160,7 @@ function looseSection(loose) {
     <div class="sr-body">
       <div class="eplist">${loose.map(p => `
         <div class="ep${p.video_ok ? '' : ' gone'}" data-id="${p.id}">
-          <span class="ep-no"><b>🎞️</b></span>
+          <span class="ep-no">${icon('film')}</span>
           <div class="ep-info">
             <div class="line1" title="${esc(p.video_name)}">${esc(p.video_name)}</div>
             <div class="line2">${p.cue_count} dòng · ${fmtLength(p.duration)} ·
@@ -170,7 +170,7 @@ function looseSection(loose) {
           <div class="ep-ops">
             <button class="btn sm lo-assign">Gán vào bộ</button>
             <button class="btn sm lo-open">Mở ra sửa</button>
-            <button class="btn sm danger lo-del">🗑</button>
+            <button class="btn sm danger lo-del" title="Xoá video này" aria-label="Xoá video này">${icon('trash')}</button>
           </div>
         </div>`).join('')}</div>
     </div>
@@ -306,7 +306,7 @@ async function addEpisode(f) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ no }),
     });
-    toast(`Đã thêm tập ${no}. Giờ bấm "📥 Đưa video vào" để làm nó.`, 'ok', 5000);
+    toast(`Đã thêm tập ${no}. Giờ bấm "Đưa video vào" để làm nó.`, 'ok', 5000);
   } catch (e) {
     return toast('Không thêm được tập: ' + e.message, 'err', 9000);
   }
@@ -367,7 +367,7 @@ function renderTargetBar() {
     bar.innerHTML = '';
     return;
   }
-  bar.innerHTML = `🎯 Đang làm <b>tập ${S.target.no}</b> của bộ <b>${esc(S.target.filmName)}</b>
+  bar.innerHTML = `${icon('target')} Đang làm <b>tập ${S.target.no}</b> của bộ <b>${esc(S.target.filmName)}</b>
     — xong sẽ tự gắn vào đúng tập này.
     <button class="btn ghost" id="targetClear">Bỏ, làm video lẻ</button>`;
   bar.classList.remove('hide');
@@ -426,6 +426,7 @@ async function openProject(id) {
     source_lang: p.source_lang, target_lang: p.target_lang,
     duration: p.duration, width: p.width, height: p.height,
     cue_count: p.cue_count, coverage: 1,
+    hardsub: p.hardsub || null,
   };
   S.display = p.target_lang ? 'second' : 'main';
   if (p.source_lang) $('#srcLang').value = p.source_lang;

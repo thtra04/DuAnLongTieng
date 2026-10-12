@@ -17,7 +17,7 @@ function fillEngines() {
   const grid = $('#engineGrid');
   grid.innerHTML = S.sys.engines.map(e => `
     <div class="choice ${e.id === S.engine ? 'on' : ''} ${e.available ? '' : 'off'}"
-         data-engine="${e.id}" ${e.available ? '' : 'title="' + e.reason + '"'}>
+         data-engine="${e.id}" role="button" tabindex="0" ${e.available ? '' : 'title="' + e.reason + '"'}>
       <b>${e.label}</b>
       <small>${e.desc}</small>
       ${e.available ? '' : `<span class="tagline">${e.reason}</span>`}
@@ -114,7 +114,7 @@ $('#aiCheck').addEventListener('click', async () => {
   if (!$('#apiKey').value.trim() && !aiEnvKey()) return toast('Hãy nhập API key trước.', 'warn');
   const btn = $('#aiCheck');
   btn.disabled = true;
-  btn.textContent = '⏳ Đang gọi thử (tối đa 30s)…';
+  btn.innerHTML = icon('loader', 'spin') + ' Đang gọi thử (tối đa 30s)…';
   const { engine, api_key, ai_model, ai_base_url } = aiPayload();
   try {
     const r = await api('/api/ai/check', {
@@ -130,6 +130,6 @@ $('#aiCheck').addEventListener('click', async () => {
     toast('Kiểm tra không được: ' + e.message, 'err', 9000);
   } finally {
     btn.disabled = false;
-    btn.textContent = '🔌 Kiểm tra kết nối';
+    btn.innerHTML = icon('plug') + ' Kiểm tra kết nối';
   }
 });

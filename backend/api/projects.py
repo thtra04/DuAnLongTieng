@@ -41,6 +41,28 @@ def project_video(job_id: str, request: Request):
     return ranged_file(path, request, mime)
 
 
+@router.post("/{job_id}/hardsub")
+def project_hardsub(job_id: str) -> dict:
+    """Dò lại dải phụ đề nung sẵn trong video của dự án (nút "Dò lại" ở bước 4)."""
+    from ..core import hardsub
+    from ..core.subtitles import Cue
+
+    job_id = Path(job_id).name
+    item = projects.full(job_id)
+    if not item:
+        raise HTTPException(404, "Không tìm thấy dự án này.")
+    video = projects.video_path(job_id)
+    if not video:
+        raise HTTPException(404, "Video gốc của dự án không còn trên máy nên không dò được.")
+    cues = [Cue.from_dict(c) for c in item.get("cues") or []]
+    try:
+        result = hardsub.detect(video, cues)
+    except Exception as exc:
+        raise HTTPException(500, f"Không dò được: {exc}") from exc
+    projects.save_hardsub(job_id, result)
+    return result
+
+
 @router.get("/{job_id}/files/{name}")
 def project_file(job_id: str, name: str):
     path = projects.output_file(Path(job_id).name, name)
@@ -70,6 +92,7 @@ def project_character_update(job_id: str, label: str, payload: dict) -> dict:
         item = characters.update(
             job_id, label,
             name=data.get("name"), voice=data.get("voice"), style=data.get("style"),
+            gender=data.get("gender"),
         )
     except characters.CharacterError as exc:
         raise HTTPException(400, str(exc)) from exc

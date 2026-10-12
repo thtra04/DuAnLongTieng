@@ -6,13 +6,62 @@
 <title>VSub Studio — Tạo phụ đề & dịch video</title>
 <script>
 // Áp chủ đề đã lưu trước khi vẽ, tránh nháy sáng/tối; màu nhấn tuỳ chọn do js/theme.js lo.
-try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
-  if (_t && _t !== 'hong') document.documentElement.dataset.theme = _t; } catch (e) {}
+// Chưa chọn gì thì dùng 'vang' (Hoàng kim) — trùng DEFAULT_THEME trong js/theme.js.
+try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme || 'vang';
+  if (_t !== 'hong') document.documentElement.dataset.theme = _t; } catch (e) { document.documentElement.dataset.theme = 'vang'; }
 </script>
 <link rel="stylesheet" href="/css/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23151009'/><rect x='1.5' y='1.5' width='29' height='29' rx='6.5' fill='none' stroke='%23dbb15c' stroke-width='1.5'/><path d='M13 10.5v11l9-5.5z' fill='%23e2b659'/></svg>">
 </head>
 <body>
+
+<!-- Bộ icon SVG nội tuyến (nét 24px, lấy theo kiểu Lucide — giấy phép ISC). Dùng: <svg class="i"><use href="#i-ten"/></svg> -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-clapper" viewBox="0 0 24 24"><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"/><path d="m6.2 5.3 3.1 3.9"/><path d="m12.4 3.4 3.1 4"/><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+  <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"/></symbol>
+  <symbol id="i-upload-cloud" viewBox="0 0 24 24"><path d="M12 13v8"/><path d="M4 14.9A7 7 0 1 1 15.7 8h1.8a4.5 4.5 0 0 1 2.5 8.2"/><path d="m8 17 4-4 4 4"/></symbol>
+  <symbol id="i-hard-drive" viewBox="0 0 24 24"><path d="M22 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M6 16h.01"/><path d="M10 16h.01"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-captions" viewBox="0 0 24 24"><rect width="18" height="14" x="3" y="5" rx="2"/><path d="M7 15h4"/><path d="M15 15h2"/><path d="M7 11h2"/><path d="M13 11h4"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></symbol>
+  <symbol id="i-file-text" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></symbol>
+  <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+  <symbol id="i-languages" viewBox="0 0 24 24"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></symbol>
+  <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3.5v17l14-8.5z"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-skip-back" viewBox="0 0 24 24"><path d="M19 20 9 12l10-8z"/><path d="M5 19V5"/></symbol>
+  <symbol id="i-skip-forward" viewBox="0 0 24 24"><path d="m5 4 10 8-10 8z"/><path d="M19 5v14"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.83-.44-1.12-.29-.29-.44-.65-.44-1.13a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.56-2.5 5.56-5.55C21.97 6.01 17.46 2 12 2z"/><path d="M13.5 6.5h.01"/><path d="M17.5 10.5h.01"/><path d="M8.5 7.5h.01"/><path d="M6.5 12.5h.01"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6a1.4 1.4 0 0 1-1 .4H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.4 18.4a9 9 0 0 0 0-12.8"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+  <symbol id="i-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.17 6.81a1 1 0 0 0-3.98-3.98L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/></symbol>
+  <symbol id="i-loader" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+</svg>
 
 <div class="aurora"><span></span><span></span><span></span></div>
 <div class="grid-overlay"></div>
@@ -21,19 +70,21 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
 
   <header class="top">
     <div class="logo">
-      <div class="logo-mark">🎬</div>
+      <div class="logo-mark"><svg class="i" aria-hidden="true"><use href="#i-clapper"/></svg></div>
       <div>
         <h1>VSub Studio</h1>
         <p>Tạo phụ đề · Dịch đa ngôn ngữ · Nung vào video</p>
       </div>
     </div>
-    <div class="status-row" id="statusRow">
-      <span class="pill"><i class="dot"></i> Đang kiểm tra…</span>
+    <div class="top-right">
+      <div class="status-row" id="statusRow">
+        <span class="pill"><i class="dot"></i> Đang kiểm tra…</span>
+      </div>
+      <div class="theme-pick" id="themePick"></div>
     </div>
-    <div class="theme-pick" id="themePick"></div>
   </header>
 
-  <nav class="stepper">
+  <nav class="stepper" aria-label="Các bước thực hiện">
     <button class="step-btn active" data-step="1"><span class="num">1</span>
       <span class="lbl">Nguồn video<span class="sub" id="step1Sub">File, link, hoặc phụ đề sẵn</span></span></button>
     <button class="step-btn" data-step="2" disabled><span class="num">2</span>
@@ -47,13 +98,13 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
   <!-- ══════════════════════════ BƯỚC 1 ══════════════════════════ -->
   <section class="panel active" id="panel1">
     <div class="card" id="projectCard">
-      <h2><span class="ic">📂</span> Dự án phim <span class="badge" id="projCount">…</span></h2>
+      <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg></span> Dự án phim <span class="badge" id="projCount">…</span></h2>
       <p class="hint">Làm theo ba bước: <b>1.</b> tạo bộ phim → <b>2.</b> tạo tập →
         <b>3.</b> đưa link hoặc upload video cho từng tập.</p>
       <p class="projsum" id="projSum"></p>
       <div class="actions" style="margin-bottom:16px">
-        <button class="btn primary sm" id="filmNew">➕ Tạo dự án phim</button>
-        <button class="btn sm ghost" id="projReload">🔄 Tải lại</button>
+        <button class="btn primary sm" id="filmNew"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg> Tạo dự án phim</button>
+        <button class="btn sm ghost" id="projReload"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg> Tải lại</button>
       </div>
 
       <!-- form tạo bộ phim, ẩn cho tới khi bấm nút -->
@@ -79,17 +130,17 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
 
     <div class="card">
       <div id="targetBar" class="targetbar hide"></div>
-      <h2><span class="ic">📥</span> Nguồn video</h2>
+      <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-import"/></svg></span> Nguồn video</h2>
       <p class="hint">Kéo thả file từ máy, hoặc dán link YouTube / TikTok / Facebook… để tool tự tải về.</p>
 
       <div class="tabs">
-        <button class="tab active" data-src="file">💾 File từ máy</button>
-        <button class="tab" data-src="url">🔗 Link video</button>
+        <button class="tab active" data-src="file"><svg class="i" aria-hidden="true"><use href="#i-hard-drive"/></svg> File từ máy</button>
+        <button class="tab" data-src="url"><svg class="i" aria-hidden="true"><use href="#i-link"/></svg> Link video</button>
       </div>
 
       <div class="tabpane active" data-pane="file">
-        <div class="drop" id="drop">
-          <span class="ic">📼</span>
+        <div class="drop" id="drop" role="button" tabindex="0" aria-label="Chọn file video từ máy">
+          <span class="ic"><svg class="i" aria-hidden="true"><use href="#i-upload-cloud"/></svg></span>
           <strong>Kéo thả video vào đây</strong>
           <small>hoặc bấm để chọn — mp4, mkv, mov, avi, webm, mp3, wav…</small>
           <input type="file" id="fileInput" class="hide"
@@ -104,7 +155,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
           <input type="url" id="urlInput" placeholder="https://www.youtube.com/watch?v=…">
         </label>
         <div class="actions">
-          <button class="btn sm ghost" id="checkLink">🔍 Kiểm tra link</button>
+          <button class="btn sm ghost" id="checkLink"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg> Kiểm tra link</button>
           <span class="muted" id="linkState" style="align-self:center"></span>
         </div>
         <p class="muted" style="margin-top:12px">Tool dùng <b>yt-dlp</b> để tải, ưu tiên chất lượng tối đa 1080p.
@@ -117,20 +168,20 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
     </div>
 
     <div class="card">
-      <h2><span class="ic">✍️</span> Nội dung phụ đề lấy từ đâu?</h2>
+      <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-captions"/></svg></span> Nội dung phụ đề lấy từ đâu?</h2>
       <p class="hint">Chọn cách tool tạo ra các dòng phụ đề.</p>
 
       <div class="choice-grid" id="modeGrid">
-        <div class="choice on" data-mode="auto">
-          <b>🎙️ Tự nghe từ video</b>
+        <div class="choice on" data-mode="auto" role="button" tabindex="0">
+          <b><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg> Tự nghe từ video</b>
           <small>Whisper AI nghe lời thoại và tự viết ra phụ đề, kèm mốc giờ chính xác.</small>
         </div>
-        <div class="choice" data-mode="text">
-          <b>📄 Theo văn bản của tôi</b>
+        <div class="choice" data-mode="text" role="button" tabindex="0">
+          <b><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg> Theo văn bản của tôi</b>
           <small>Bạn dán sẵn lời thoại/kịch bản — tool nghe video rồi canh giờ khớp từng câu.</small>
         </div>
-        <div class="choice" data-mode="srt">
-          <b>🗂️ Đã có file .srt/.vtt</b>
+        <div class="choice" data-mode="srt" role="button" tabindex="0">
+          <b><svg class="i" aria-hidden="true"><use href="#i-captions"/></svg> Đã có file .srt/.vtt</b>
           <small>Nạp phụ đề có sẵn để dịch, chỉnh kiểu chữ và nung vào video.</small>
         </div>
       </div>
@@ -141,14 +192,14 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
           <textarea id="scriptText" placeholder="Xin chào các bạn, hôm nay chúng ta sẽ…&#10;Trước tiên hãy cùng xem qua…"></textarea>
         </label>
         <div class="actions">
-          <button class="btn sm ghost" id="pickTxt">📎 Nạp từ file .txt</button>
+          <button class="btn sm ghost" id="pickTxt"><svg class="i" aria-hidden="true"><use href="#i-paperclip"/></svg> Nạp từ file .txt</button>
           <input type="file" id="txtInput" class="hide" accept=".txt,.md,text/plain">
         </div>
       </div>
 
       <div id="modeSrt" class="hide" style="margin-top:18px">
-        <div class="drop" id="dropSrt" style="padding:28px 20px">
-          <span class="ic">🗂️</span>
+        <div class="drop" id="dropSrt" style="padding:28px 20px" role="button" tabindex="0" aria-label="Chọn file phụ đề .srt hoặc .vtt">
+          <span class="ic"><svg class="i" aria-hidden="true"><use href="#i-captions"/></svg></span>
           <strong>Chọn file .srt hoặc .vtt</strong>
           <small>Kéo thả hoặc bấm để chọn</small>
           <input type="file" id="srtInput" class="hide" accept=".srt,.vtt">
@@ -158,20 +209,20 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
     </div>
 
     <div class="actions right">
-      <button class="btn primary" id="toStep2">Tiếp tục →</button>
+      <button class="btn primary" id="toStep2">Tiếp tục <svg class="i" aria-hidden="true"><use href="#i-arrow-right"/></svg></button>
     </div>
   </section>
 
   <!-- ══════════════════════════ BƯỚC 2 ══════════════════════════ -->
   <section class="panel" id="panel2">
     <div class="card">
-      <h2><span class="ic">🌐</span> Ngôn ngữ</h2>
+      <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-globe"/></svg></span> Ngôn ngữ</h2>
       <p class="hint">Chọn ngôn ngữ đang nói trong video, và ngôn ngữ bạn muốn dịch sang.</p>
 
       <div class="grid2">
         <label class="field">
           <span>Ngôn ngữ gốc (trong video)</span>
-          <select id="srcLang"><option value="">🔎 Tự động phát hiện</option></select>
+          <select id="srcLang"><option value="">Tự động phát hiện</option></select>
         </label>
         <label class="field">
           <span>Dịch sang</span>
@@ -188,7 +239,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
     </div>
 
     <div class="card" id="engineCard">
-      <h2><span class="ic">🔤</span> Công cụ dịch</h2>
+      <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-languages"/></svg></span> Công cụ dịch</h2>
       <p class="hint">Chọn engine dịch phù hợp với chất lượng và chi phí bạn cần.</p>
       <div class="choice-grid" id="engineGrid"></div>
 
@@ -238,14 +289,14 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
         </label>
         <div class="cache-tools">
           <span class="muted" id="cacheInfo">Cache AI đang kiểm tra…</span>
-          <button class="btn sm" id="aiCheck" type="button" title="Gọi thử một câu ngắn với key, endpoint và model đang nhập">🔌 Kiểm tra kết nối</button>
-          <button class="btn sm ghost" id="clearCache" type="button">🧹 Xoá cache AI</button>
+          <button class="btn sm" id="aiCheck" type="button" title="Gọi thử một câu ngắn với key, endpoint và model đang nhập"><svg class="i" aria-hidden="true"><use href="#i-plug"/></svg> Kiểm tra kết nối</button>
+          <button class="btn sm ghost" id="clearCache" type="button"><svg class="i" aria-hidden="true"><use href="#i-eraser"/></svg> Xoá cache AI</button>
         </div>
       </div>
     </div>
 
     <div class="card">
-      <h2><span class="ic">⚙️</span> Cấu hình nhận dạng <span class="badge">nâng cao</span></h2>
+      <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-sliders"/></svg></span> Cấu hình nhận dạng <span class="badge">nâng cao</span></h2>
       <p class="hint">Model càng lớn càng chính xác nhưng chậm hơn và tải lâu hơn lần đầu.</p>
       <div class="grid3">
         <label class="field">
@@ -282,6 +333,14 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
           <small>Đo độ phủ, tự nhận dạng lại và quét bù các đoạn dài bị bỏ sót.</small></span>
       </label>
       <label class="switch" style="margin-bottom:14px">
+        <input type="checkbox" id="genderOn" checked>
+        <span class="track"></span>
+        <span class="txt"><b>Tách giọng nam / nữ</b>
+          <small>Nghe cao độ giọng của từng câu thoại để lúc lồng tiếng
+            <b>nhân vật nam đọc giọng nam, nhân vật nữ đọc giọng nữ</b>.
+            Chạy vài giây, không cần cài thêm gì.</small></span>
+      </label>
+      <label class="switch" style="margin-bottom:14px">
         <input type="checkbox" id="diarizeOn">
         <span class="track"></span>
         <span class="txt"><b>Nhận diện người nói</b>
@@ -311,9 +370,9 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
     </div>
 
     <div class="actions">
-      <button class="btn ghost" data-goto="1">← Quay lại</button>
+      <button class="btn ghost" data-goto="1"><svg class="i" aria-hidden="true"><use href="#i-arrow-left"/></svg> Quay lại</button>
       <div style="flex:1"></div>
-      <button class="btn primary" id="startBtn">▶ Bắt đầu xử lý</button>
+      <button class="btn primary" id="startBtn"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg> Bắt đầu xử lý</button>
     </div>
   </section>
 
@@ -341,10 +400,10 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
       <div id="covWarn" class="hide"></div>
       <div class="logbox" id="logBox">Chờ khởi động…</div>
       <div class="actions" style="margin-top:16px">
-        <button class="btn danger" id="cancelBtn">✕ Huỷ</button>
-        <button class="btn ghost hide" id="retryFromError">⚙ Sửa cấu hình và chạy lại</button>
+        <button class="btn danger" id="cancelBtn"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg> Huỷ</button>
+        <button class="btn ghost hide" id="retryFromError"><svg class="i" aria-hidden="true"><use href="#i-sliders"/></svg> Sửa cấu hình và chạy lại</button>
         <div style="flex:1"></div>
-        <button class="btn primary hide" id="toEditor">Tới bước biên tập →</button>
+        <button class="btn primary hide" id="toEditor">Tới bước biên tập <svg class="i" aria-hidden="true"><use href="#i-arrow-right"/></svg></button>
       </div>
     </div>
   </section>
@@ -356,18 +415,19 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
         <div class="card" style="padding:14px">
           <div class="player-box">
             <video id="player" controls preload="metadata"></video>
+            <div class="hs-mask hide" id="hsMask" aria-hidden="true"></div>
             <div class="sub-overlay" id="subOverlay"></div>
           </div>
           <div class="actions" style="margin-top:12px">
-            <button class="btn sm ghost" id="prevCue">⏮ Dòng trước</button>
-            <button class="btn sm ghost" id="nextCue">Dòng sau ⏭</button>
+            <button class="btn sm ghost" id="prevCue"><svg class="i" aria-hidden="true"><use href="#i-skip-back"/></svg> Dòng trước</button>
+            <button class="btn sm ghost" id="nextCue">Dòng sau <svg class="i" aria-hidden="true"><use href="#i-skip-forward"/></svg></button>
             <div style="flex:1"></div>
             <span class="muted" id="cueCount"></span>
           </div>
         </div>
 
         <div class="card">
-          <h2><span class="ic">🎨</span> Kiểu phụ đề</h2>
+          <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-palette"/></svg></span> Kiểu phụ đề</h2>
           <div class="stylebar">
             <label class="field"><span>Font</span>
               <select id="stFont">
@@ -390,7 +450,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
               <select id="stPos"><option value="bottom">Dưới</option><option value="middle">Giữa</option><option value="top">Trên</option></select>
             </label>
             <label class="field"><span>Lề dọc</span>
-              <div class="rangeline"><input type="range" id="stMargin" min="10" max="200" step="2" value="48">
+              <div class="rangeline"><input type="range" id="stMargin" min="10" max="600" step="2" value="48">
                 <output id="stMarginOut">48</output></div>
             </label>
             <label class="field"><span>Ký tự / dòng hiển thị</span>
@@ -406,12 +466,45 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
             <label class="field" style="margin:0"><span>Lệch giờ (giây)</span>
               <input type="number" id="stOffset" value="0" step="0.1"></label>
           </div>
+
+          <div class="divider"></div>
+          <label class="switch">
+            <input type="checkbox" id="maskOn">
+            <span class="track"></span>
+            <span class="txt"><b>Che phụ đề có sẵn trong video</b>
+              <small id="maskHint">Video gốc đã có chữ nung sẵn thì che đi, rồi đặt phụ đề mới đúng chỗ đó.</small></span>
+          </label>
+          <div id="maskOpts" class="hide subbox" style="margin-top:12px">
+            <div class="stylebar">
+              <label class="field"><span>Cách che</span>
+                <select id="maskMode"><option value="blur">Làm mờ</option><option value="box">Hộp tối</option></select>
+              </label>
+              <label class="field"><span>Mép trên (% khung)</span>
+                <div class="rangeline"><input type="range" id="maskTop" min="0" max="98" step="0.5" value="0">
+                  <output id="maskTopOut">0</output></div>
+              </label>
+              <label class="field"><span>Chiều cao dải (%)</span>
+                <div class="rangeline"><input type="range" id="maskH" min="2" max="30" step="0.5" value="8">
+                  <output id="maskHOut">8</output></div>
+              </label>
+              <label class="field"><span>Bề ngang (%)</span>
+                <div class="rangeline"><input type="range" id="maskW" min="20" max="100" step="1" value="60">
+                  <output id="maskWOut">60</output></div>
+              </label>
+            </div>
+            <div class="actions" style="margin-top:0">
+              <button class="btn sm ghost" id="maskDetect" type="button"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg> Dò lại</button>
+              <button class="btn sm ghost" id="maskFit" type="button"><svg class="i" aria-hidden="true"><use href="#i-captions"/></svg> Đặt phụ đề mới vào dải</button>
+              <span class="muted" id="maskState"></span>
+            </div>
+            <p class="hint">Che khi xuất <b>Video nung phụ đề</b>. Khung mờ trên video là bản xem trước.</p>
+          </div>
         </div>
       </div>
 
       <div>
         <div class="card">
-          <h2><span class="ic">📝</span> Nội dung phụ đề</h2>
+          <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg></span> Nội dung phụ đề</h2>
           <p class="hint">Bấm vào một dòng để tua video tới đó. Sửa trực tiếp trong ô.</p>
           <div class="tabs" id="dispTabs">
             <button class="tab" data-disp="main">Nguyên ngữ</button>
@@ -422,7 +515,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
         </div>
 
         <div class="card">
-          <h2><span class="ic">🎙️</span> Lồng tiếng <span class="badge">VieNeu-TTS</span></h2>
+          <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg></span> Lồng tiếng <span class="badge">VieNeu-TTS</span></h2>
           <p class="hint">Đọc bản dịch thành tiếng Việt và ghép vào video, canh khớp mốc giờ phụ đề.</p>
 
           <div id="ttsUnavailable" class="hide">
@@ -450,14 +543,14 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
               </div>
 
               <div class="actions" style="margin:-4px 0 14px">
-                <button class="btn sm ghost" id="dubTest">🔊 Nghe thử giọng</button>
+                <button class="btn sm ghost" id="dubTest"><svg class="i" aria-hidden="true"><use href="#i-volume"/></svg> Nghe thử giọng</button>
                 <audio id="dubAudio" class="hide"></audio>
                 <span class="muted" id="dubTestMsg"></span>
               </div>
 
               <div id="spkBox" class="hide subbox" style="margin-bottom:14px">
                 <div class="spk-head">
-                  <b>🎭 Giọng cho từng nhân vật</b>
+                  <b><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Giọng cho từng nhân vật</b>
                   <span class="muted" id="spkCount"></span>
                 </div>
                 <p class="hint">Ô "Giọng đọc" ở trên áp dụng cho những dòng chưa nhận ra ai nói.</p>
@@ -517,7 +610,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
         </div>
 
         <div class="card">
-          <h2><span class="ic">📦</span> Xuất kết quả</h2>
+          <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-package"/></svg></span> Xuất kết quả</h2>
           <div class="grid2">
             <label class="check on"><input type="checkbox" id="outSrt" checked>
               <span><b>File .SRT</b><small>phổ biến nhất, mở được mọi nơi</small></span></label>
@@ -528,11 +621,11 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
             <label class="check"><input type="checkbox" id="outTxt">
               <span><b>File .TXT</b><small>toàn bộ lời thoại, không mốc giờ</small></span></label>
             <label class="check"><input type="checkbox" id="outBurn">
-              <span><b>🔥 Video nung phụ đề</b><small>chữ dính vào hình, encode lại — lâu nhất</small></span></label>
+              <span><b><svg class="i" aria-hidden="true"><use href="#i-flame"/></svg> Video nung phụ đề</b><small>chữ dính vào hình, encode lại — lâu nhất</small></span></label>
             <label class="check"><input type="checkbox" id="outSoft">
               <span><b>Video phụ đề bật/tắt</b><small>gắn dạng track, rất nhanh</small></span></label>
             <label class="check hide" id="outDubWrap"><input type="checkbox" id="outDub">
-              <span><b>🎙️ Video lồng tiếng</b><small>đọc bản dịch thành tiếng Việt</small></span></label>
+              <span><b><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg> Video lồng tiếng</b><small>đọc bản dịch thành tiếng Việt</small></span></label>
             <label class="check hide" id="outDubWavWrap"><input type="checkbox" id="outDubWav">
               <span><b>File tiếng .WAV</b><small>chỉ track lồng tiếng, để tự dựng</small></span></label>
           </div>
@@ -556,9 +649,9 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
           </div>
 
           <div class="actions" style="margin-top:16px">
-            <button class="btn ghost" data-goto="1">↺ Video khác</button>
+            <button class="btn ghost" data-goto="1"><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg> Video khác</button>
             <div style="flex:1"></div>
-            <button class="btn primary" id="renderBtn">⬇ Xuất file</button>
+            <button class="btn primary" id="renderBtn"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg> Xuất file</button>
           </div>
 
           <div id="renderProgress" class="hide" style="margin-top:18px">
@@ -567,7 +660,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
 
           <div id="resultBox" class="hide" style="margin-top:18px">
             <div class="divider"></div>
-            <h2 style="font-size:15px"><span class="ic">✅</span> File đã tạo</h2>
+            <h2 style="font-size:15px"><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-check-circle"/></svg></span> File đã tạo</h2>
             <div class="filelist" id="fileList"></div>
           </div>
         </div>
@@ -593,6 +686,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme;
 <script src="/js/ai.js"></script>
 <script src="/js/progress.js"></script>
 <script src="/js/editor.js"></script>
+<script src="/js/hardsub.js"></script>
 <script src="/js/dubbing.js"></script>
 <script src="/js/export.js"></script>
 <script src="/js/prefs.js"></script>

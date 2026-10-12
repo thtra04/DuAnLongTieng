@@ -1,18 +1,31 @@
 services:
   vsub:
-    build: .
+    build:
+      context: .
+      # Thêm nhận diện người nói / nhân bản giọng (kéo torch ~2,5 GB):
+      #   EXTRAS="--extra queue --extra tts --extra ai --extra diarize --extra clone"
+      args:
+        EXTRAS: ${VSUB_EXTRAS:---extra queue --extra tts --extra ai}
     ports:
       - "8000:8000"
     volumes:
       - vsub-data:/data
     environment:
       - VSUB_DATA_DIR=/data
+      # Trong mạng của compose, Redis ở host tên "redis" chứ không phải localhost —
+      # thiếu dòng này thì hàng đợi lặng lẽ lùi về chạy trong bộ nhớ.
+      - VSUB_REDIS_URL=redis://redis:6379/0
+      # Token Hugging Face cho model nhận diện người nói (để trống nếu không dùng)
+      - HF_TOKEN=${HF_TOKEN:-}
+    depends_on:
+      - redis
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # Chỉ dịch vụ vsub cần nói chuyện với Redis, nên không mở cổng ra máy chủ
+    expose:
+      - "6379"
     volumes:
       - redis-data:/data
     restart: unless-stopped

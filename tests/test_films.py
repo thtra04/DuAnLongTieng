@@ -63,6 +63,13 @@ def test_moi_tao_nam_tren_dau():
     assert films.all_films()[0]["id"] == moi["id"]
 
 
+def test_tao_lien_nhau_cung_mot_moc_van_dung_thu_tu(monkeypatch):
+    """Đồng hồ đứng yên (như Windows giữa hai lần nhích ~15 ms) vẫn phải xếp đúng."""
+    monkeypatch.setattr(films.time, "time", lambda: 1_000_000.0)
+    ids = [films.create(f"Bộ {i}")["id"] for i in range(5)]
+    assert [f["id"] for f in films.all_films()] == ids[::-1]
+
+
 # --------------------------------------------------------- sửa & xoá
 
 

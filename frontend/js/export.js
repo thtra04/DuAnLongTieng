@@ -28,6 +28,7 @@ $('#renderBtn').addEventListener('click', async () => {
     max_lines: 2,
     crf: +$('#crf').value,
     preset: $('#preset').value,
+    mask: maskConfig(),   // che phụ đề nung sẵn của video gốc (hardsub.js)
     style: {
       font: $('#stFont').value,
       size: +$('#stSize').value,
@@ -83,10 +84,10 @@ function showReupload() {
   const box = $('#covWarn');
   box.className = 'notice';
   box.innerHTML =
-    `<b>⚠ Máy chủ không còn file video gốc.</b><br>
+    `<b>${icon('alert')} Máy chủ không còn file video gốc.</b><br>
      ${S.cues.length} dòng phụ đề bạn đã sửa <b>vẫn được giữ nguyên</b> trong trang này.
      Chỉ cần chọn lại đúng file video đó ở bước 1 rồi bấm Xuất file lại — không phải nhận dạng lại từ đầu.
-     <br><br><button class="btn sm" id="reupBtn">↺ Chọn lại video</button>`;
+     <br><br><button class="btn sm" id="reupBtn">${icon('rotate')} Chọn lại video</button>`;
   goStep(3);
   $('#reupBtn').addEventListener('click', () => {
     goStep(1);
@@ -117,15 +118,15 @@ function pollRender() {
   }, 700);
 }
 
-const FILE_ICON = { srt: '📄', vtt: '📄', txt: '📃', ass: '🎨', mp4: '🎬', mkv: '🎬', wav: '🔊' };
+const FILE_ICON = { srt: 'captions', vtt: 'captions', txt: 'file-text', ass: 'palette', mp4: 'film', mkv: 'film', wav: 'volume' };
 
 function showFiles(files) {
   $('#resultBox').classList.remove('hide');
   $('#fileList').innerHTML = files.map((f, i) => `
     <div class="fileitem" style="animation-delay:${i * 60}ms">
-      <span class="ic">${FILE_ICON[f.kind] || '📁'}</span>
+      <span class="ic">${icon(FILE_ICON[f.kind] || 'folder')}</span>
       <div class="meta"><b>${f.name}</b><small>${fmtBytes(f.size)}</small></div>
-      <a class="btn sm" href="${API_BASE}/api/jobs/${S.renderJob}/files/${encodeURIComponent(f.name)}" download>⬇ Tải</a>
+      <a class="btn sm" href="${API_BASE}/api/jobs/${S.renderJob}/files/${encodeURIComponent(f.name)}" download>${icon('download')} Tải</a>
     </div>`).join('');
   $('#resultBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }

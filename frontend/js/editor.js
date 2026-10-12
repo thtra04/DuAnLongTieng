@@ -43,9 +43,12 @@ function setupEditor() {
   updateOverlay();
 
   if (!S.analyzed.target_lang) $('#outSrtBoth').closest('.check').classList.add('hide');
+  initMask();
+  applyOverlayStyle();
 }
 
 function renderCues() {
+  const speakerIds = knownSpeakerIds();
   const list = $('#cueList');
   list.innerHTML = S.cues.map((c, i) => {
     const showTr = S.display !== 'main' && S.analyzed.target_lang;
@@ -59,7 +62,9 @@ function renderCues() {
       <div class="cue-top">
         <span class="idx">#${i + 1}</span>
         <span class="tc">${fmtTime(c.start)} → ${fmtTime(c.end)}</span>
-        ${c.speaker ? `<span class="spk s${spkSlot(c.speaker)}" title="Nhân vật ${esc(c.speaker)}">${esc(spkName(c.speaker))}</span>` : ''}
+        ${c.speaker
+          ? `<button type="button" class="spk s${spkSlot(c.speaker)}" data-i="${i}" title="Vai ${esc(c.speaker)} — bấm để chuyển dòng này sang vai khác">${esc(spkName(c.speaker))}</button>`
+          : (speakerIds.length ? `<button type="button" class="spk none" data-i="${i}" title="Dòng này chưa gán vai — bấm để gán">+ vai</button>` : '')}
         <span class="len ${cps > 22 ? 'warn' : ''}" title="ký tự/giây — trên 22 là hơi nhanh">${cps} cps</span>
         ${tooLong ? '<span class="len warn" title="Bản dịch dài hơn 125% bản gốc — nên rút gọn trước khi lồng tiếng">Dài</span>' : ''}
       </div>
@@ -67,6 +72,16 @@ function renderCues() {
       ${showTr ? `<textarea class="tr" rows="1" data-i="${i}">${escapeHtml(c.text2 || '')}</textarea>` : ''}
     </div>`;
   }).join('');
+
+  // Bấm nhãn vai để sửa dòng bị gán nhầm: xoay vòng qua các vai đã biết rồi về "chưa gán"
+  $$('.spk[data-i]', list).forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    const c = S.cues[+b.dataset.i];
+    const ring = [...speakerIds, ''];
+    c.speaker = ring[(ring.indexOf(c.speaker || '') + 1) % ring.length];
+    renderCues();
+    renderSpeakerVoices();
+  }));
 
   $$('.cue', list).forEach(el => el.addEventListener('click', e => {
     if (e.target.tagName === 'TEXTAREA') return;
@@ -192,6 +207,7 @@ function paintOverlay(text) {
 }
 
 function applyOverlayStyle() {
+  if (typeof paintMask === 'function') paintMask();
   const ov = $('#subOverlay');
   const pw = $('#player').clientWidth || 640;
   const size = +$('#stSize').value * (pw / 1920) * 1.0;
@@ -208,8 +224,10 @@ function applyOverlayStyle() {
   if ($('#stPos').value === 'top') {
     ov.style.top = mv + '%'; ov.style.bottom = 'auto';
   } else if ($('#stPos').value === 'bottom') {
-    // cộng thêm chiều cao thanh điều khiển để chữ không bị che khi xem trước
-    ov.style.bottom = `calc(${mv}% + 38px)`;
+    // cộng thêm chiều cao thanh điều khiển để chữ không bị che khi xem trước —
+    // trừ lúc đang che phụ đề gốc: khi đó chữ phải nằm đúng trong dải che như bản xuất
+    const ctrl = $('#maskOn')?.checked ? 0 : 38;
+    ov.style.bottom = `calc(${mv}% + ${ctrl}px)`;
     ov.style.top = 'auto';
   }
 }

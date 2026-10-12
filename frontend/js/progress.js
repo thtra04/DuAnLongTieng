@@ -1,7 +1,7 @@
 /* frontend/js/progress.js — bước 3: theo dõi tiến độ job.
    Các file js dùng chung một phạm vi toàn cục; thứ tự nạp ghi trong index.html. */
 /* ---------------------------- bước 3: tiến độ --------------------------- */
-const STEP_ICON = { pending: '○', running: '◍', done: '✓', skipped: '–', error: '✕' };
+const STEP_ICON = { pending: 'circle', running: 'loader', done: 'check', skipped: 'minus', error: 'x' };
 
 function pollJob() {
   clearInterval(S.poll);
@@ -56,7 +56,7 @@ function showCoverage(res) {
   const gaps = (res.gaps || []).map(([a, b]) => `${fmtDur(a)}–${fmtDur(b)}`).join(' · ');
   box.className = 'notice';
   box.innerHTML =
-    `<b>⚠ Phụ đề chưa phủ hết video — mới tới ${fmtDur(cov * dur)} / ${fmtDur(dur)}
+    `<b>${icon('alert')} Phụ đề chưa phủ hết video — mới tới ${fmtDur(cov * dur)} / ${fmtDur(dur)}
      (${Math.round(cov * 100)}%).</b>` +
     (gaps ? `<br>Đoạn không có phụ đề: ${gaps}` : '') +
     `<ul>
@@ -82,13 +82,13 @@ function paintProgress(j, listSel, logSel) {
 
   $(listSel).innerHTML = (j.steps || []).map(s => `
     <div class="stepline ${s.status}">
-      <span class="ic">${STEP_ICON[s.status] || '○'}</span>
+      <span class="ic">${icon(STEP_ICON[s.status] || 'circle')}</span>
       <div class="body">
         <b>${s.label}</b>
         ${s.detail ? `<small>${s.detail}</small>` : ''}
         ${s.status === 'running' ? `<div class="bar"><i style="width:${Math.round(s.progress * 100)}%"></i></div>` : ''}
       </div>
-      <span class="pct">${s.status === 'done' || s.status === 'skipped' ? '✓' : Math.round(s.progress * 100) + '%'}</span>
+      <span class="pct">${s.status === 'done' || s.status === 'skipped' ? icon('check') : Math.round(s.progress * 100) + '%'}</span>
     </div>`).join('');
 
   if (logSel && j.logs) {

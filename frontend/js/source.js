@@ -93,7 +93,7 @@ async function inspectLink() {
   if (linkPending.url === url && linkPending.promise) return linkPending.promise;
 
   $('#checkLink').disabled = true;
-  $('#linkState').textContent = '⏳ Đang đọc link…';
+  $('#linkState').textContent = 'Đang đọc link…';
 
   linkPending = {
     url,
@@ -128,16 +128,16 @@ function renderLinkParts(info) {
   if (!info.multi) {
     box.innerHTML = '';
     box.classList.add('hide');
-    state.innerHTML = '✅ Link chỉ có một video'
+    state.innerHTML = icon('check-circle') + ' Link chỉ có một video'
       + (info.title ? ` · <b>${esc(info.title.slice(0, 60))}</b>` : '')
       + (info.duration ? ` · ${fmtLength(info.duration)}` : '');
     updateSourceSummary();
     return;
   }
 
-  state.innerHTML = `⚠ Link có <b>${info.count}</b> phần — chọn phần bên dưới.`;
+  state.innerHTML = `${icon('alert')} Link có <b>${info.count}</b> phần — chọn phần bên dưới.`;
   const rows = info.parts.map(p => `
-    <div class="part" data-part="${p.index}">
+    <div class="part" data-part="${p.index}" role="button" tabindex="0">
       <span class="no">P${p.index}</span>
       <span class="nm">${esc(p.title || 'Phần ' + p.index)}</span>
       <span class="dur${p.duration >= 3600 ? ' long' : ''}">${p.duration ? fmtLength(p.duration) : '—'}</span>
@@ -163,7 +163,7 @@ function renderLinkParts(info) {
 
 async function uploadFile(file) {
   $('#fileCard').innerHTML = `
-    <div class="filecard"><span class="ic">⏳</span>
+    <div class="filecard"><span class="ic">${icon('loader', 'spin')}</span>
       <div class="meta"><b>${file.name}</b><span>Đang tải lên… ${fmtBytes(file.size)}</span></div></div>`;
   const fd = new FormData();
   fd.append('file', file);
@@ -176,7 +176,7 @@ async function uploadFile(file) {
     setSource('file');
     const i = r.info;
     $('#fileCard').innerHTML = `
-      <div class="filecard"><span class="ic">🎞️</span>
+      <div class="filecard"><span class="ic">${icon('film')}</span>
         <div class="meta"><b>${r.name}</b>
           <span>${fmtBytes(r.size)} · ${i.width}×${i.height} · ${fmtTime(i.duration)}
           ${i.has_audio ? '' : ' · <b style="color:#ffb648">không có tiếng!</b>'}</span></div></div>`;
@@ -223,7 +223,7 @@ async function loadSrt(f) {
   S.subtitleText = await f.text();
   const lines = (S.subtitleText.match(/-->/g) || []).length;
   $('#srtCard').innerHTML = `
-    <div class="filecard"><span class="ic">🗂️</span>
+    <div class="filecard"><span class="ic">${icon('captions')}</span>
       <div class="meta"><b>${f.name}</b><span>${lines} dòng phụ đề · ${fmtBytes(f.size)}</span></div></div>`;
   toast(`Đã nạp ${lines} dòng phụ đề.`, 'ok', 2500);
 }
