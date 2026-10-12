@@ -108,11 +108,13 @@ const SPK_SLOTS = 6;
 function applyCharacters(list) {
   S.speakerNames = {};
   S.speakerVoices = {};
+  S.speakerAges = {};      // {nhãn: 'C' | 'A' | 'E'} — trẻ em đoán từ cao độ, còn lại người dùng chọn
   S.speakerGenders = {};   // {nhãn: 'M' | 'F'} — máy chủ đoán từ cao độ giọng, sửa được ở bảng vai
   (list || []).forEach(c => {
     if (c.name) S.speakerNames[c.label] = c.name;
     if (c.voice) S.speakerVoices[c.label] = c.voice;
     if (c.gender) S.speakerGenders[c.label] = c.gender;
+    if (c.age) S.speakerAges[c.label] = c.age;
   });
 }
 
@@ -208,6 +210,7 @@ function renderSpeakerVoices() {
     taken.add(pick.id);
   });
   const GENDER_LABEL = { M: 'Nam', F: 'Nữ' };
+  const AGE_LABEL = { C: 'Trẻ em', A: 'Người lớn', E: 'Cao tuổi' };
 
   list.innerHTML = speakers.map(s => `
     <div class="spkrow" data-spk="${esc(s.id)}">
@@ -220,6 +223,10 @@ function renderSpeakerVoices() {
                   title="Giới tính giọng của vai này — bấm để đổi và chọn lại giọng cho hợp"
                   aria-label="Giới tính giọng của ${esc(s.id)}: ${GENDER_LABEL[S.speakerGenders[s.id]] || 'chưa rõ'}. Bấm để đổi"
                   >${GENDER_LABEL[S.speakerGenders[s.id]] || '?'}</button>
+          <button type="button" class="spkage a-${S.speakerAges[s.id] || 'x'}" data-spk="${esc(s.id)}"
+                  title="Nhóm tuổi của vai này — bấm để đổi (trẻ em tự đoán từ cao độ; người cao tuổi phải chọn tay)"
+                  aria-label="Nhóm tuổi của ${esc(s.id)}: ${AGE_LABEL[S.speakerAges[s.id]] || 'chưa rõ'}. Bấm để đổi"
+                  >${AGE_LABEL[S.speakerAges[s.id]] || 'Tuổi?'}</button>
           <span class="muted">${s.lines} dòng · ${Math.round(s.seconds)}s nói</span>
         </div>
         ${s.sample ? `<div class="spksample">“${esc(s.sample)}”</div>` : ''}
@@ -254,6 +261,13 @@ function renderSpeakerVoices() {
     }
     renderSpeakerVoices();
     saveCharacter(id, { gender: g, voice: S.speakerVoices[id] || '', style: $('#dubStyle').value });
+  }));
+  $$('.spkage', list).forEach(btn => btn.addEventListener('click', () => {
+    const id = btn.dataset.spk;
+    const next = { A: 'E', E: 'C', C: 'A' }[S.speakerAges[id]] || 'A';
+    S.speakerAges[id] = next;
+    renderSpeakerVoices();
+    saveCharacter(id, { age: next });
   }));
   $$('.spkname', list).forEach(inp => inp.addEventListener('input', () => {
     S.speakerNames = S.speakerNames || {};
