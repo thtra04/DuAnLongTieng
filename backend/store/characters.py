@@ -37,6 +37,11 @@ def _check_gender(gender) -> str:
     return g if g in ("M", "F") else ""
 
 
+def _check_age(age) -> str:
+    a = str(age or "").strip().upper()[:1]
+    return a if a in ("C", "A", "E") else ""
+
+
 def _check_job(job_id) -> str:
     job_id = str(job_id or "").strip()
     if not job_id:
@@ -52,6 +57,7 @@ def _to_dict(ch: Character) -> dict:
         "seconds": round(ch.total_speech or 0.0, 1),
         "gender": ch.gender or "",
         "f0": round(ch.f0 or 0.0, 1),
+        "age": ch.age or "",
         "voice": v.voice_id if v else "",
         "style": v.style if v else "",
         "ref_path": (v.ref_path or "") if v else "",
@@ -119,6 +125,7 @@ def sync(job_id, speakers: list[dict] | None) -> list[dict]:
             "seconds": float(s.get("seconds") or 0.0),
             "gender": _check_gender(s.get("gender")),
             "f0": max(0.0, float(s.get("f0") or 0.0)),
+            "age": _check_age(s.get("age")),
             # Tên gợi ý (vd. "Nam" / "Nữ") chỉ dùng khi vai mới được tạo
             "name": " ".join(str(s.get("name") or "").split())[:MAX_NAME],
         }
@@ -130,7 +137,7 @@ def sync(job_id, speakers: list[dict] | None) -> list[dict]:
             if ch is None:
                 db.add(Character(
                     job_id=job_id, speaker_label=label, name=info["name"],
-                    total_speech=info["seconds"], gender=info["gender"], f0=info["f0"],
+                    total_speech=info["seconds"], gender=info["gender"], f0=info["f0"], age=info["age"],
                 ))
             else:
                 ch.total_speech = info["seconds"]
@@ -138,6 +145,8 @@ def sync(job_id, speakers: list[dict] | None) -> list[dict]:
                     ch.gender = info["gender"]
                 if info["f0"]:
                     ch.f0 = info["f0"]
+                if info["age"] and not ch.age:
+                    ch.age = info["age"]
         for label, ch in existing.items():
             if label not in wanted:
                 db.delete(ch)
@@ -147,7 +156,7 @@ def sync(job_id, speakers: list[dict] | None) -> list[dict]:
 
 def update(
     job_id, label, name: str | None = None, voice: str | None = None,
-    style: str | None = None, gender: str | None = None,
+    style: str | None = None, gender: str | None = None, age: str | None = None,
 ) -> dict:
     """Người dùng sửa một vai. Vai chưa có trong DB (nhãn tự đặt ở bước 4) thì tạo mới.
 
@@ -161,6 +170,8 @@ def update(
             ch.name = " ".join(str(name).split())[:MAX_NAME]
         if gender is not None:
             ch.gender = _check_gender(gender)
+        if age is not None:
+            ch.age = _check_age(age)
         if voice is not None:
             _set_voice(ch, voice, style=style)
         elif style is not None and ch.voice is not None:

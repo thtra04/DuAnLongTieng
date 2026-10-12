@@ -92,7 +92,7 @@ def project_character_update(job_id: str, label: str, payload: dict) -> dict:
         item = characters.update(
             job_id, label,
             name=data.get("name"), voice=data.get("voice"), style=data.get("style"),
-            gender=data.get("gender"),
+            gender=data.get("gender"), age=data.get("age"),
         )
     except characters.CharacterError as exc:
         raise HTTPException(400, str(exc)) from exc

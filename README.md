@@ -327,6 +327,9 @@ ngay trên đường tiếng của video — dưới 165 Hz là giọng nam, t�
 | **Không bật nhận diện người nói** | Chia các dòng thành hai vai *Nam* / *Nữ* (`S1`, `S2`, vai nói nhiều hơn là `S1`) |
 | **Có bật nhận diện người nói** | Giữ nguyên các vai pyannote tìm ra, chỉ gắn thêm giới tính cho từng vai (gộp cao độ mọi câu của vai đó) |
 | **Câu quá ngắn / lẫn nhạc** | Không đoán, để trống — đọc bằng giọng chung |
+| **Có model WeSpeaker (extra `diarize`)** | Chia tiếp nhiều người cùng giới (*Nam 1*, *Nam 2*, *Nữ 1*…, tối đa 6 mỗi giới) bằng véc-tơ giọng, không cần token; ngưỡng gộp tự thích nghi theo độ sạch của thoại |
+
+**Nhóm tuổi:** chỉ tự đoán được *Trẻ em* (cao độ nam ≥ 215 Hz, nữ ≥ 285 Hz). *Cao tuổi* không đoán được từ cao độ nên chọn tay ở bảng vai (nút Tuổi bên cạnh nút Nam/Nữ).
 
 Sang bước 4, bảng **Giọng cho từng nhân vật** mặc định **nhân bản chính giọng của vai đó trong
 phim** (khi đã cài `--extra clone`); chưa cài thì chọn giọng có sẵn **đúng giới tính** (vai nam → giọng

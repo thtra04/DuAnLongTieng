@@ -7,7 +7,7 @@ import re
 import time
 from pathlib import Path
 
-from . import align, asr, budget, diarize, dubbing, gender, hardsub, media, metrics, subtitles, translate
+from . import align, asr, budget, diarize, dubbing, gender, hardsub, media, metrics, subtitles, translate, voiceprint
 from .jobs import Job, Step
 from .subtitles import Cue
 from ..store import characters
@@ -185,7 +185,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
     if cfg.get("diarize"):
         speakers = _run_diarize(job, cfg, video_path, workdir, cues)
     if cfg.get("gender_split"):
-        speakers = _run_gender(job, video_path, workdir, cues, speakers)
+        speakers = _run_gender(job, cfg, video_path, workdir, cues, speakers)
     job.check_cancel()
 
     # 3.7. Phụ đề nung sẵn trong hình -> bước 4 đề nghị che đi trước khi nung chữ mới
@@ -369,7 +369,7 @@ def _run_hardsub(job: Job, video_path: Path, cues, info: dict) -> dict:
     return found
 
 
-def _run_gender(job: Job, video_path: Path, workdir: Path, cues, speakers: list[dict]) -> list[dict]:
+def _run_gender(job: Job, cfg: dict, video_path: Path, workdir: Path, cues, speakers: list[dict]) -> list[dict]:
     """Đoán giọng nam / nữ theo cao độ để lúc lồng tiếng nam ra nam, nữ ra nữ.
 
     Đã có nhãn nhân vật từ bước phân đoạn người nói thì chỉ gắn thêm giới tính
@@ -389,21 +389,40 @@ def _run_gender(job: Job, video_path: Path, workdir: Path, cues, speakers: list[
             for s in speakers:
                 s["gender"] = found.get(s["id"], {}).get("gender", "")
                 s["f0"] = found.get(s["id"], {}).get("f0", 0.0)
+                s["age"] = voiceprint.age_of(s["gender"], s["f0"])
             detail = ", ".join(
                 f"{s['id']} {gender.NAMES.get(s['gender'], '?')}" for s in speakers
             )
             job.log(f"Giới tính giọng của từng nhân vật: {detail}")
         else:
-            stats = gender.split_cues(cues, pitches)
-            speakers = diarize.speakers_of(cues)
-            for s in speakers:
-                s["gender"] = stats["genders"].get(s["id"], "")
-                s["f0"] = stats["f0"].get(s["id"], 0.0)
-                s["name"] = gender.NAMES.get(s["gender"], "")
-            detail = " · ".join(
-                f"{s['name'] or s['id']}: {s['lines']} dòng" for s in speakers
-            ) or "không nghe ra giọng nào"
-            job.log(f"Tách giọng nam / nữ theo cao độ: {detail}.")
+            stats = _split_by_voiceprint(job, cfg, wav, cues, pitches)
+            if stats is not None:
+                speakers = diarize.speakers_of(cues)
+                for s in speakers:
+                    info = stats["speakers"].get(s["id"], {})
+                    s["gender"], s["f0"], s["age"] = info.get("gender", ""), info.get("f0", 0.0), info.get("age", "")
+                nm = {"M": 0, "F": 0}
+                for s in speakers:
+                    if s["gender"] in nm:
+                        nm[s["gender"]] += 1
+                        s["name"] = f"{gender.NAMES[s['gender']]} {nm[s['gender']]}"
+                detail = " · ".join(f"{s['name'] or s['id']}: {s['lines']} dòng" for s in speakers) or "không nghe ra giọng nào"
+                job.log(f"Tách người nói theo véc-tơ giọng: {detail}.")
+            else:
+                stats = gender.split_cues(cues, pitches)
+                speakers = diarize.speakers_of(cues)
+                for s in speakers:
+                    s["gender"] = stats["genders"].get(s["id"], "")
+                    s["f0"] = stats["f0"].get(s["id"], 0.0)
+                    s["age"] = voiceprint.age_of(s["gender"], s["f0"])
+                    s["name"] = gender.NAMES.get(s["gender"], "")
+                detail = " · ".join(
+                    f"{s['name'] or s['id']}: {s['lines']} dòng" for s in speakers
+                ) or "không nghe ra giọng nào"
+                job.log(f"Tách giọng nam / nữ theo cao độ: {detail}.")
+            kids = [s["id"] for s in speakers if s.get("age") == voiceprint.CHILD]
+            if kids:
+                job.log(f"Giọng cao như trẻ em: {', '.join(kids)} (đổi ở bảng vai nếu sai).")
             if stats["empty"]:
                 job.log(
                     f"  {stats['empty']} dòng quá ngắn hoặc lẫn nhạc nên không đoán — "
@@ -420,6 +439,23 @@ def _run_gender(job: Job, video_path: Path, workdir: Path, cues, speakers: list[
         job.skip_step("gender", str(exc)[:70])
         job.log(f"Không tách được giọng nam / nữ: {exc}")
         return speakers
+
+
+def _split_by_voiceprint(job: Job, cfg: dict, wav: Path, cues, pitches):
+    """Chia nhiều người cùng giới bằng véc-tơ giọng. `None` nếu không dùng được (rơi về chia theo cao độ)."""
+    if not cfg.get("voiceprint", True):
+        return None
+    ok, why = voiceprint.available()
+    if not ok:
+        job.log(f"Không tách được nhiều người cùng giới: {why}")
+        return None
+    try:
+        job.log("Lấy véc-tơ giọng từng câu để tách nhiều người cùng giới…")
+        emb = voiceprint.embed_cues(wav, cues, on_progress=lambda p: job.set_step_progress("gender", p))
+        return voiceprint.split_speakers(cues, emb, pitches)
+    except Exception as exc:
+        job.log(f"Tách theo véc-tơ giọng lỗi ({exc}), dùng cách chia theo cao độ.")
+        return None
 
 
 # --------------------------------------------------------------- bước xuất

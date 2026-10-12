@@ -115,6 +115,8 @@ class Character(Base):
     gender = Column(String(1), default="")
     # Cao độ giọng gốc (Hz, trung vị) — để chọn giọng dựng sẵn gần giọng gốc nhất
     f0 = Column(Float, default=0.0)
+    # "C" trẻ em | "A" người lớn | "E" cao tuổi | "" chưa rõ — trẻ em đoán từ cao độ, còn lại chọn tay
+    age = Column(String(1), default="")
 
     voice = relationship(
         "Voice",
@@ -190,7 +192,8 @@ def init_db() -> None:
 
 def _add_missing_columns(engine) -> None:
     """Thêm cột mới vào bảng đã có từ bản trước (create_all không tự thêm cột)."""
-    wanted = {"characters": {"gender": "VARCHAR(1) DEFAULT ''", "f0": "FLOAT DEFAULT 0"}}
+    wanted = {"characters": {"gender": "VARCHAR(1) DEFAULT ''", "f0": "FLOAT DEFAULT 0",
+                           "age": "VARCHAR(1) DEFAULT ''"}}
     with engine.begin() as conn:
         for table, cols in wanted.items():
             have = {c["name"] for c in inspect(conn).get_columns(table)}

@@ -212,7 +212,7 @@ def test_bang_nhan_vat_luu_gioi_tinh_va_ten_goi_y(tmp_db):
     # và kết quả đoán "không rõ" không được xoá giới tính hay cao độ đã có.
     characters.update("job1", "S1", name="Hoắc nương", gender="M")
     out = characters.sync("job1", [{"id": "S1", "seconds": 9, "gender": "", "name": "Nữ"}])
-    assert out == [{"label": "S1", "name": "Hoắc nương", "seconds": 9.0, "gender": "M", "f0": 231.4,
+    assert out == [{"label": "S1", "name": "Hoắc nương", "seconds": 9.0, "gender": "M", "f0": 231.4, "age": "",
                     "voice": "", "style": "", "ref_path": ""}]
 
     assert characters.update("job1", "S1", gender="x")["gender"] == ""

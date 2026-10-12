@@ -1300,7 +1300,12 @@ button.spk:hover { background: var(--surface-2); transform: translateY(-1px); }
 .spkgender:hover { transform: translateY(-1px); }
 .spkgender.g-M { color: var(--spk1); }
 .spkgender.g-F { color: var(--spk5); }
-@media (pointer: coarse) { .spkgender, button.spk { min-height: 44px; } }
+.spkage { font: inherit; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface-2, transparent); color: var(--muted); cursor: pointer; }
+.spkage.a-C { color: var(--spk3); }
+.spkage.a-E { color: var(--spk6, var(--spk4)); }
+.spkage:hover { transform: translateY(-1px); }
+@media (pointer: coarse) { .spkgender, .spkage, button.spk { min-height: 44px; } }
 .spk.s1 { color: var(--spk1); } .spk.s2 { color: var(--spk2); }
 .spk.s3 { color: var(--spk3); } .spk.s4 { color: var(--spk4); }
 .spk.s5 { color: var(--spk5); } .spk.s6 { color: var(--spk6); }
