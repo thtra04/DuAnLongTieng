@@ -14,6 +14,8 @@ from __future__ import annotations
 import time
 import uuid
 
+from sqlalchemy import func
+
 from ..db import Episode, Film, get_db
 
 MAX_NAME = 160
@@ -47,11 +49,15 @@ def all_films() -> list[dict]:
 def create(name: str, url: str = "", parts: list[dict] | None = None) -> dict:
     """Tạo bộ mới. `parts` (từ /api/link/inspect) thì tạo sẵn từng tập luôn."""
     with get_db() as db:
+        # Mốc tạo phải tăng dần thì "mới tạo trước" mới chắc chắn: đồng hồ Windows
+        # chỉ nhích ~15 ms một lần, hai bộ tạo liền nhau có thể trùng mốc và khi
+        # đó thứ tự trên dưới là ngẫu nhiên.
+        last = db.query(func.max(Film.created)).scalar() or 0.0
         film = Film(
             id=uuid.uuid4().hex[:8],
             name=_clean_name(name),
             url=(url or "").strip(),
-            created=time.time(),
+            created=max(time.time(), last + 1e-3),
         )
         for index, part in enumerate(parts or [], 1):
             if len(film.episodes) >= MAX_EPISODES:

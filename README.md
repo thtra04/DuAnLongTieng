@@ -9,6 +9,7 @@ Tool tạo **phụ đề** và **dịch video** chạy hoàn toàn trên máy b�
 - 🌐 **Dịch giữa 41 ngôn ngữ** — Google (miễn phí), NLLB-200 (offline), Claude / OpenAI (chất lượng cao)
 - 🎙️ **Lồng tiếng Việt** — 14 giọng Bắc/Trung/Nam, hoặc nhân bản chính giọng người nói trong video
 - 🎭 **Lồng tiếng đa nhân vật** — tự nghe ra trong phim có mấy người nói, mỗi nhân vật một giọng riêng
+- 👫 **Tách giọng nam / nữ** — nhân vật nam đọc giọng nam, nữ đọc giọng nữ, không cần cài thêm gì
 - 🎨 **Biên tập trực quan** — xem trước phụ đề chồng lên video, sửa từng dòng, đổi font/màu/vị trí
 - 📦 **Xuất** SRT · VTT · SRT song ngữ · TXT · video nung phụ đề · video phụ đề bật-tắt · video lồng tiếng
 - 📂 **Dự án phim** — tạo bộ → tạo tập → đưa video vào từng tập; theo dõi còn thiếu tập nào
@@ -24,14 +25,15 @@ backend/                 API + lõi xử lý (Python, FastAPI)
   api/                   router HTTP theo miền — chỉ nhận và trả JSON
     system  tts  media  jobs  films  projects  deps
   core/                  lõi xử lý, không biết gì về HTTP — gọi được từ CLI, test hay server
-    asr  align  diarize  translate  budget  duration  dubbing  media
+    asr  align  diarize  gender  translate  budget  duration  dubbing  media
     pipeline  metrics  subtitles  languages  jobs  hf_cache  setup_ffmpeg
   store/                 lưu trữ JSON: films  projects  series
 frontend/                giao diện tĩnh HTML/CSS/JS, không cần build
   index.html  config.js  (config.js: địa chỉ backend, window.VSUB_API_BASE)
   css/style.css
   js/                    core → theme → boot → films → source → setup → ai → progress → editor → dubbing → export → prefs → main
-                         (theme.js: 6 bảng màu + màu nhấn tuỳ ý, chọn ở góc phải header, nhớ cho lần sau)
+                         (theme.js: 8 bảng màu + màu nhấn tuỳ ý, chọn ở góc phải header, nhớ cho lần sau;
+                          icon là SVG nội tuyến trong index.html, gọi bằng icon('tên') ở core.js)
 training/                notebook huấn luyện AI (.ipynb): sinh dữ liệu, train, khung đo
 tests/                   pytest — chạy được không cần torch / pyannote / vieneu
 ```
@@ -102,6 +104,24 @@ Trình duyệt tự mở <http://127.0.0.1:8000>.
 | `--host 0.0.0.0` | cho máy khác trong LAN truy cập |
 | `--no-browser` | không tự mở trình duyệt |
 | `--reload` | tự nạp lại khi sửa code (dev) |
+
+### Chạy bằng Docker
+
+```bash
+docker compose up -d --build
+```
+
+Mở <http://127.0.0.1:8000>. Compose dựng hai dịch vụ: ứng dụng và Redis (hàng đợi tác vụ, giữ
+trạng thái job qua các lần khởi động lại). Dữ liệu và model tải về nằm trong volume `vsub-data`.
+
+Ảnh mặc định có lồng tiếng, dịch AI và hàng đợi nhưng **không có torch** (nhẹ hơn ~2,5 GB), nên
+chưa có nhận diện người nói và nhân bản giọng — tách giọng nam / nữ thì vẫn có. Muốn đủ:
+
+```bash
+VSUB_EXTRAS="--extra queue --extra tts --extra ai --extra diarize --extra clone" HF_TOKEN=hf_... docker compose up -d --build
+```
+
+Trong container không có GPU NVIDIA trừ khi cài NVIDIA Container Toolkit; Whisper sẽ chạy bằng CPU.
 
 ---
 
@@ -297,6 +317,60 @@ khoản: mở trang model, bấm đồng ý, tạo token ở mục *Access Token
 uv sync --extra cuda --extra diarize   # nhớ ghi thêm các --extra đang dùng
 ```
 
+### 👫 Tách giọng nam / nữ — không cần cài thêm gì
+
+Bật mặc định ở bước 2 (**Tách giọng nam / nữ**). Tool đo cao độ giọng (F0) của từng câu thoại
+ngay trên đường tiếng của video — dưới 165 Hz là giọng nam, từ đó trở lên là giọng nữ — rồi:
+
+| Trường hợp | Làm gì |
+|---|---|
+| **Không bật nhận diện người nói** | Chia các dòng thành hai vai *Nam* / *Nữ* (`S1`, `S2`, vai nói nhiều hơn là `S1`) |
+| **Có bật nhận diện người nói** | Giữ nguyên các vai pyannote tìm ra, chỉ gắn thêm giới tính cho từng vai (gộp cao độ mọi câu của vai đó) |
+| **Câu quá ngắn / lẫn nhạc** | Không đoán, để trống — đọc bằng giọng chung |
+
+Sang bước 4, bảng **Giọng cho từng nhân vật** mặc định **nhân bản chính giọng của vai đó trong
+phim** (khi đã cài `--extra clone`); chưa cài thì chọn giọng có sẵn **đúng giới tính** (vai nam → giọng
+nam, vai nữ → giọng nữ, hai vai cùng giới thì hai giọng khác nhau). Đoán sai giới tính thì:
+
+- bấm nút **Nam / Nữ** cạnh tên vai để đổi — vai đang dùng giọng có sẵn sẽ được đổi sang giọng đúng giới mới;
+- bấm **nhãn vai** trên một dòng phụ đề để chuyển riêng dòng đó sang vai khác.
+
+Đo trên trích đoạn 86 giây của video kiểm thử (một nam, một nữ đối thoại): 31 dòng được xếp vai nữ,
+12 dòng vai nam; nghe lại đường lồng tiếng, 39/43 dòng có cao độ đúng giới tính của vai được gán.
+
+Giới hạn: cao độ không phân biệt được hai người **cùng giới** (cần nhận diện người nói), giọng trẻ em
+thường rơi vào nhóm nữ.
+
+**Giọng giống giọng gốc đến đâu.** Đo bằng véc-tơ đặc trưng giọng (pyannote WeSpeaker, cosine, càng
+cao càng giống; hai vai gốc so với nhau được 0,34) trên cùng trích đoạn — script
+`data/_bench/voice_similarity.py`:
+
+| Cách chọn giọng | Vai nữ | Vai nam | Whisper nghe đúng |
+|---|---:|---:|---:|
+| Giọng có sẵn đúng giới (Trúc Ly / Minh Đức) | 0,41 | 0,37 | 16/17 câu |
+| Giọng có sẵn **gần cao độ gốc nhất** (Đoan Trang / Quang Sơn) | 0,26 | 0,34 | — |
+| **Nhân bản giọng từ video** (mặc định) | **0,43** | **0,55** | 15/17 câu |
+| Nhân bản rồi kéo cao độ về đúng cao độ gốc (`rubberband`) | 0,31 | 0,19 | — |
+
+Hai cách "khớp cao độ" đều làm giọng *kém* giống hơn — chất giọng quan trọng hơn cao độ — nên tool
+không dùng. Nhân bản chậm hơn giọng có sẵn (phải cắt mẫu và mã hoá giọng từng vai).
+
+### 🔲 Che phụ đề có sẵn trong video
+
+Phim tải về hay có sẵn phụ đề tiếng gốc nung vào hình; nung thêm phụ đề tiếng Việt thì hai dòng chữ
+chồng lên nhau. Lúc phân tích, tool **dò dải phụ đề cũ** (bước *Dò phụ đề có sẵn trong hình*, vài
+giây); dự án làm từ trước thì tự dò khi mở ở bước 4.
+
+Dò ra thì ở bước 4, mục **Kiểu phụ đề → Che phụ đề có sẵn trong video** tự bật: khung mờ trên video là
+bản xem trước, phụ đề mới được đặt vào giữa dải đó. Khi xuất **Video nung phụ đề**, dải được làm mờ
+(hoặc phủ hộp tối) rồi mới vẽ phụ đề mới lên. Chỉnh được mép trên, chiều cao, bề ngang của dải; nút
+**Dò lại** chạy lại bộ dò.
+
+Cách dò: lấy khung hình giữa mỗi câu thoại, đánh dấu điểm giống nét chữ phụ đề (sáng, viền tối, nét
+mảnh), rồi tìm dải ngang mà ở hai câu liền nhau đều dày nét chữ **nhưng nét đã đổi** — câu đổi thì chữ
+đổi, còn cảnh nền đứng yên. Đo trên 3 video có phụ đề cứng và 2 bản đã cắt bỏ phụ đề: điểm 0,76–0,94 so
+với 0,00–0,14, ngưỡng 0,4; dò đúng cả 5. Logo / tên kênh đứng yên không bị che nhầm.
+
 ### ⏱ Vừa khung thời gian: dự đoán trước, rút gọn trước, nén sau cùng
 
 Bản dịch tiếng Việt thường dài hơn lời gốc. Cách cũ: dịch xong, lúc lồng tiếng câu nào dài
@@ -325,8 +399,19 @@ uv run jupyter lab training/
 ```
 
 Mô hình lưu ở `data/models/duration_vi.json`; chưa có thì tool dùng ước lượng thô ~4,3 âm tiết/giây.
-Với `training/data/seed_vi.txt` (86 câu) chỉ là chạy thử đường ống — dữ liệu thật cần vài chục nghìn
-câu từ corpus phụ đề, mất khoảng một giây mỗi câu trên CPU.
+Với `training/data/seed_vi.txt` (86 câu) chỉ là chạy thử đường ống.
+
+Bản hiện tại học trên **3.674 câu** (Tatoeba tiếng Việt + câu dịch của chính tool, 2 giọng nam + 2 giọng
+nữ đọc luân phiên, ~2 giây/câu trên CPU) — `data/_bench/gen_duration.py` rồi `train_duration.py --save`.
+Ngoài hồi quy tuyến tính còn học **hệ số tốc độ của từng giọng** (các giọng nhanh chậm khác nhau tới 15 %):
+
+| Đo trên | Ước lượng thô | Không biết giọng | Biết giọng |
+|---|---:|---:|---:|
+| 367 câu giữ lại | 335 ms | 250 ms | **166 ms** |
+| 68 câu lồng tiếng thật (câu gộp dài) | 348 ms | 280 ms | 238 ms |
+
+Mô hình phi tuyến (gradient boosting) cùng đặc trưng không hơn (252 ms) — chỗ nghẽn là giọng. Vòng lặp
+rút gọn chạy lúc dịch, *trước* khi chọn giọng, nên hiện dùng bản không biết giọng.
 
 **Khung đo tự động.** Mỗi lần lồng tiếng, tool ghi `data/jobs/<id>/eval.json`: tỉ lệ câu phải nén,
 hệ số nén lớn nhất, tổng thời gian tràn, hệ số thời gian thực, kèm nhãn cấu hình C0…C4 (xem

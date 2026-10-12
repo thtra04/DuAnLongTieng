@@ -45,8 +45,8 @@ async function loadVoices() {
       r.voices.map(v => `<option value="${v.id}">${esc(v.label)}</option>`).join('') +
       `<option value="${clone}"${cloneOk ? '' : ' disabled'}>` +
       (cloneOk
-        ? '🧬 Nhân bản giọng người nói trong video'
-        : '🧬 Nhân bản giọng — chưa dùng được (cần uv sync --extra clone)') +
+        ? 'Nhân bản giọng người nói trong video'
+        : 'Nhân bản giọng — chưa dùng được (cần uv sync --extra clone)') +
       '</option>';
     S.voicesLoaded = true;
     renderSpeakerVoices();
@@ -108,9 +108,11 @@ const SPK_SLOTS = 6;
 function applyCharacters(list) {
   S.speakerNames = {};
   S.speakerVoices = {};
+  S.speakerGenders = {};   // {nhãn: 'M' | 'F'} — máy chủ đoán từ cao độ giọng, sửa được ở bảng vai
   (list || []).forEach(c => {
     if (c.name) S.speakerNames[c.label] = c.name;
     if (c.voice) S.speakerVoices[c.label] = c.voice;
+    if (c.gender) S.speakerGenders[c.label] = c.gender;
   });
 }
 
@@ -190,14 +192,22 @@ function renderSpeakerVoices() {
   const voices = S.voices || [];
   const cloneId = S.sys.tts?.clone_id || '__clone__';
 
-  // Mặc định: mỗi nhân vật một giọng dựng sẵn khác nhau. Chọn giọng có sẵn thay
-  // vì nhân bản vì nhân bản chậm hơn nhiều và có thể trượt ở vai ít thoại —
-  // muốn nhân bản thì đổi một cú bấm.
+  // Mặc định: NHÂN BẢN chính giọng nhân vật trong phim khi máy làm được — đo trên
+  // clip mẫu, giọng nhân bản giống giọng gốc hơn hẳn giọng có sẵn (độ giống 0,43/0,55
+  // so với 0,41/0,37), đọc vẫn rõ (Whisper nghe đúng 15/17 câu). Không nhân bản được
+  // thì lấy giọng có sẵn cùng giới tính, chưa vai nào dùng. (Chọn theo cao độ gần
+  // giọng gốc đã thử và đo ra kém giống hơn — xem gender.pick_voice.)
+  S.speakerGenders = S.speakerGenders || {};
+  const taken = new Set(Object.values(S.speakerVoices));
   speakers.forEach((s, i) => {
-    if (!S.speakerVoices[s.id] && voices.length) {
-      S.speakerVoices[s.id] = voices[i % voices.length].id;
-    }
+    if (S.speakerVoices[s.id] || !voices.length) return;
+    if (S.cloneOk) { S.speakerVoices[s.id] = cloneId; return; }
+    const pick = closestVoice(voices, S.speakerGenders[s.id] || '', taken)
+      || voices[i % voices.length];
+    S.speakerVoices[s.id] = pick.id;
+    taken.add(pick.id);
   });
+  const GENDER_LABEL = { M: 'Nam', F: 'Nữ' };
 
   list.innerHTML = speakers.map(s => `
     <div class="spkrow" data-spk="${esc(s.id)}">
@@ -206,6 +216,10 @@ function renderSpeakerVoices() {
         <div class="spkline">
           <input class="spkname" type="text" value="${esc(spkName(s.id))}"
                  data-spk="${esc(s.id)}" maxlength="40" aria-label="Tên nhân vật ${esc(s.id)}">
+          <button type="button" class="spkgender g-${S.speakerGenders[s.id] || 'x'}" data-spk="${esc(s.id)}"
+                  title="Giới tính giọng của vai này — bấm để đổi và chọn lại giọng cho hợp"
+                  aria-label="Giới tính giọng của ${esc(s.id)}: ${GENDER_LABEL[S.speakerGenders[s.id]] || 'chưa rõ'}. Bấm để đổi"
+                  >${GENDER_LABEL[S.speakerGenders[s.id]] || '?'}</button>
           <span class="muted">${s.lines} dòng · ${Math.round(s.seconds)}s nói</span>
         </div>
         ${s.sample ? `<div class="spksample">“${esc(s.sample)}”</div>` : ''}
@@ -214,10 +228,11 @@ function renderSpeakerVoices() {
             ${voices.map(v => `<option value="${esc(v.id)}"${S.speakerVoices[s.id] === v.id ? ' selected' : ''}>${esc(v.label)}</option>`).join('')}
             <option value="${esc(cloneId)}"${S.speakerVoices[s.id] === cloneId ? ' selected' : ''}
               ${S.cloneOk === false ? ' disabled' : ''}>
-              🧬 Nhân bản chính giọng nhân vật này
+              Nhân bản chính giọng nhân vật này
             </option>
           </select>
-          <button class="btn sm ghost spktest" data-spk="${esc(s.id)}">🔊</button>
+          <button class="btn sm ghost spktest" data-spk="${esc(s.id)}" title="Nghe thử giọng này"
+                  aria-label="Nghe thử giọng của ${esc(s.id)}">${icon('volume')}</button>
         </div>
       </div>
     </div>`).join('');
@@ -225,6 +240,20 @@ function renderSpeakerVoices() {
   $$('.spkvoice', list).forEach(sel => sel.addEventListener('change', () => {
     S.speakerVoices[sel.dataset.spk] = sel.value;
     saveCharacter(sel.dataset.spk, { voice: sel.value, style: $('#dubStyle').value });
+  }));
+  $$('.spkgender', list).forEach(btn => btn.addEventListener('click', () => {
+    const id = btn.dataset.spk;
+    const g = S.speakerGenders[id] === 'M' ? 'F' : 'M';
+    S.speakerGenders[id] = g;
+    // Đang nhân bản thì giữ nguyên (giọng nhân bản lấy từ chính vai đó, không phụ
+    // thuộc giới tính); đang dùng giọng có sẵn thì đổi sang giọng có sẵn đúng giới mới
+    if (S.speakerVoices[id] !== cloneId) {
+      const taken = new Set(Object.entries(S.speakerVoices).filter(([k]) => k !== id).map(([, v]) => v));
+      const pick = closestVoice(voices, g, taken);
+      if (pick) S.speakerVoices[id] = pick.id;
+    }
+    renderSpeakerVoices();
+    saveCharacter(id, { gender: g, voice: S.speakerVoices[id] || '', style: $('#dubStyle').value });
   }));
   $$('.spkname', list).forEach(inp => inp.addEventListener('input', () => {
     S.speakerNames = S.speakerNames || {};
@@ -251,6 +280,23 @@ function speakersFromCues() {
     if (!item.sample) item.sample = (c.text2 || c.text || '').trim().slice(0, 70);
   });
   return Object.values(table).sort((a, b) => b.seconds - a.seconds);
+}
+
+/** Giọng có sẵn cùng giới tính, ưu tiên giọng chưa vai nào dùng. */
+function closestVoice(voices, gender, taken) {
+  const same = gender ? voices.filter(v => v.gender === gender) : [];
+  if (!same.length) return null;
+  return same.find(v => !taken.has(v.id)) || same[0];
+}
+
+/** Mọi nhãn vai đã biết (kể cả vai tạm thời không còn dòng nào), để đổi vai cho một dòng. */
+function knownSpeakerIds() {
+  const ids = new Set([
+    ...speakersFromCues().map(s => s.id),
+    ...Object.keys(S.speakerGenders || {}),
+    ...Object.keys(S.speakerNames || {}),
+  ]);
+  return [...ids].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
 /** {nhãn nhân vật: id giọng} gửi kèm lúc xuất file. */

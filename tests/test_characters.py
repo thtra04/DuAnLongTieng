@@ -28,7 +28,7 @@ def _db(tmp_db):
 def test_sync_tao_vai_sap_theo_giay_noi():
     out = characters.sync("job1", [{"id": "S2", "seconds": 5.0}, {"id": "S1", "seconds": 30.0}])
     assert [c["label"] for c in out] == ["S1", "S2"]
-    assert out[0] == {"label": "S1", "name": "", "seconds": 30.0, "voice": "", "style": "", "ref_path": ""}
+    assert out[0] == {"label": "S1", "name": "", "seconds": 30.0, "gender": "", "f0": 0.0, "voice": "", "style": "", "ref_path": ""}
 
 
 def test_sync_giu_ten_giong_da_dat_va_bo_nhan_khong_con():
@@ -37,7 +37,7 @@ def test_sync_giu_ten_giong_da_dat_va_bo_nhan_khong_con():
 
     out = characters.sync("job1", [{"id": "S1", "seconds": 9}])
     assert out == [
-        {"label": "S1", "name": "Nam chính", "seconds": 9.0, "voice": "v1", "style": "tu_nhien", "ref_path": ""}
+        {"label": "S1", "name": "Nam chính", "seconds": 9.0, "gender": "", "f0": 0.0, "voice": "v1", "style": "tu_nhien", "ref_path": ""}
     ]
 
 
@@ -59,7 +59,7 @@ def test_sync_khong_lan_sang_du_an_khac():
 
 def test_update_tao_vai_moi_neu_chua_co_va_gon_ten():
     c = characters.update("job1", "S7", name="  Vai   phụ  ")
-    assert c == {"label": "S7", "name": "Vai phụ", "seconds": 0.0, "voice": "", "style": "", "ref_path": ""}
+    assert c == {"label": "S7", "name": "Vai phụ", "seconds": 0.0, "gender": "", "f0": 0.0, "voice": "", "style": "", "ref_path": ""}
 
 
 def test_update_cat_ten_qua_dai():
@@ -184,7 +184,7 @@ def test_full_kem_nhan_vat_tu_db(kho):
     characters.update("job1", "S1", name="Nam chính", voice="v1")
     item = projects.full("job1")
     assert item["characters"] == [
-        {"label": "S1", "name": "Nam chính", "seconds": 0.0, "voice": "v1", "style": "tu_nhien", "ref_path": ""}
+        {"label": "S1", "name": "Nam chính", "seconds": 0.0, "gender": "", "f0": 0.0, "voice": "v1", "style": "tu_nhien", "ref_path": ""}
     ]
 
 
@@ -235,7 +235,7 @@ def test_api_doi_ten_va_chon_giong_roi_doc_lai(kho, client):
     )
     assert r.status_code == 200
     assert r.json()["character"] == {
-        "label": "S1", "name": "Nữ chính", "seconds": 0.0, "voice": "v2", "style": "tin_tuc", "ref_path": ""
+        "label": "S1", "name": "Nữ chính", "seconds": 0.0, "gender": "", "f0": 0.0, "voice": "v2", "style": "tin_tuc", "ref_path": ""
     }
     assert client.get("/api/projects/job1").json()["characters"][0]["voice"] == "v2"
 

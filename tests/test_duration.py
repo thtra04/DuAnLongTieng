@@ -104,6 +104,47 @@ def test_du_lieu_lech_bi_tu_choi():
         DurationModel.fit(["a", "b"], [1.0])
     with pytest.raises(ValueError):
         DurationModel.fit([], [])
+    with pytest.raises(ValueError):
+        DurationModel.fit(["a", "b"], [1.0, 2.0], voices=["x"])
+
+
+def _hai_giong(n=200):
+    """Giọng "nhanh" đọc nhanh hơn 20 %, giọng "chậm" chậm hơn 10 %, cùng một bộ câu."""
+    texts, secs = du_lieu_gia(n)
+    voices = ["nhanh" if i % 2 else "cham" for i in range(n)]
+    secs = [s * (0.8 if v == "nhanh" else 1.1) for s, v in zip(secs, voices)]
+    return texts, secs, voices
+
+
+def test_hoc_he_so_toc_do_cua_tung_giong():
+    texts, secs, voices = _hai_giong()
+    model = DurationModel.fit(texts, secs, voices=voices)
+    f = model.meta["voice_factors"]
+    assert f["nhanh"] < 1 < f["cham"] and f["cham"] / f["nhanh"] == pytest.approx(1.1 / 0.8, rel=0.03)
+    t = texts[0]
+    assert model.predict(t, "nhanh") < model.predict(t) < model.predict(t, "cham")
+    assert model.predict(t, "giong-moi") == model.predict(t), "giọng chưa biết thì hệ số 1"
+
+
+def test_biet_giong_thi_sai_so_nho_hon_han():
+    texts, secs, voices = _hai_giong()
+    model = DurationModel.fit(texts[:150], secs[:150], voices=voices[:150])
+    mu = evaluate(model, texts[150:], secs[150:])
+    biet = evaluate(model, texts[150:], secs[150:], voices=voices[150:])
+    assert biet["mae_ms"] < mu["mae_ms"] / 2
+
+
+def test_giong_qua_it_mau_thi_khong_lap_he_so():
+    texts, secs = du_lieu_gia(60)
+    model = DurationModel.fit(texts, secs, voices=["a"] * 50 + ["hiem"] * 10)
+    assert set(model.meta["voice_factors"]) == {"a"}
+
+
+def test_luu_nap_giu_he_so_giong(workdir):
+    texts, secs, voices = _hai_giong()
+    model = DurationModel.fit(texts, secs, voices=voices)
+    lai = DurationModel.load(model.save(workdir / "m.json"))
+    assert lai.predict(texts[3], "nhanh") == pytest.approx(model.predict(texts[3], "nhanh"))
 
 
 # ------------------------------------------------------------- lưu / nạp

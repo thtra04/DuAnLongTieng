@@ -1,12 +1,16 @@
-/* frontend/js/theme.js — chủ đề màu: 6 bảng màu dựng sẵn + màu nhấn tuỳ chọn.
+/* frontend/js/theme.js — chủ đề màu: 8 bảng màu dựng sẵn + màu nhấn tuỳ chọn.
    Lưu trong localStorage; đoạn script inline ở <head> áp data-theme trước khi
    vẽ để không nháy từ sáng sang tối, file này lo phần còn lại.
    Các file js dùng chung một phạm vi toàn cục; thứ tự nạp ghi trong index.html. */
 
 const THEME_KEY = 'vsub.theme.v1';
+// Chưa chọn gì thì dùng bảng này — phải trùng với đoạn script inline trong index.html
+const DEFAULT_THEME = 'vang';
 
 // id trùng với data-theme trong css/style.css; `sw` là màu hiện trên nút tròn
 const THEMES = [
+  { id: 'vang', label: 'Hoàng kim', sw: 'linear-gradient(135deg, #17130c 48%, #e2b659 52%)' },
+  { id: 'nga',  label: 'Ngà',       sw: 'linear-gradient(135deg, #f5f1e8 48%, #a16207 52%)' },
   { id: 'hong', label: 'Hồng baby', sw: '#f0609a' },
   { id: 'mint', label: 'Bạc hà',    sw: '#14b89a' },
   { id: 'tim',  label: 'Oải hương', sw: '#8b5cf6' },
@@ -14,7 +18,7 @@ const THEMES = [
   { id: 'toi',  label: 'Đêm',       sw: '#1b2a6b' },
   { id: 'than', label: 'Than',      sw: '#2b2f38' },
 ];
-const DARK_THEMES = new Set(['toi', 'than']);
+const DARK_THEMES = new Set(['toi', 'than', 'vang']);
 
 function readTheme() {
   try { return JSON.parse(localStorage.getItem(THEME_KEY) || '{}'); } catch { return {}; }
@@ -88,11 +92,16 @@ function applyAccent(hex) {
 
 function applyTheme(id, accent) {
   const root = document.documentElement;
-  const theme = THEMES.some(t => t.id === id) ? id : 'hong';
+  const theme = THEMES.some(t => t.id === id) ? id : DEFAULT_THEME;
+  // 'hong' là bộ biến gốc ở :root trong CSS nên không cần data-theme
   if (theme === 'hong') delete root.dataset.theme;
   else root.dataset.theme = theme;
   applyAccent(accent || '');
-  $$('.swatch[data-theme]').forEach(s => s.classList.toggle('on', s.dataset.theme === theme && !accent));
+  $$('.swatch[data-theme]').forEach(s => {
+    const on = s.dataset.theme === theme && !accent;
+    s.classList.toggle('on', on);
+    s.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
   const custom = $('#accentPick');
   if (custom) {
     custom.parentElement.classList.toggle('on', !!accent);
@@ -104,11 +113,11 @@ function applyTheme(id, accent) {
 function buildThemePicker() {
   const box = $('#themePick');
   if (!box) return;
-  box.innerHTML = '<span class="lbl" title="Màu giao diện">🎨</span>'
+  box.innerHTML = `<span class="lbl" title="Màu giao diện">${icon('palette')}</span>`
     + THEMES.map(t =>
-      `<button type="button" class="swatch" data-theme="${t.id}" style="--sw:${t.sw}" title="${t.label}"></button>`
+      `<button type="button" class="swatch" data-theme="${t.id}" style="--sw:${t.sw}" title="${t.label}" aria-label="Bảng màu ${t.label}"></button>`
     ).join('')
-    + '<label class="swatch custom" title="Màu nhấn tuỳ ý"><input type="color" id="accentPick"></label>';
+    + '<label class="swatch custom" title="Màu nhấn tuỳ ý"><input type="color" id="accentPick" aria-label="Màu nhấn tuỳ ý"></label>';
 
   $$('.swatch[data-theme]', box).forEach(btn => btn.addEventListener('click', () => {
     // Chọn bảng màu sẵn là bỏ màu nhấn tuỳ chọn — hai thứ chồng nhau chỉ rối

@@ -227,6 +227,7 @@ def full(job_id: str) -> dict | None:
         return None
     item["cues"] = found[1].get("cues") or []
     item["speakers"] = found[1].get("speakers") or []
+    item["hardsub"] = found[1].get("hardsub") or None
     # Tên vai & giọng người dùng đã chọn — nằm trong DB, không nằm trong state.json.
     # DB hỏng thì vẫn mở được dự án, chỉ mất phần này.
     try:
@@ -234,6 +235,16 @@ def full(job_id: str) -> dict | None:
     except Exception:
         item["characters"] = []
     return item
+
+
+def save_hardsub(job_id: str, result: dict) -> None:
+    """Ghi kết quả dò phụ đề nung sẵn vào state.json của dự án."""
+    found = _read_state(job_id)
+    if not found:
+        return
+    folder, state = found
+    state["hardsub"] = result
+    (folder / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def video_path(job_id: str) -> Path | None:

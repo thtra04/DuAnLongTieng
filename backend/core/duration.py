@@ -74,7 +74,14 @@ def heuristic_seconds(text: str) -> float:
 
 
 class DurationModel:
-    """Hồi quy tuyến tính (ridge) từ đặc trưng thủ công sang số giây."""
+    """Hồi quy tuyến tính (ridge) từ đặc trưng thủ công sang số giây.
+
+    Kèm **hệ số tốc độ theo giọng** (`meta["voice_factors"]`): mỗi giọng TTS đọc
+    nhanh chậm khác nhau tới ~15 %. Đo trên 3.674 câu, 5 phần kiểm tra chéo: không
+    biết giọng MAE 246 ms, nhân hệ số giọng 173 ms (thử mô hình phi tuyến cùng đặc
+    trưng thì không hơn: 252 ms — chỗ nghẽn là giọng, không phải dạng mô hình).
+    Giọng chưa có hệ số (giọng nhân bản, giọng mới) thì hệ số 1.
+    """
 
     def __init__(self, weights: list[float] | None = None, meta: dict | None = None):
         self.weights = list(weights) if weights else []
@@ -82,8 +89,15 @@ class DurationModel:
 
     # ----------------------------------------------------------- huấn luyện
     @classmethod
-    def fit(cls, texts: list[str], seconds: list[float], ridge: float = 1e-2) -> "DurationModel":
-        """Bình phương tối thiểu có điều hoà. Cần numpy; dữ liệu nhỏ vẫn chạy được."""
+    def fit(
+        cls, texts: list[str], seconds: list[float], ridge: float = 1e-2,
+        voices: list[str] | None = None,
+    ) -> "DurationModel":
+        """Bình phương tối thiểu có điều hoà. Cần numpy; dữ liệu nhỏ vẫn chạy được.
+
+        `voices` (giọng đọc từng mẫu) thì học thêm hệ số tốc độ của mỗi giọng: trung
+        vị của tỉ lệ số giây thật / số giây dự đoán chung, trên các mẫu của giọng đó.
+        """
         if len(texts) != len(seconds) or not texts:
             raise ValueError("Cần cùng số câu và số giây, và ít nhất một mẫu.")
         import numpy as np
@@ -95,11 +109,26 @@ class DurationModel:
         reg[0, 0] = 0.0  # không điều hoà hệ số chặn
         w = np.linalg.solve(X.T @ X + reg, X.T @ y)
         model = cls(w.tolist(), {"n": len(texts), "ridge": ridge, "features": list(FEATURE_NAMES)})
-        model.meta["train_mae"] = model.mae(texts, seconds)
+        if voices:
+            if len(voices) != len(texts):
+                raise ValueError("Cần đúng một giọng cho mỗi câu.")
+            base = model.predict_many(texts)
+            ratios: dict[str, list[float]] = {}
+            for v, s, p in zip(voices, seconds, base):
+                if v and p > 0:
+                    ratios.setdefault(str(v), []).append(float(s) / p)
+            model.meta["voice_factors"] = {
+                v: round(float(np.median(r)), 4) for v, r in ratios.items() if len(r) >= 20
+            }
+        model.meta["train_mae"] = model.mae(texts, seconds, voices)
         return model
 
+    def voice_factor(self, voice: str = "") -> float:
+        return float((self.meta.get("voice_factors") or {}).get(str(voice or ""), 1.0))
+
     # ------------------------------------------------------------ dự đoán
-    def predict(self, text: str) -> float:
+    def predict(self, text: str, voice: str = "") -> float:
+        """Số giây TTS sẽ đọc `text`. Biết `voice` thì chính xác hơn (hệ số tốc độ giọng)."""
         if not self.weights:
             return heuristic_seconds(text)
         x = features(text)
@@ -107,15 +136,17 @@ class DurationModel:
         # Câu rỗng thì 0 giây; câu có chữ thì ít nhất cũng phải mất một tí
         if syllables(text) == 0:
             return 0.0
-        return max(0.15, float(value))
+        return max(0.15, float(value)) * self.voice_factor(voice)
 
-    def predict_many(self, texts: list[str]) -> list[float]:
-        return [self.predict(t) for t in texts]
+    def predict_many(self, texts: list[str], voices: list[str] | None = None) -> list[float]:
+        voices = voices or [""] * len(texts)
+        return [self.predict(t, v) for t, v in zip(texts, voices)]
 
-    def mae(self, texts: list[str], seconds: list[float]) -> float:
+    def mae(self, texts: list[str], seconds: list[float], voices: list[str] | None = None) -> float:
         if not texts:
             return 0.0
-        return sum(abs(self.predict(t) - float(s)) for t, s in zip(texts, seconds)) / len(texts)
+        pred = self.predict_many(texts, voices)
+        return sum(abs(p - float(s)) for p, s in zip(pred, seconds)) / len(texts)
 
     # ------------------------------------------------------------ lưu/nạp
     def save(self, path: Path | str = MODEL_PATH) -> Path:
@@ -161,12 +192,15 @@ def reset_default() -> None:
 # ---------------------------------------------------------- đánh giá mô hình
 
 
-def evaluate(model: DurationModel, texts: list[str], seconds: list[float]) -> dict:
+def evaluate(
+    model: DurationModel, texts: list[str], seconds: list[float], voices: list[str] | None = None,
+) -> dict:
     """MAE của mô hình và của ước lượng thô trên cùng tập — để báo cáo cải thiện."""
     n = len(texts)
     if n == 0:
         return {"n": 0, "mae_ms": None, "heuristic_mae_ms": None, "improvement": None}
-    model_mae = model.mae(texts, seconds)
+    model_mae = model.mae(texts, seconds, voices)
+    pred = model.predict_many(texts, voices)
     heur_mae = sum(abs(heuristic_seconds(t) - float(s)) for t, s in zip(texts, seconds)) / n
     return {
         "n": n,
@@ -174,6 +208,6 @@ def evaluate(model: DurationModel, texts: list[str], seconds: list[float]) -> di
         "heuristic_mae_ms": round(heur_mae * 1000, 1),
         "improvement": round(1 - model_mae / heur_mae, 4) if heur_mae > 0 else None,
         "rmse_ms": round(
-            math.sqrt(sum((model.predict(t) - float(s)) ** 2 for t, s in zip(texts, seconds)) / n) * 1000, 1
+            math.sqrt(sum((p - float(s)) ** 2 for p, s in zip(pred, seconds)) / n) * 1000, 1
         ),
     }

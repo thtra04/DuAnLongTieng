@@ -17,7 +17,7 @@ import wave
 from pathlib import Path
 from typing import Callable
 
-from . import hf_cache, media
+from . import gender, hf_cache, media
 from .subtitles import Cue
 
 SR = 48000  # VieNeu-TTS v3 Turbo xuất 48 kHz
@@ -160,7 +160,8 @@ def list_voices() -> list[dict]:
             label, vid = str(item[0]), str(item[1])
         else:
             label = vid = str(item)
-        voices.append({"id": vid, "label": label})
+        # gender: "M" | "F" | "" — để giao diện gán giọng nam cho vai nam, nữ cho vai nữ
+        voices.append({"id": vid, "label": label, "gender": gender.voice_gender(label)})
     return voices
 
 

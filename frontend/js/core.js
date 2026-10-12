@@ -143,6 +143,11 @@ function fmtLength(sec) {
 }
 
 /** Tên video/phần lấy từ trang ngoài — phải escape trước khi nhét vào innerHTML. */
+// Icon SVG lấy từ sprite trong index.html — không dùng emoji làm icon vì mỗi máy vẽ một kiểu
+function icon(name, cls = '') {
+  return `<svg class="i${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+}
+
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -188,6 +193,14 @@ $$('.step-btn').forEach(b => b.addEventListener('click', () => {
   if (!b.disabled) goStep(+b.dataset.step);
 }));
 $$('[data-goto]').forEach(b => b.addEventListener('click', () => goStep(+b.dataset.goto)));
+
+// Thẻ chọn, vùng thả file… là <div role="button">: cho bấm được bằng Enter / phím cách
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[role="button"][tabindex]')) {
+    e.preventDefault();
+    e.target.click();
+  }
+});
 
 /* ------------------------- hộp xác nhận / nhập liệu ---------------------- */
 /* Không dùng window.confirm() / prompt(): trong trình duyệt nhúng (khung xem

@@ -7,7 +7,7 @@ import re
 import time
 from pathlib import Path
 
-from . import align, asr, budget, diarize, dubbing, media, metrics, subtitles, translate
+from . import align, asr, budget, diarize, dubbing, gender, hardsub, media, metrics, subtitles, translate
 from .jobs import Job, Step
 from .subtitles import Cue
 from ..store import characters
@@ -57,6 +57,9 @@ def analyze_steps(cfg: dict) -> list[Step]:
 
     if cfg.get("diarize"):
         steps.append(Step("diarize", "Nhận diện người nói", weight=4.0))
+    if cfg.get("gender_split"):
+        steps.append(Step("gender", "Tách giọng nam / nữ", weight=0.4))
+    steps.append(Step("hardsub", "Dò phụ đề có sẵn trong hình", weight=0.4))
     if cfg.get("translate"):
         steps.append(Step("translate", "Dịch phụ đề", weight=3.0))
         if cfg.get("budget_loop"):
@@ -181,6 +184,12 @@ def run_analyze(job: Job, cfg: dict) -> None:
     speakers: list[dict] = []
     if cfg.get("diarize"):
         speakers = _run_diarize(job, cfg, video_path, workdir, cues)
+    if cfg.get("gender_split"):
+        speakers = _run_gender(job, video_path, workdir, cues, speakers)
+    job.check_cancel()
+
+    # 3.7. Phụ đề nung sẵn trong hình -> bước 4 đề nghị che đi trước khi nung chữ mới
+    hard = _run_hardsub(job, video_path, cues, info)
     job.check_cancel()
 
     # 4. Dịch
@@ -247,6 +256,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
         "cues": [c.to_dict() for c in cues],
         "speakers": speakers,
         "budget": budget_stats,
+        "hardsub": hard,
         # hf_token cũng là bí mật như api_key — không được ghi xuống đĩa
         "cfg": {
             k: v for k, v in cfg.items()
@@ -270,6 +280,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
         "coverage": asr_result.get("coverage", 1.0 if cues else 0.0),
         "coverage_note": coverage_note,
         "gaps": [g for g in asr_result.get("gaps", []) if g[1] - g[0] >= 15][:8],
+        "hardsub": hard,
         "asr_notes": asr_result.get("notes", []),
     }
 
@@ -335,6 +346,80 @@ def _run_diarize(job: Job, cfg: dict, video_path: Path, workdir: Path, cues) -> 
         for cue in cues:
             cue.speaker = ""
         return []
+
+
+def _run_hardsub(job: Job, video_path: Path, cues, info: dict) -> dict:
+    """Dò dải phụ đề nung sẵn. Lỗi thì bỏ qua — chỉ mất phần đề nghị che chữ cũ."""
+    job.start_step("hardsub", "Đang xem khung hình…")
+    try:
+        found = hardsub.detect(video_path, cues, info)
+    except Exception as exc:
+        job.skip_step("hardsub", str(exc)[:70])
+        job.log(f"Không dò được phụ đề có sẵn trong hình: {exc}")
+        return {"found": False, "reason": str(exc)}
+    if found.get("found"):
+        detail = f"có, ở {found['y0']:.0%}–{found['y1']:.0%} chiều cao"
+        job.log(
+            f"Video đã có phụ đề nung sẵn ({detail} khung hình). Bước 4 sẽ che dải đó "
+            "khi nung phụ đề mới — chỉnh hoặc tắt ở mục Kiểu phụ đề."
+        )
+    else:
+        detail = "không có"
+    job.finish_step("hardsub", detail)
+    return found
+
+
+def _run_gender(job: Job, video_path: Path, workdir: Path, cues, speakers: list[dict]) -> list[dict]:
+    """Đoán giọng nam / nữ theo cao độ để lúc lồng tiếng nam ra nam, nữ ra nữ.
+
+    Đã có nhãn nhân vật từ bước phân đoạn người nói thì chỉ gắn thêm giới tính
+    cho từng nhân vật. Chưa có thì chia cue thành hai nhóm nam / nữ (`S1`, `S2`).
+    Hỏng thì bỏ qua, không làm sập job — cùng lý do với `_run_diarize`.
+    """
+    job.start_step("gender", "Đang nghe cao độ giọng…")
+    try:
+        wav = workdir / "audio.wav"
+        if not wav.exists():
+            job.log("Tách âm thanh để nghe cao độ giọng…")
+            wav = media.extract_audio(video_path, wav)
+        pitches = gender.measure(wav, cues)
+
+        if speakers:
+            found = gender.speaker_genders(cues, pitches)
+            for s in speakers:
+                s["gender"] = found.get(s["id"], {}).get("gender", "")
+                s["f0"] = found.get(s["id"], {}).get("f0", 0.0)
+            detail = ", ".join(
+                f"{s['id']} {gender.NAMES.get(s['gender'], '?')}" for s in speakers
+            )
+            job.log(f"Giới tính giọng của từng nhân vật: {detail}")
+        else:
+            stats = gender.split_cues(cues, pitches)
+            speakers = diarize.speakers_of(cues)
+            for s in speakers:
+                s["gender"] = stats["genders"].get(s["id"], "")
+                s["f0"] = stats["f0"].get(s["id"], 0.0)
+                s["name"] = gender.NAMES.get(s["gender"], "")
+            detail = " · ".join(
+                f"{s['name'] or s['id']}: {s['lines']} dòng" for s in speakers
+            ) or "không nghe ra giọng nào"
+            job.log(f"Tách giọng nam / nữ theo cao độ: {detail}.")
+            if stats["empty"]:
+                job.log(
+                    f"  {stats['empty']} dòng quá ngắn hoặc lẫn nhạc nên không đoán — "
+                    "sẽ đọc bằng giọng chung. Bấm vào nhãn vai ở bước 4 để sửa dòng gán sai."
+                )
+        try:
+            characters.sync(job.id, speakers)
+        except Exception as exc:
+            job.log(f"Không lưu được danh sách nhân vật vào CSDL: {exc}")
+        job.finish_step("gender", detail[:70])
+        return speakers
+
+    except Exception as exc:
+        job.skip_step("gender", str(exc)[:70])
+        job.log(f"Không tách được giọng nam / nữ: {exc}")
+        return speakers
 
 
 # --------------------------------------------------------------- bước xuất
@@ -455,11 +540,18 @@ def run_render(job: Job, state: dict, cfg: dict) -> None:
         job.start_step("burn", "Đang encode…")
         out_name = f"{stem}.hardsub.mp4"
         job.log(f"Nung phụ đề vào video (~{_hms(duration)} nội dung)…")
+        mask = hardsub.clean_mask(cfg.get("mask"))
+        if mask:
+            job.log(
+                f"Che phụ đề gốc ({'làm mờ' if mask['mode'] == 'blur' else 'hộp tối'}) ở "
+                f"{mask['y0']:.0%}–{mask['y1']:.0%} chiều cao khung."
+            )
         media.burn_subtitles(
             video_path, ass_path, workdir / out_name,
             on_progress=lambda p: job.set_step_progress("burn", p),
             crf=int(cfg.get("crf", 20)),
             preset=cfg.get("preset", "medium"),
+            mask=mask,
         )
         p = workdir / out_name
         files.append({"name": out_name, "size": p.stat().st_size, "kind": "mp4"})
@@ -522,6 +614,7 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
     }
     ref_map: dict[str, str] = {}
     present = set(dubbing.speaker_ids(cues))
+    _fill_voices_by_gender(job, cfg, voice, voice_map, present)
     to_clone = [s for s, v in voice_map.items() if v == dubbing.CLONE_VOICE and s in present]
     if voice == dubbing.CLONE_VOICE:
         # Giọng chung đặt là "nhân bản" -> nhân bản cho mọi nhân vật chưa chọn riêng
@@ -693,6 +786,30 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         )
     except Exception as exc:  # đo đạc không được phép làm hỏng bản xuất
         job.log(f"Không ghi được bản ghi đo đạc: {exc}")
+
+
+def _fill_voices_by_gender(job, cfg: dict, voice: str, voice_map: dict, present: set) -> None:
+    """Vai chưa được chọn giọng mà đã biết giới tính -> lấy giọng dựng sẵn cùng giới.
+
+    Giao diện vốn gửi sẵn giọng cho mọi vai; hàm này lo trường hợp gọi API trực
+    tiếp, hoặc vai mới xuất hiện sau khi người dùng sửa nhãn ở bước 4. Giọng
+    chung đang đặt là "nhân bản" thì thôi — khi đó mọi vai đều nhân bản.
+    """
+    missing = [s for s in sorted(present) if s not in voice_map]
+    if not missing or voice == dubbing.CLONE_VOICE:
+        return
+    try:
+        known = {c["label"]: c for c in characters.list_for(cfg.get("source_job"))}
+        voices = dubbing.list_voices()
+    except Exception:
+        return
+    taken = set(voice_map.values())
+    for sid in missing:
+        ch = known.get(sid) or {}
+        vid = gender.pick_voice(voices, ch.get("gender", ""), taken)
+        if vid:
+            voice_map[sid] = vid
+            taken.add(vid)
 
 
 def _fallback_voice(voice: str) -> str:

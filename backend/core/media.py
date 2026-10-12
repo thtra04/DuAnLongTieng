@@ -274,17 +274,26 @@ def burn_subtitles(
     on_progress=None,
     crf: int = 20,
     preset: str = "medium",
+    mask: dict | None = None,
 ) -> Path:
     """Nung (hardsub) file .ass vào video.
 
     Chạy ffmpeg với cwd = thư mục chứa .ass và dùng tên file tương đối để né
     hoàn toàn chuyện escape đường dẫn Windows trong filter `subtitles`.
+
+    `mask` (xem `hardsub.clean_mask`): che dải phụ đề nung sẵn của video gốc
+    trước, rồi mới vẽ phụ đề mới lên trên.
     """
+    from .hardsub import mask_filter
+
     ass_path = Path(ass_path)
     out_path = Path(out_path)
     workdir = ass_path.parent
-    dur = probe(video).get("duration", 0.0)
+    info = probe(video)
+    dur = info.get("duration", 0.0)
     vf = f"subtitles={ass_path.name}"
+    if mask and info.get("width") and info.get("height"):
+        vf = mask_filter(mask, int(info["width"]), int(info["height"])) + "," + vf
     run_ffmpeg_progress(
         [
             "-i", str(Path(video).resolve()),
