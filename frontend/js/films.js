@@ -435,6 +435,10 @@ async function openProject(id) {
   unlock(4);
   goStep(4);
   setupEditor();
+  // Thanh bước phía trên phải ghi dự án vừa mở, không phải video làm trước đó trong phiên
+  updateStepSummary();
+  const nm = p.video_name || 'Dự án đã lưu';
+  $('#step1Sub').textContent = nm.length > 28 ? nm.slice(0, 27) + '…' : nm;
   toast(`Đã mở "${p.video_name}" — ${p.cue_count} dòng.`, 'ok', 3500);
   if (!p.video_ok) {
     toast('Video gốc không còn trên máy: vẫn sửa & xuất được phụ đề, nhưng không xem trước '

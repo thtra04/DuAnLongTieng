@@ -466,6 +466,24 @@ _TRUNCATED_RE = re.compile(
 _RANGE_CHUNK = 4 * 1024 * 1024
 
 
+def _readable_name(path: Path, video_id: str | None, prefix: str = "") -> Path:
+    """Đặt lại tên file tải về khi tiêu đề không còn chữ nào đọc được.
+
+    `restrictfilenames` của yt-dlp thay mọi ký tự ngoài ASCII bằng "_", nên video có
+    tiêu đề toàn chữ Hán ra file "_.mp4" — tên dự án và các file xuất ("_.longtieng.mp4")
+    không phân biệt được video nào với video nào. Khi đó dùng id của video (BV1P8HD63Eha…).
+    """
+    core = path.stem[len(prefix):] if path.stem.startswith(prefix) else path.stem
+    vid = re.sub(r"[^A-Za-z0-9_-]", "", str(video_id or ""))[:40]
+    if re.search(r"[A-Za-z0-9]", core) or not vid or not path.exists():
+        return path
+    target = path.with_name(f"{prefix}{vid}{path.suffix}")
+    if target.exists():
+        return path
+    path.rename(target)
+    return target
+
+
 def _looks_truncated(exc: BaseException) -> bool:
     return bool(_TRUNCATED_RE.search(str(exc)))
 
@@ -709,6 +727,7 @@ def download_url(
             raise MediaError("yt-dlp không trả về thông tin video.")
         info = _pick_entry(info, part)
         result["title"] = info.get("title") or "video"
+        video_id = info.get("id")
         path = Path(ydl.prepare_filename(info))
 
     if not path.exists():
@@ -722,6 +741,7 @@ def download_url(
             raise MediaError("yt-dlp không tải được file nào.")
         path = files[0]
 
+    path = _readable_name(path, video_id, prefix)
     if on_log:
         on_log(f"Đã tải: {path.name}")
     return path
