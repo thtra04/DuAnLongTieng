@@ -241,3 +241,32 @@ def test_download_in_ranges_moi_stream_deu_hong_thi_bao_loi(tmp_path, monkeypatc
 
     with pytest.raises(media.MediaError, match="Không tải được stream nào"):
         media._download_in_ranges(_FakeYDL(info, tmp_path), "http://x", None, None, None)
+
+
+# ------------------------------------------------ tên file khi tiêu đề toàn chữ Hán
+
+
+def test_readable_name_doi_ten_theo_id_khi_tieu_de_mat_het_chu(tmp_path):
+    from backend.core.media import _readable_name
+
+    f = tmp_path / "_.mp4"
+    f.write_bytes(b"x")
+    out = _readable_name(f, "BV1P8HD63Eha")
+    assert out.name == "BV1P8HD63Eha.mp4" and out.exists() and not f.exists()
+
+    g = tmp_path / "p2.__.mp4"            # link nhiều phần có tiền tố p2.
+    g.write_bytes(b"x")
+    assert _readable_name(g, "BV9", prefix="p2.").name == "p2.BV9.mp4"
+
+
+def test_readable_name_giu_nguyen_khi_ten_doc_duoc_hoac_khong_co_id(tmp_path):
+    from backend.core.media import _readable_name
+
+    f = tmp_path / "Lieu_Trai.mp4"
+    f.write_bytes(b"x")
+    assert _readable_name(f, "BV1") == f
+    g = tmp_path / "_.mp4"
+    g.write_bytes(b"x")
+    assert _readable_name(g, None) == g
+    (tmp_path / "BV2.mp4").write_bytes(b"y")   # đã có file trùng tên thì không ghi đè
+    assert _readable_name(g, "BV2") == g

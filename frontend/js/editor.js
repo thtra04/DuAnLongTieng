@@ -45,6 +45,9 @@ function setupEditor() {
   if (!S.analyzed.target_lang) $('#outSrtBoth').closest('.check').classList.add('hide');
   initMask();
   applyOverlayStyle();
+  // Lồng tiếng đang bật từ dự án trước thì bảng vai phải dựng lại theo vai của bộ phụ đề mới,
+  // không thì vẫn hiện vai cũ cho tới khi người dùng tắt rồi bật lại lồng tiếng.
+  if ($('#dubOn').checked && S.voicesLoaded) renderSpeakerVoices();
 }
 
 function renderCues() {
