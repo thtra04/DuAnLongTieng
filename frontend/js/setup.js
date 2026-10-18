@@ -48,6 +48,7 @@ async function startAnalyze() {
     prompt: $('#prompt').value.trim(),
     max_chars: +$('#maxChars').value,
     gender_split: $('#genderOn').checked,
+    separate_first: $('#separateFirstOn').checked,
     diarize: $('#diarizeOn').checked,
     num_speakers: +$('#numSpeakers').value || null,
     hf_token: $('#hfToken').value.trim(),

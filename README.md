@@ -70,12 +70,13 @@ uv sync --extra cuda --extra offline   # + NLLB-200 dịch offline (tải torch 
 uv sync --extra cuda --extra tts       # + lồng tiếng Việt VieNeu-TTS (14 giọng có sẵn)
 uv sync --extra cuda --extra clone     # + nhân bản giọng trong video (kéo torch ~2.5 GB)
 uv sync --extra cuda --extra diarize   # + nhận diện người nói → lồng tiếng đa nhân vật
+uv sync --extra cuda --extra separate  # + bỏ giọng gốc, giữ nhạc nền (Demucs; chạy CPU ~bằng thời lượng video)
 ```
 
 Cài tất cả:
 
 ```bash
-uv sync --extra cuda --extra ai --extra offline --extra tts --extra clone --extra diarize
+uv sync --extra cuda --extra ai --extra offline --extra tts --extra clone --extra diarize --extra separate
 ```
 
 > **Lưu ý:** `uv sync` làm môi trường khớp *đúng* các `--extra` nêu trong lệnh, nhóm nào
@@ -269,7 +270,7 @@ Bật **Lồng tiếng** ở bước 4 để video nói tiếng Việt thay vì 
 | **Giọng đọc** | 14 giọng dựng sẵn (nam/nữ × Bắc/Trung/Nam × tin tức/tự nhiên/kể chuyện) |
 | 🧬 **Nhân bản giọng trong video** | Cắt 4–8 giây có tiếng nói từ chính video rồi bắt chước giọng đó |
 | **Phong cách đọc** | Tự nhiên · Bản tin · Đọc truyện |
-| **Giữ tiếng gốc ở nền** | Vẫn nghe được nhạc nền và tiếng động; bỏ chọn để thay hẳn tiếng gốc |
+| **Tiếng gốc của video** | **Bỏ giọng gốc, giữ nhạc nền và tiếng động** (mặc định, cần `--extra separate`): tách giọng khỏi nhạc bằng Demucs, chỉ còn giọng mới trên nền nhạc; mẫu nhân bản giọng cũng cắt từ phần giọng đã sạch nhạc. Hai cách khác: *Giữ nguyên tiếng gốc, hạ nhỏ khi có người đọc* và *Thay hẳn tiếng gốc* |
 | **Tự cân âm lượng** | Chuẩn hoá giọng đọc lên sát mức tối đa, và hạ nền thêm nếu tiếng gốc còn to quá |
 | **Tiếng gốc chỉ nhỏ lại khi có người đọc** | Ducking: đoạn không ai đọc vẫn nghe nguyên nhạc/tiếng động |
 | **Âm lượng giọng đọc** | Nhân thêm lên mức tool đã tự cân (mặc định 100%). Kéo lên nếu vẫn thấy lép |

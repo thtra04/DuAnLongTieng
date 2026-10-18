@@ -45,6 +45,7 @@ $('#renderBtn').addEventListener('click', async () => {
       voice: $('#dubVoice').value,
       style: $('#dubStyle').value,
       keep_original: $('#dubKeepOrig').checked,
+      original_mode: $('#dubOrigMode').value,   // voice_off | keep | mute
       original_volume: +$('#dubOrigVol').value / 100,
       dub_volume: +$('#dubVol').value / 100,
       auto_level: $('#dubAutoLevel').checked,

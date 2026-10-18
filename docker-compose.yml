@@ -3,7 +3,7 @@ services:
     build:
       context: .
       # Thêm nhận diện người nói / nhân bản giọng (kéo torch ~2,5 GB):
-      #   EXTRAS="--extra queue --extra tts --extra ai --extra diarize --extra clone"
+      #   EXTRAS="--extra queue --extra tts --extra ai --extra diarize --extra clone --extra separate"
       args:
         EXTRAS: ${VSUB_EXTRAS:---extra queue --extra tts --extra ai}
     ports:

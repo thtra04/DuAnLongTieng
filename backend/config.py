@@ -41,6 +41,8 @@ DATA_DIR = Path(os.environ.get("VSUB_DATA_DIR", ROOT / "data"))
 UPLOAD_DIR = DATA_DIR / "uploads"
 JOB_DIR = DATA_DIR / "jobs"
 MODEL_DIR = Path(os.environ.get("VSUB_MODEL_DIR", DATA_DIR / "models"))
+# Demucs (tách giọng gốc) tải model qua torch.hub -> trỏ vào thư mục model, đừng để rơi vào ổ C
+os.environ.setdefault("TORCH_HOME", str(MODEL_DIR / "torch"))
 TOOLS_DIR = ROOT / "tools"
 
 for _d in (DATA_DIR, UPLOAD_DIR, JOB_DIR, MODEL_DIR):
