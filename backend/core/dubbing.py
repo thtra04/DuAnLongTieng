@@ -350,6 +350,57 @@ def _clean_for_tts(text: str, add_stop: bool = True) -> str:
 
 # Đọc lại tối đa bao nhiêu lần khi TTS sinh đoạn dài bất thường
 RUNAWAY_RETRIES = 2
+# Câu dài hơn ngần này ký tự mà đọc lại vẫn loạn thì chẻ đôi theo dấu phẩy rồi đọc từng nửa
+SPLIT_MIN_CHARS = 60
+
+
+def _split_middle(text: str) -> tuple[str, str] | None:
+    """Chẻ câu làm hai ở dấu phẩy / chấm phẩy gần giữa nhất; không có thì ở khoảng trắng gần giữa."""
+    if len(text) < SPLIT_MIN_CHARS:
+        return None
+    mid = len(text) // 2
+    for marks in ((",", ";", ":"), (" ",)):
+        best = None
+        for i, ch in enumerate(text):
+            if ch in marks and 12 <= i <= len(text) - 12 and (best is None or abs(i - mid) < abs(best - mid)):
+                best = i
+        if best is not None:
+            a, b = text[:best + (0 if text[best] == " " else 1)].strip(), text[best + 1:].strip()
+            if a and b:
+                return a, b
+    return None
+
+
+def _infer_sane(engine, text: str, kwargs: dict, label: str, on_log=None, depth: int = 0):
+    """Đọc `text`; TTS sinh đoạn dài bất thường thì đọc lại, rồi chẻ đôi câu dài. Trả về None nếu bó tay.
+
+    TTS đôi khi không gặp điểm kết thúc và sinh tới trần 24 giây. Trước đây bỏ luôn câu đó
+    (8/186 câu ở video 16 phút). Cắt lặng đầu/cuối TRƯỚC khi xét, vì câu ngắn 15 ký tự ra 3,1 s
+    chủ yếu là lặng chứ không phải tiếng bịa.
+    """
+    import numpy as np
+
+    for attempt in range(RUNAWAY_RETRIES + 1):
+        audio = np.asarray(engine.infer(text, **kwargs), dtype=np.float32).reshape(-1)
+        if audio.size:
+            audio, _ = _trim_silence(audio)
+        if not _runaway(audio.size / SR, text):
+            return audio
+        if on_log and attempt < RUNAWAY_RETRIES:
+            on_log(f"{label}: TTS sinh {audio.size / SR:.1f}s cho {len(text)} ký tự — đọc lại (lần {attempt + 1}).")
+    halves = _split_middle(text) if depth < 2 else None
+    if halves is None:
+        return None
+    if on_log:
+        on_log(f"{label}: vẫn loạn — chẻ câu làm hai ({len(halves[0])} + {len(halves[1])} ký tự) rồi đọc từng nửa.")
+    parts = []
+    for half in halves:
+        a = _infer_sane(engine, _clean_for_tts(half) or half, kwargs, label, on_log, depth + 1)
+        if a is None:
+            return None
+        parts.append(a)
+    gap = np.zeros(int(0.15 * SR), dtype=np.float32)
+    return np.concatenate([parts[0], gap, parts[1]])
 
 
 def _runaway(audio_seconds: float, text: str) -> bool:
@@ -769,17 +820,7 @@ def build_dub_track(
                 kwargs["denoise"] = True
             elif unit_voice:
                 kwargs["voice"] = unit_voice
-            audio = engine.infer(text, **kwargs)
-            # TTS đôi khi không gặp điểm kết thúc và sinh tới trần 24 giây. Trước đây
-            # bỏ luôn câu đó (8/186 câu ở video 16 phút); giờ đọc lại tối đa 2 lần —
-            # model có ngẫu nhiên nên lần sau thường ra bình thường.
-            for retry in range(RUNAWAY_RETRIES):
-                a = np.asarray(audio, dtype=np.float32).reshape(-1)
-                if not _runaway(a.size / SR, text):
-                    break
-                if on_log:
-                    on_log(f"{label}: TTS sinh {a.size / SR:.1f}s cho {len(text)} ký tự — đọc lại (lần {retry + 1}).")
-                audio = engine.infer(text, **kwargs)
+            audio = _infer_sane(engine, text, kwargs, label, on_log)
         except Exception as exc:
             stats["failed"] += 1
             if not first_error:
@@ -796,23 +837,18 @@ def build_dub_track(
                 on_progress((u + 1) / len(units))
             continue
 
-        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
-        if audio.size == 0:
-            continue
-
-        # Chốt an toàn: TTS đôi khi không gặp điểm kết thúc và sinh tới trần 24
-        # giây. Không chặn thì cục tiếng bịa đó đổ vào track, đè lên mấy câu
-        # thoại thật phía sau, mà vẫn được đếm là đọc thành công.
-        if _runaway(audio.size / SR, text):
+        # None = đọc lại và chẻ đôi vẫn loạn. Không chặn thì cục tiếng bịa dài tới
+        # 24 giây đổ vào track, đè lên mấy câu thoại thật phía sau.
+        if audio is None:
             stats["failed"] += 1
             stats["runaway"] += 1
             if on_log:
-                on_log(
-                    f"{label}: TTS sinh {audio.size / SR:.1f}s cho {len(text)} ký tự "
-                    "— bất thường, bỏ câu này để nó không đè lên câu sau."
-                )
+                on_log(f"{label}: TTS sinh tiếng dài bất thường dù đã đọc lại và chẻ câu — bỏ câu này.")
             if on_progress:
                 on_progress((u + 1) / len(units))
+            continue
+        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if audio.size == 0:
             continue
 
         # VieNeu-TTS chèn ~100ms lặng ở đầu và ~140ms ở cuối mỗi câu. Không cắt
