@@ -5,7 +5,7 @@ RUN pip install --no-cache-dir uv
 
 # Nhóm tuỳ chọn cài vào ảnh. Mặc định: hàng đợi Redis, lồng tiếng VieNeu-TTS và dịch
 # bằng AI — đều nhẹ, không kéo torch. Muốn có nhận diện người nói / nhân bản giọng thì
-# build lại với: --build-arg EXTRAS="--extra queue --extra tts --extra ai --extra diarize --extra clone"
+# build lại với: --build-arg EXTRAS="--extra queue --extra tts --extra ai --extra diarize --extra clone --extra separate"
 # (thêm ~2,5 GB torch). Không có `cuda`: nhóm đó là thư viện CUDA cho Windows.
 ARG EXTRAS="--extra queue --extra tts --extra ai"
 

@@ -342,6 +342,14 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
             và đoán giọng trẻ em; người cao tuổi chọn tay ở bước 4.</small></span>
       </label>
       <label class="switch" style="margin-bottom:14px">
+        <input type="checkbox" id="separateFirstOn">
+        <span class="track"></span>
+        <span class="txt"><b>Tách nhạc nền trước khi nghe giọng</b>
+          <small>Bỏ nhạc và tiếng động trước khi đo giọng (Demucs, chạy CPU khoảng bằng thời lượng video)
+            → nhận vai chính xác hơn với phim nhiều nhạc nền. Kết quả tách được dùng lại khi lồng tiếng,
+            nên tổng thời gian không tăng nếu bạn chọn Bỏ giọng gốc ở bước 4.</small></span>
+      </label>
+      <label class="switch" style="margin-bottom:14px">
         <input type="checkbox" id="diarizeOn">
         <span class="track"></span>
         <span class="txt"><b>Nhận diện người nói</b>
@@ -558,11 +566,17 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
                 <div id="spkList"></div>
               </div>
 
-              <label class="check on" id="keepOrigWrap">
-                <input type="checkbox" id="dubKeepOrig" checked>
-                <span><b>Giữ tiếng gốc ở nền</b>
-                  <small>Còn nghe được nhạc nền, tiếng động. Bỏ chọn để thay hẳn tiếng gốc.</small></span>
+              <label class="field" id="origModeWrap">
+                <span>Tiếng gốc của video</span>
+                <select id="dubOrigMode">
+                  <option value="voice_off">Bỏ giọng gốc, giữ nhạc nền và tiếng động (khuyên dùng)</option>
+                  <option value="keep">Giữ nguyên tiếng gốc, hạ nhỏ khi có người đọc</option>
+                  <option value="mute">Thay hẳn tiếng gốc — chỉ còn giọng đọc</option>
+                </select>
+                <small class="muted" id="origModeHint">Tách giọng khỏi nhạc bằng Demucs, chạy trên CPU khoảng bằng
+                  thời lượng video. Không cài được thì tự lùi về cách giữ tiếng gốc.</small>
               </label>
+              <input type="checkbox" id="dubKeepOrig" checked class="hide" aria-hidden="true">
 
               <label class="check on" id="autoLevelWrap" style="margin-top:10px">
                 <input type="checkbox" id="dubAutoLevel" checked>

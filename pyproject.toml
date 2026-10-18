@@ -50,6 +50,12 @@ diarize = [
     "torch",
     "torchaudio",
 ]
+# Tach giong goc khoi nhac nen (Demucs) de long tieng chi con giong moi; can torch.
+separate = [
+    "demucs>=4.0",
+    "torch",
+    "torchaudio",
+]
 # Hang doi tac vu Redis (HP-7). Khi co Redis, job duoc luu lai qua lan khoi
 # dong lai va ho tro nhieu worker. Khong co thi fallback ve in-memory.
 queue = [

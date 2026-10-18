@@ -60,10 +60,19 @@ async function loadVoices() {
   }
 }
 
-$('#dubKeepOrig').addEventListener('change', e => {
-  $('#origVolWrap').style.opacity = e.target.checked ? '1' : '.4';
-  $('#dubOrigVol').disabled = !e.target.checked;
+// Chế độ tiếng gốc: bỏ giọng (nền 100%), giữ và hạ nhỏ (nền 45%), hay thay hẳn.
+$('#dubOrigMode').addEventListener('change', e => {
+  const mode = e.target.value;
+  $('#dubKeepOrig').checked = mode !== 'mute';
+  $('#origVolWrap').style.opacity = mode === 'mute' ? '.4' : '1';
+  $('#dubOrigVol').disabled = mode === 'mute';
+  $('#duckWrap').style.opacity = mode === 'keep' ? '1' : '.4';
+  $('#dubDuck').disabled = mode !== 'keep';
+  const vol = $('#dubOrigVol');
+  if (mode === 'voice_off' && +vol.value < 70) { vol.value = 100; vol.dispatchEvent(new Event('input')); }
+  if (mode === 'keep' && +vol.value > 60) { vol.value = 45; vol.dispatchEvent(new Event('input')); }
 });
+$('#dubOrigMode').dispatchEvent(new Event('change'));
 
 $('#dubTest').addEventListener('click', async () => {
   const btn = $('#dubTest'), msg = $('#dubTestMsg');

@@ -348,6 +348,10 @@ def _clean_for_tts(text: str, add_stop: bool = True) -> str:
     return text
 
 
+# Đọc lại tối đa bao nhiêu lần khi TTS sinh đoạn dài bất thường
+RUNAWAY_RETRIES = 2
+
+
 def _runaway(audio_seconds: float, text: str) -> bool:
     """Clip có dài bất thường so với số chữ không.
 
@@ -766,6 +770,16 @@ def build_dub_track(
             elif unit_voice:
                 kwargs["voice"] = unit_voice
             audio = engine.infer(text, **kwargs)
+            # TTS đôi khi không gặp điểm kết thúc và sinh tới trần 24 giây. Trước đây
+            # bỏ luôn câu đó (8/186 câu ở video 16 phút); giờ đọc lại tối đa 2 lần —
+            # model có ngẫu nhiên nên lần sau thường ra bình thường.
+            for retry in range(RUNAWAY_RETRIES):
+                a = np.asarray(audio, dtype=np.float32).reshape(-1)
+                if not _runaway(a.size / SR, text):
+                    break
+                if on_log:
+                    on_log(f"{label}: TTS sinh {a.size / SR:.1f}s cho {len(text)} ký tự — đọc lại (lần {retry + 1}).")
+                audio = engine.infer(text, **kwargs)
         except Exception as exc:
             stats["failed"] += 1
             if not first_error:
@@ -956,8 +970,11 @@ def balance(
     keep_original: bool = True,
     tmpdir: Path | None = None,
     on_log=None,
+    bg_source: Path | None = None,
 ) -> tuple[float, float, float]:
     """Tính (dub_volume, mức nền, độ né) từ số đo thật.
+
+    `bg_source`: đo mức nền từ file này (nền đã tách giọng) thay vì từ tiếng của video.
 
     Trả về:
         dub_volume  -- hệ số nhân cho giọng đọc
@@ -999,7 +1016,7 @@ def balance(
             on_log("  Không giữ tiếng gốc — chỉ còn giọng đọc.")
         return 10 ** (gain_db / 20) * boost, 0.0, 0.0
 
-    src = original_level(video, duration, tmpdir=tmpdir)
+    src = original_level(bg_source or video, duration, tmpdir=tmpdir)
     if src is None:
         if on_log:
             on_log("  Không đo được tiếng gốc (video im, hoặc không đọc được) — giữ nền như bạn đặt.")
@@ -1081,7 +1098,8 @@ def _limiter() -> str:
     return f"volume={OUT_CEILING:.3f}"
 
 
-def _duck_filter(bg_volume: float, duck_db: float, voice_dbfs: float, dub_volume: float) -> str:
+def _duck_filter(bg_volume: float, duck_db: float, voice_dbfs: float, dub_volume: float,
+                 bg_in: str = "[0:a]") -> str:
     """Né tiếng gốc theo giọng đọc, dùng chính giọng làm tín hiệu điều khiển.
 
     `bg_volume` là mức nền lúc KHÔNG ai đọc — phải có, nếu thiếu thì tiếng gốc
@@ -1097,7 +1115,7 @@ def _duck_filter(bg_volume: float, duck_db: float, voice_dbfs: float, dub_volume
     ratio = 1.0 if depth <= 0.01 else max(1.5, min(8.0, 1 / (1 - depth / excess)))
     return (
         f"[1:a]volume={dub_volume:.3f},{AFMT},asplit=2[vomix][vokey];"
-        f"[0:a]volume={bg_volume:.4f},{AFMT}[bg];"
+        f"{bg_in}volume={bg_volume:.4f},{AFMT}[bg];"
         f"[bg][vokey]sidechaincompress="
         f"threshold={thr:.5f}:ratio={ratio:.2f}:attack=20:release=700:makeup=1:level_sc=1[bgduck];"
         f"[bgduck][vomix]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix];"
@@ -1118,8 +1136,12 @@ def mux_dub(
     duration: float = 0.0,
     on_log=None,
     on_progress=None,
+    bg_wav: Path | None = None,
 ) -> Path:
     """Ghép track lồng tiếng vào video.
+
+    `bg_wav`: dùng file này làm nền thay cho tiếng của video (nền đã TÁCH giọng gốc,
+    xem separate.py) — khi đó tiếng gốc trong video bị bỏ hẳn, chỉ còn nhạc / tiếng động + giọng mới.
 
     keep_original=False  -> thay hẳn tiếng gốc
     keep_original=True   -> giữ tiếng gốc ở `original_volume`, và:
@@ -1136,27 +1158,31 @@ def mux_dub(
 
     # Video không có track tiếng thì không có [0:a] mà trộn — ffmpeg sẽ báo lỗi.
     # Ca này có thật: chế độ "đã có .srt/.vtt" cho phép video im lặng.
-    if keep_original:
+    if keep_original and bg_wav is None:
         try:
             keep_original = bool(media.probe(video).get("has_audio"))
         except Exception:
             pass
+    bg_in = "[2:a]" if bg_wav is not None else "[0:a]"
+    extra_in = ["-i", str(Path(bg_wav).resolve())] if bg_wav is not None else []
 
     if keep_original and original_volume > 0.001:
         if duck and duck_db > 0.01 and has_ducking():
-            filt = _duck_filter(original_volume, duck_db, voice_dbfs, dub_volume)
+            filt = _duck_filter(original_volume, duck_db, voice_dbfs, dub_volume, bg_in)
             mode = f"né theo giọng đọc (hụp {duck_db:.0f} dB)"
         else:
             # aformat cả hai phía: dub.wav là mono 48k, phim có thể 5.1 / 44.1k
             filt = (
-                f"[0:a]volume={original_volume:.4f},{AFMT}[bg];"
+                f"{bg_in}volume={original_volume:.4f},{AFMT}[bg];"
                 f"[1:a]volume={dub_volume:.3f},{AFMT}[vo];"
                 f"[bg][vo]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix];"
                 f"[mix]{_limiter()}[aout]"
             )
             mode = "giảm đều cả video"
+        if bg_wav is not None:
+            mode = "nền đã tách giọng gốc, " + mode
         args = [
-            "-i", str(video), "-i", str(dub_wav),
+            "-i", str(video), "-i", str(dub_wav), *extra_in,
             "-filter_complex", filt,
             "-map", "0:v", "-map", "[aout]",
         ]

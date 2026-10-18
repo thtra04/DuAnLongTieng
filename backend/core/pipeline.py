@@ -7,9 +7,11 @@ import re
 import time
 from pathlib import Path
 
-from . import align, asr, budget, diarize, dubbing, gender, hardsub, media, metrics, subtitles, translate, voiceprint
+from . import (align, asr, budget, diarize, dubbing, gender, hardsub, media, metrics, separate, subtitles,
+               translate, voiceprint)
 from .jobs import Job, Step
 from .subtitles import Cue
+from ..config import JOB_DIR
 from ..store import characters
 
 SAFE_NAME = re.compile(r"[^\w\-. ]+", re.UNICODE)
@@ -55,6 +57,8 @@ def analyze_steps(cfg: dict) -> list[Step]:
         if mode == "text":
             steps.append(Step("align", "Canh văn bản của bạn theo lời nói", weight=0.8))
 
+    if cfg.get("separate_first") and (cfg.get("diarize") or cfg.get("gender_split")):
+        steps.append(Step("separate", "Tách giọng khỏi nhạc nền", weight=8.0))
     if cfg.get("diarize"):
         steps.append(Step("diarize", "Nhận diện người nói", weight=4.0))
     if cfg.get("gender_split"):
@@ -182,10 +186,15 @@ def run_analyze(job: Job, cfg: dict) -> None:
 
     # 3.5. Nhận diện người nói -> mỗi nhân vật một giọng lúc lồng tiếng
     speakers: list[dict] = []
+    # Tách nhạc nền trước (tuỳ chọn): đo cao độ và véc-tơ giọng trên phần thoại sạch, ít lẫn nhạc.
+    # Kết quả tách để lại trong thư mục dự án, bước xuất dùng lại nên không tốn thêm lần nữa.
+    clean_wav: Path | None = None
+    if cfg.get("separate_first") and (cfg.get("diarize") or cfg.get("gender_split")):
+        _, clean_wav = _run_separate(job, video_path, workdir)
     if cfg.get("diarize"):
         speakers = _run_diarize(job, cfg, video_path, workdir, cues)
     if cfg.get("gender_split"):
-        speakers = _run_gender(job, cfg, video_path, workdir, cues, speakers)
+        speakers = _run_gender(job, cfg, video_path, workdir, cues, speakers, clean_wav)
     job.check_cancel()
 
     # 3.7. Phụ đề nung sẵn trong hình -> bước 4 đề nghị che đi trước khi nung chữ mới
@@ -369,7 +378,8 @@ def _run_hardsub(job: Job, video_path: Path, cues, info: dict) -> dict:
     return found
 
 
-def _run_gender(job: Job, cfg: dict, video_path: Path, workdir: Path, cues, speakers: list[dict]) -> list[dict]:
+def _run_gender(job: Job, cfg: dict, video_path: Path, workdir: Path, cues, speakers: list[dict],
+                clean_wav: Path | None = None) -> list[dict]:
     """Đoán giọng nam / nữ theo cao độ để lúc lồng tiếng nam ra nam, nữ ra nữ.
 
     Đã có nhãn nhân vật từ bước phân đoạn người nói thì chỉ gắn thêm giới tính
@@ -378,7 +388,7 @@ def _run_gender(job: Job, cfg: dict, video_path: Path, workdir: Path, cues, spea
     """
     job.start_step("gender", "Đang nghe cao độ giọng…")
     try:
-        wav = workdir / "audio.wav"
+        wav = clean_wav if clean_wav is not None and clean_wav.exists() else workdir / "audio.wav"
         if not wav.exists():
             job.log("Tách âm thanh để nghe cao độ giọng…")
             wav = media.extract_audio(video_path, wav)
@@ -473,6 +483,8 @@ def render_steps(cfg: dict) -> list[Step]:
         wants_clone = dcfg.get("voice") == dubbing.CLONE_VOICE or any(
             v == dubbing.CLONE_VOICE for v in (dcfg.get("voices") or {}).values()
         )
+        if dcfg.get("original_mode", "voice_off") == "voice_off":
+            steps.append(Step("separate", "Tách giọng gốc khỏi nhạc nền", weight=8.0))
         if wants_clone:
             steps.append(Step("ref", "Cắt mẫu giọng gốc", weight=0.4))
         steps.append(Step("tts", "Đọc bản dịch thành tiếng", weight=12.0))
@@ -656,6 +668,17 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         # Giọng chung đặt là "nhân bản" -> nhân bản cho mọi nhân vật chưa chọn riêng
         to_clone += [s for s in present if s not in voice_map]
 
+    # Bỏ giọng gốc, giữ nhạc nền: tách trước, rồi cắt mẫu nhân bản từ phần giọng đã sạch nhạc
+    orig_mode = dcfg.get("original_mode", "voice_off")
+    bg_wav: Path | None = None
+    ref_source = Path(state["video_path"])
+    if orig_mode == "voice_off":
+        src_job = str(cfg.get("source_job") or "")
+        reuse = [JOB_DIR / src_job] if src_job else []
+        bg_wav, vocals = _run_separate(job, ref_source, workdir, reuse_from=reuse)
+        if vocals is not None:
+            ref_source = vocals
+
     if to_clone or voice == dubbing.CLONE_VOICE:
         clone_ok, clone_why = dubbing.clone_available()
         if not clone_ok:
@@ -665,7 +688,7 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         if to_clone:
             job.log(f"Cắt mẫu giọng cho {len(to_clone)} nhân vật…")
             ref_map, failed = dubbing.extract_references(
-                Path(state["video_path"]), cues, workdir,
+                ref_source, cues, workdir,
                 only=set(to_clone),
                 on_log=job.log,
                 on_progress=lambda p: job.set_step_progress("ref", p),
@@ -682,9 +705,7 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         # Không có nhãn nhân vật nào (chưa bật nhận diện) -> nhân bản một giọng chung
         if voice == dubbing.CLONE_VOICE and not present:
             ref_audio = str(
-                dubbing.extract_reference(
-                    Path(state["video_path"]), cues, workdir / "voice_ref.wav"
-                )
+                dubbing.extract_reference(ref_source, cues, workdir / "voice_ref.wav")
             )
             job.log("Đã cắt mẫu giọng gốc để nhân bản.")
 
@@ -765,6 +786,12 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
     dub_vol = float(dcfg.get("dub_volume", 1.0))
     keep = bool(dcfg.get("keep_original", True))
     duck = bool(dcfg.get("duck", True))
+    if orig_mode == "mute":
+        keep = False
+    if bg_wav is not None:
+        # Nền đã không còn giọng gốc: giữ nguyên mức, không cần né theo giọng đọc
+        keep, duck = True, False
+        orig_vol = float(dcfg.get("original_volume", 1.0)) or 1.0
     voice_dbfs, duck_db = dubbing.wav_levels(dub_wav)[0], 0.0
 
     # Giọng TTS ra nhỏ hơn thoại gốc trong phim -> tự đo rồi kéo lên cho khỏi lép
@@ -772,7 +799,7 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         dub_vol, orig_vol, duck_db = dubbing.balance(
             dub_wav, base_video, orig_vol,
             duration=duration, boost=dub_vol, duck=duck, keep_original=keep,
-            tmpdir=workdir, on_log=job.log,
+            tmpdir=workdir, on_log=job.log, bg_source=bg_wav,
         )
     elif duck:
         # Tắt tự cân nhưng vẫn né: hụp một mức vừa phải, cố định
@@ -791,6 +818,7 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         duration=duration,
         on_log=job.log,
         on_progress=lambda p: job.set_step_progress("dubmux", p),
+        bg_wav=bg_wav,
     )
     p = workdir / out_name
     files.append({"name": out_name, "size": p.stat().st_size, "kind": "mp4"})
@@ -822,6 +850,31 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         )
     except Exception as exc:  # đo đạc không được phép làm hỏng bản xuất
         job.log(f"Không ghi được bản ghi đo đạc: {exc}")
+
+
+def _run_separate(job, video_path: Path, workdir: Path,
+                  reuse_from: list[Path] | None = None) -> tuple[Path | None, Path | None]:
+    """Tách giọng gốc khỏi nhạc nền. Trả về ``(no_vocals, vocals)``; ``(None, None)`` nếu không tách được
+    — khi đó rơi về cách cũ: giữ tiếng gốc và hạ nhỏ lúc có người đọc."""
+    ok, why = separate.available()
+    if not ok:
+        job.skip_step("separate", why[:70])
+        job.log(f"⚠ Không tách được giọng gốc ({why}) — giữ tiếng gốc ở nền và hạ nhỏ lúc có người đọc.")
+        return None, None
+    job.start_step("separate", "Đang tách giọng khỏi nhạc nền…")
+    try:
+        vocals, rest = separate.split_vocals(
+            video_path, workdir, on_progress=lambda p: job.set_step_progress("separate", p), on_log=job.log,
+            reuse_from=reuse_from,
+        )
+    except Exception as exc:
+        job.skip_step("separate", str(exc)[:70])
+        job.log(f"⚠ Tách giọng gốc lỗi ({exc}) — giữ tiếng gốc ở nền và hạ nhỏ lúc có người đọc.")
+        return None, None
+    job.finish_step("separate", "giọng gốc đã bỏ, giữ nhạc và tiếng động")
+    job.log("Đã tách giọng gốc: bản lồng tiếng chỉ còn giọng mới trên nền nhạc và tiếng động.")
+    job.check_cancel()
+    return rest, vocals
 
 
 def _fill_voices_by_gender(job, cfg: dict, voice: str, voice_map: dict, present: set) -> None:
