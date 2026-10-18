@@ -190,3 +190,42 @@ def test_render_steps_co_buoc_tach_theo_che_do_tieng_goc():
     assert "separate" in [s.key for s in render_steps(cfg)]            # mặc định voice_off
     cfg["dub"]["original_mode"] = "keep"
     assert "separate" not in [s.key for s in render_steps(cfg)]
+
+
+# ------------------------------------------------------- chẻ đôi câu dài khi vẫn loạn
+
+
+def test_split_middle_che_o_dau_phay_gan_giua():
+    t = "Hôm nay trời đẹp quá đi mất, chúng ta cùng nhau đi dạo một vòng quanh hồ Tây nhé các bạn ơi."
+    a, b = dubbing._split_middle(t)
+    assert a.endswith(",") and b.startswith("chúng ta") and len(t) >= dubbing.SPLIT_MIN_CHARS
+    assert dubbing._split_middle("Câu ngắn.") is None
+    # không có dấu phẩy -> chẻ ở khoảng trắng gần giữa
+    t2 = "một hai ba bốn năm sáu bảy tám chín mười mười một mười hai mười ba mười bốn mười lăm mười sáu"
+    a2, b2 = dubbing._split_middle(t2)
+    assert " " not in (a2[-1], b2[0]) and abs(len(a2) - len(b2)) < 20
+
+
+class _LongEngine:
+    """Câu dài (>= 90 ký tự) luôn loạn; nửa câu thì đọc bình thường."""
+
+    def __init__(self):
+        self.calls = []
+
+    def infer(self, text, **kw):
+        self.calls.append(text)
+        secs = 24.0 if len(text) >= 90 else 0.6
+        return np.full(int(secs * dubbing.SR), 0.2, dtype=np.float32)
+
+
+def test_build_dub_track_che_doi_cau_dai_thay_vi_bo(tmp_path, monkeypatch):
+    eng = _LongEngine()
+    monkeypatch.setattr(dubbing, "get_engine", lambda: eng)
+    monkeypatch.setattr(dubbing, "_time_stretch", lambda a, f, d, t: a)
+    text = "Hôm nay trời đẹp quá đi mất, chúng ta cùng nhau đi dạo một vòng quanh hồ Tây nhé các bạn ơi."
+    cues = [Cue(start=0.0, end=3.0, text="x", text2=text)]
+    logs = []
+    _, stats = dubbing.build_dub_track(cues, 5.0, tmp_path, voice="A", on_log=logs.append)
+    assert stats["count"] == 1 and stats["runaway"] == 0
+    assert len(eng.calls) == dubbing.RUNAWAY_RETRIES + 1 + 2        # 3 lần cả câu + 2 nửa
+    assert any("chẻ câu" in m for m in logs)
