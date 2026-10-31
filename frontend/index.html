@@ -279,8 +279,9 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
           <input type="checkbox" id="budgetLoop">
           <span class="track"></span>
           <span class="txt"><b>Rút gọn câu vượt khung thời gian</b>
-            <small>Dự đoán trước câu nào đọc không kịp, nhắc AI viết lại ngắn hơn (tối đa 2 lượt)
-              rồi mới lồng tiếng — thay vì nén âm thanh cho gấp gáp. Chỉ có tác dụng khi bật dịch.</small></span>
+            <small>Dự đoán trước câu nào đọc không kịp rồi viết lại ngắn hơn (tối đa 2 lượt) — với
+              Claude/OpenAI là nhắc AI kèm giới hạn âm tiết, với Google/NLLB là bộ luật rút gọn tiếng Việt
+              (bỏ từ đệm, cụm dài → cụm ngắn). Chỉ có tác dụng khi bật dịch.</small></span>
         </label>
         <label class="field">
           <span>Bộ thuật ngữ <span class="muted">(tuỳ chọn — mỗi dòng một quy tắc)</span></span>
@@ -614,6 +615,14 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
                   </div>
                 </label>
               </div>
+              <label class="switch" style="margin:8px 0 4px">
+                <input type="checkbox" id="dubShorten" checked>
+                <span class="track"></span>
+                <span class="txt"><b>Rút gọn câu đọc không kịp</b>
+                  <small>Trước khi đọc, dự đoán câu nào dài hơn khung giờ rồi bỏ từ đệm, thay cụm dài
+                    bằng cụm ngắn cùng nghĩa (không cần AI, không cắt ý). Phụ đề nung dùng cùng câu đã rút gọn.
+                    Câu vẫn dài mới phải tăng tốc.</small></span>
+              </label>
 
               <p class="muted" style="margin-top:4px">
                 Giọng còn lép thì kéo <b>Âm lượng giọng đọc</b> lên — nó nhân thêm lên mức tool đã
