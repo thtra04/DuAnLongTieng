@@ -480,6 +480,8 @@ def render_steps(cfg: dict) -> list[Step]:
         steps.append(Step("soft", "Gắn phụ đề dạng track", weight=1.5))
     if out.get("dub"):
         dcfg = cfg.get("dub") or {}
+        if dcfg.get("shorten", True):
+            steps.insert(0, Step("budget", "Rút gọn câu đọc không kịp khung", weight=0.3))
         wants_clone = dcfg.get("voice") == dubbing.CLONE_VOICE or any(
             v == dubbing.CLONE_VOICE for v in (dcfg.get("voices") or {}).values()
         )
@@ -534,6 +536,9 @@ def run_render(job: Job, state: dict, cfg: dict) -> None:
     if offset:
         subtitles.shift_cues(cues, offset)
         job.log(f"Đã dịch chuyển toàn bộ phụ đề {offset:+.2f}s")
+
+    if outputs.get("dub") and (cfg.get("dub") or {}).get("shorten", True):
+        _shorten_for_dub(job, cues, tgt_lang)
 
     job.start_step("files")
 
@@ -628,6 +633,27 @@ def run_render(job: Job, state: dict, cfg: dict) -> None:
         _run_dub(job, cues, state, cfg, workdir, stem, files, duration)
 
     job.result = {"files": files}
+
+
+def _shorten_for_dub(job, cues, tgt_lang) -> None:
+    """HP-5 lúc xuất: rút gọn bằng luật những câu dự đoán đọc không kịp, TRƯỚC khi ghi phụ đề.
+
+    Chạy ở đây chứ không chỉ ở bước phân tích vì tới lúc xuất mới biết đủ: người
+    nói đã gán (đơn vị đọc chẻ theo người nói), người dùng đã sửa tay ở bước 4.
+    Đặt trước bước ghi file để phụ đề nung và tiếng đọc cùng một câu chữ.
+    """
+    from . import budget, shorten
+
+    if not any(c.text2.strip() for c in cues) or not (tgt_lang or "vi").lower().startswith("vi"):
+        return
+    job.start_step("budget")
+    stats = budget.run_loop(cues, shorten.make_tightener(on_log=job.log), on_log=job.log)
+    job.finish_step(
+        "budget",
+        f"rút gọn {stats['tightened']} câu, còn {stats['over_after']}/{stats['groups']} dự đoán vượt "
+        f"(trước: {stats['over_before']})",
+    )
+    job.check_cancel()
 
 
 def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:

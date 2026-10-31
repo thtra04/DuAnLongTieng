@@ -13,8 +13,16 @@ from backend.core.translate import make_tightener
 
 
 @pytest.mark.parametrize("engine", ["google", "mymemory", "nllb", "khong-co"])
-def test_engine_khong_dieu_khien_duoc_do_dai_thi_khong_co_bo_rut_gon(engine):
-    assert make_tightener(engine) is None
+def test_engine_khong_dieu_khien_duoc_do_dai_thi_rut_gon_bang_luat_tieng_viet(engine):
+    # Không có AI thì vẫn phải có cách siết cho cấu hình C0: bộ luật tiếng Việt
+    t = make_tightener(engine, target="vi")
+    assert callable(t)
+    assert t([{"text": "Bởi vì tôi rất là mệt nhé.", "target_syllables": 3}]) == ["Vì tôi mệt."]
+
+
+@pytest.mark.parametrize("engine", ["google", "nllb"])
+def test_ngon_ngu_dich_khac_tieng_viet_thi_khong_co_bo_rut_gon(engine):
+    assert make_tightener(engine, target="en") is None
 
 
 @pytest.mark.parametrize("engine", ["claude", "openai"])

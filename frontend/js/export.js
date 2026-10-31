@@ -51,6 +51,7 @@ $('#renderBtn').addEventListener('click', async () => {
       auto_level: $('#dubAutoLevel').checked,
       duck: $('#dubDuck').checked,
       max_speed: +$('#dubSpeed').value / 100,
+      shorten: $('#dubShorten').checked,      // HP-5 lúc xuất: rút gọn bằng luật trước khi đọc
       keep_wav: $('#outDubWav').checked,
       voices: collectSpeakerVoices(),
     },

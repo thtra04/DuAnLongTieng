@@ -83,7 +83,7 @@ function aiPayload() {
     context_note: $('#contextNote').value.trim(),
     translation_mode: $('#translationMode').value,
     glossary: $('#glossary').value.trim(),
-    // HP-5: chỉ có nghĩa với engine AI — máy chủ tự bỏ qua với Google/MyMemory
+    // HP-5: với engine AI là nhắc lại kèm giới hạn; với Google/NLLB là bộ luật rút gọn tiếng Việt
     budget_loop: !!($('#budgetLoop') && $('#budgetLoop').checked),
   };
 }

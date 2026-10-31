@@ -9,7 +9,8 @@ ngân sách thời gian của khung thoại, và câu nào vượt thì **dịch
 
 Cách "siết" tuỳ engine dịch, nên được tiêm vào dưới dạng `Tightener`:
 với Claude/OpenAI là nhắc lại kèm giới hạn âm tiết; với NLLB đẳng thời (HP-4)
-là đổi token ngân sách. Không có cách siết thì vòng lặp chỉ đo và báo.
+là đổi token ngân sách; với Google/NLLB thường (cấu hình C0, không API key) là
+bộ luật rút gọn tiếng Việt `shorten.py`. Không có cách siết thì chỉ đo và báo.
 
 Ngân sách của một nhóm cue tính **đúng như lúc lồng tiếng**
 (`dubbing.build_dub_track`): khung thoại + khoảng lặng phía sau + một chút vào
@@ -22,7 +23,7 @@ from typing import Callable
 
 from . import duration
 from .subtitles import Cue
-from .translate import _join_fragments, group_cues, split_proportional
+from .translate import _join_fragments, split_proportional
 
 # Đồng bộ với dubbing.MAX_LEAD_IN và khoảng chừa 0.02s trong build_dub_track
 LEAD_IN = 0.15
@@ -30,7 +31,7 @@ GAP_MARGIN = 0.02
 # Vượt ít hơn ngần này (tỉ lệ) thì coi như vừa — TTS có sai số, đừng dịch lại vô ích
 TOLERANCE = 0.05
 
-Tightener = Callable[[list[dict]], list[str]]
+Tightener = Callable[[list[dict]], list]  # mỗi phần tử: str (cả câu) hoặc list[str] (từng cue)
 
 
 def window_seconds(cues: list[Cue], idx: list[int]) -> float:
@@ -43,15 +44,29 @@ def window_seconds(cues: list[Cue], idx: list[int]) -> float:
     return max(0.0, end - start) + max(0.0, gap_after - GAP_MARGIN) + lead_in
 
 
-def assess(cues: list[Cue], model: duration.DurationModel | None = None) -> list[dict]:
-    """Đánh giá từng nhóm câu: ngân sách, thời lượng dự đoán, vượt bao nhiêu.
+def reading_units(cues: list[Cue]) -> list[list[int]]:
+    """Các nhóm cue mà bước lồng tiếng sẽ đọc thành **một lần TTS**.
 
-    Nhóm câu lấy theo cùng quy tắc với khâu dịch (`group_cues`) — vì bản dịch
-    được dịch theo nhóm rồi chia lại, nên siết cũng phải siết theo nhóm.
+    Trước đây vòng lặp đo theo nhóm dịch (`group_cues`), còn lồng tiếng lại đọc
+    theo `dubbing.speech_units` — nhóm dịch chẻ thêm mỗi khi đổi người nói và khi
+    quá dài. Đo thật trên video bilibili 16 phút: 70 nhóm dịch nhưng 186 đơn vị
+    đọc, nên vòng lặp thấy 8 câu vượt trong khi TTS phải tăng tốc 78 câu. Đo đúng
+    đơn vị TTS sẽ đọc thì con số hai bên mới khớp nhau.
+    """
+    from .dubbing import speech_units
+
+    return [u["cues"] for u in speech_units(cues, use_translation=True)]
+
+
+def assess(cues: list[Cue], model: duration.DurationModel | None = None) -> list[dict]:
+    """Đánh giá từng đơn vị đọc: ngân sách, thời lượng dự đoán, vượt bao nhiêu.
+
+    Đơn vị lấy đúng như lúc lồng tiếng (`reading_units`); bản dịch của cả đơn vị
+    được nối lại để dự đoán, rồi khi rút gọn thì chia lại vào từng cue.
     """
     model = model or duration.default_model()
     out: list[dict] = []
-    for g in group_cues(cues):
+    for g in reading_units(cues):
         text = _join_fragments([(cues[i].text2 or "").strip() for i in g])
         if not text.strip():
             continue
@@ -84,8 +99,21 @@ def target_syllables(item: dict, safety: float = 0.92) -> int:
     return max(1, min(item["syllables"] - 1, want))
 
 
-def _write_back(cues: list[Cue], item: dict, new_text: str) -> None:
+def _write_back(cues: list[Cue], item: dict, new_text) -> None:
+    """Ghi câu đã rút gọn vào các cue của đơn vị.
+
+    Bộ siết có thể trả **danh sách từng mảnh** (bộ luật rút gọn từng cue một, giữ
+    nguyên ranh giới cue) hoặc **một chuỗi** (AI viết lại cả câu) — chuỗi thì chia
+    lại theo tỉ lệ ký tự như lúc dịch. Chia lại theo tỉ lệ có thể đẩy một từ cuối
+    cue này sang đầu cue sau, nên bộ nào giữ được mảnh thì nên trả mảnh.
+    """
     g = item["cues"]
+    if isinstance(new_text, (list, tuple)):
+        if len(new_text) == len(g) and any((p or "").strip() for p in new_text):
+            for i, part in zip(g, new_text):
+                cues[i].text2 = (part or "").strip()
+            return
+        new_text = _join_fragments([(p or "").strip() for p in new_text])
     new_text = (new_text or "").strip()
     if not new_text:
         return
@@ -140,7 +168,14 @@ def run_loop(
     pending = before
     for n in range(1, max_passes + 1):
         stats["passes"] = n
-        requests = [{**it, "target_syllables": target_syllables(it)} for it in pending]
+        requests = [
+            {
+                **it,
+                "target_syllables": target_syllables(it),
+                "pieces": [(cues[i].text2 or "").strip() for i in it["cues"]],
+            }
+            for it in pending
+        ]
         if on_log:
             on_log(f"  Lượt {n}/{max_passes}: gửi {len(requests)} câu vượt khung đi rút gọn.")
         try:
@@ -151,6 +186,11 @@ def run_loop(
             break
         changed = 0
         for it, new_text in zip(requests, shorter):
+            if isinstance(new_text, (list, tuple)):
+                if [p.strip() for p in new_text] != it["pieces"]:
+                    _write_back(cues, it, new_text)
+                    changed += 1
+                continue
             new_text = (new_text or "").strip()
             if new_text and new_text != it["text"]:
                 _write_back(cues, it, new_text)

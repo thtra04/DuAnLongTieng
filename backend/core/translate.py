@@ -855,13 +855,23 @@ def make_tightener(
     """Hàm rút gọn có kiểm soát cho `budget.run_loop`, hoặc None nếu engine không hỗ trợ.
 
     Google/MyMemory không điều khiển được độ dài; NLLB thường cũng không — đó là
-    việc của mô hình đẳng thời (HP-4) với token ngân sách. Với Claude/OpenAI thì
-    nhắc lại kèm giới hạn âm tiết cho từng câu là cách siết có kiểm soát.
+    việc của mô hình đẳng thời (HP-4) với token ngân sách. Với các engine đó, bản
+    dịch tiếng Việt được rút gọn bằng luật (`shorten.py`); ngôn ngữ đích khác thì
+    None. Với Claude/OpenAI thì nhắc lại kèm giới hạn âm tiết là cách siết có kiểm soát.
 
     Câu nào model bỏ sót thì giữ nguyên văn cũ — vòng lặp sẽ thấy nó vẫn vượt và
     tự quyết định thử lượt nữa hay để atempo lo.
     """
     if engine not in ("claude", "openai"):
+        # Google/MyMemory/NLLB không điều khiển được độ dài, nhưng bản dịch tiếng
+        # Việt thì rút gọn bằng luật được (bỏ từ đệm, cụm dài → cụm ngắn). Đây là
+        # cách duy nhất để cấu hình C0 không có API key cũng bớt phải nén tiếng.
+        if (target or "vi").lower().startswith("vi"):
+            from . import shorten
+
+            if on_log:
+                on_log("  Engine dịch này không điều khiển được độ dài — rút gọn bằng luật tiếng Việt.")
+            return shorten.make_tightener(on_log=on_log)
         return None
     system = _TIGHTEN_PROMPT.format(tgt=name_en(target))
     label = model or ("claude-opus-5" if engine == "claude" else "gpt-4o-mini")

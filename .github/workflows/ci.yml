@@ -35,4 +35,6 @@ jobs:
         run: uv run python -m pytest tests/ --cov=backend --cov-report=term --cov-fail-under=50
 
       - name: Kiểm tra cú pháp JavaScript
+        # Vòng for là cú pháp bash; shell mặc định trên runner Windows là PowerShell
+        shell: bash
         run: for f in frontend/js/*.js frontend/config.js; do node --check "$f" || exit 1; done

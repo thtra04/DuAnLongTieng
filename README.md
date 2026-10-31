@@ -381,15 +381,22 @@ Bản dịch tiếng Việt thường dài hơn lời gốc. Cách cũ: dịch x
 quá khung thì **nén âm thanh** (`atempo`) — giọng gấp và máy móc. Đo thật trên một clip 392 s:
 48/69 câu phải nén, nén tối đa 1,48×.
 
-Cách mới, bật bằng tuỳ chọn **Rút gọn câu vượt khung thời gian** ở bước 2 (`budget_loop`):
+Cách mới, bật bằng tuỳ chọn **Rút gọn câu vượt khung thời gian** ở bước 2 (`budget_loop`) và
+**Rút gọn câu đọc không kịp** ở bước lồng tiếng (`dub.shorten`, bật sẵn):
 
 ```
-dịch  →  dự đoán số giây TTS sẽ đọc (mô hình HP-3)  →  so với khung thoại
-      →  câu nào vượt: nhắc AI viết lại ngắn hơn, kèm giới hạn âm tiết (tối đa 2 lượt)
+dịch  →  dự đoán số giây TTS sẽ đọc (mô hình HP-3) cho từng ĐƠN VỊ ĐỌC (đúng cách lồng tiếng gộp câu)
+      →  câu nào vượt: Claude / OpenAI → nhắc AI viết lại ngắn hơn, kèm giới hạn âm tiết (tối đa 2 lượt)
+                       Google / NLLB   → bộ luật rút gọn tiếng Việt (`backend/core/shorten.py`):
+                                         cụm dài → cụm ngắn cùng nghĩa, bỏ từ đệm, từ chức năng dư,
+                                         phó từ mức độ — theo 4 tầng, không bao giờ cắt ý
       →  vẫn vượt thì mới để atempo lo, và log chỉ rõ dòng nào
 ```
 
-Chỉ engine Claude / OpenAI rút gọn có kiểm soát được; Google / MyMemory thì vòng lặp chỉ đo và báo.
+Lúc xuất lồng tiếng, vòng lặp chạy lại bằng bộ luật **trước khi ghi phụ đề**, vì tới lúc đó mới
+biết đủ đơn vị đọc (đã gán người nói, đã sửa tay ở bước 4) — phụ đề nung và tiếng đọc cùng một câu
+chữ. Đo trên bản dịch Google của video bilibili 16 phút (186 đơn vị đọc): 49 câu dự đoán vượt khung,
+tổng vượt 41,7 s → sau rút gọn bằng luật còn 38 câu, 30,0 s; bản dịch bớt 2,3 % âm tiết.
 
 Phần huấn luyện nằm trong notebook, xem [training/README.md](training/README.md):
 
