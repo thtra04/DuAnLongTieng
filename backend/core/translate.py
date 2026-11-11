@@ -27,9 +27,10 @@ def _translation_cache_file():
     return _CACHE_FILE
 
 
-def _cache_key(texts, source, target, engine, model, note, mode, glossary, base_url="") -> str:
+def _cache_key(texts, source, target, engine, model, note, mode, glossary, base_url="", extra=None) -> str:
     payload = json.dumps(
         {
+            **({"extra": extra} if extra else {}),
             "texts": texts,
             "source": source,
             "target": target,
@@ -332,8 +333,16 @@ def translate_cues(
     glossary: str = "",
     on_progress: Callable[[float], None] | None = None,
     on_log: Callable[[str], None] | None = None,
+    cast: list[dict] | None = None,
+    auto_context: bool = True,
+    use_memory: bool = True,
 ) -> list[Cue]:
     """Dịch nội dung `text` của từng cue, ghi kết quả vào `text2`.
+
+    `cast` là bảng vai của bước tách giọng (`id`, `name`, `gender`, `age`): engine AI
+    được biết ai đang nói từng câu để chọn xưng hô. `auto_context` cho engine AI đọc
+    lướt kịch bản một lượt trước khi dịch. `use_memory` dùng lại những câu người dùng
+    đã sửa tay ở các dự án trước (bộ nhớ dịch).
 
     Đơn vị gửi đi dịch là **câu** chứ không phải cue: các cue thuộc cùng một câu
     được ghép lại, dịch một lần rồi chia ngược về từng cue. Nhờ vậy bản dịch
@@ -351,13 +360,22 @@ def translate_cues(
     if on_log and len(groups) < len(cues):
         on_log(f"Gom {len(cues)} dòng thành {len(groups)} câu để dịch trọn ý.")
 
+    is_ai = engine in ("claude", "openai")
+    speakers = _speaker_labels(cues, groups, cast) if is_ai else None
+    examples: list[tuple[str, str]] = []
+    remembered: dict[int, str] = {}
+    if use_memory:
+        remembered, examples = _recall(texts, source, target, on_log)
+
     out = None
     cache_key = None
-    if engine in ("claude", "openai"):
+    if is_ai:
         cache_model = model or ("claude-opus-5" if engine == "claude" else "gpt-4o-mini")
+        extra = {"ctx": 2, "speakers": speakers, "brief": bool(auto_context), "examples": examples}
         cache_key = _cache_key(
             texts, source, target, engine, cache_model,
             context_note, translation_mode, glossary, base_url,
+            extra=extra if (speakers or auto_context or examples) else {"ctx": 2},
         )
         out = _read_cached(cache_key)
         if out is not None:
@@ -366,21 +384,32 @@ def translate_cues(
             if on_progress:
                 on_progress(1.0)
 
-    if engine in ("google", "mymemory"):
-        out = _translate_deep(texts, source, target, engine, on_progress, on_log)
-    elif engine == "nllb":
-        out = _translate_nllb(texts, source, target, on_progress, on_log)
-    elif engine in ("claude", "openai") and out is None:
-        if engine == "claude":
-            out = _translate_claude(texts, source, target, api_key, model, context_note, translation_mode, glossary, on_progress, on_log)
+    if engine in ("google", "mymemory", "nllb"):
+        # Engine miễn phí không nhận chỉ dẫn, nên bộ thuật ngữ được cài thẳng vào câu
+        # gốc trước khi gửi đi: tên riêng và xưng hô ra đúng như người dùng đã ghi.
+        pairs = parse_glossary(glossary)
+        sent, used = apply_glossary(texts, pairs)
+        if used and on_log:
+            on_log(f"Áp bộ thuật ngữ vào {used} câu trước khi dịch ({len(pairs)} mục).")
+        if engine == "nllb":
+            out = _translate_nllb(sent, source, target, on_progress, on_log)
         else:
-            out = _translate_openai(texts, source, target, api_key, model, base_url, context_note, translation_mode, glossary, on_progress, on_log)
-    else:
-        if engine not in ("claude", "openai"):
-            raise TranslateError(f"Engine không hỗ trợ: {engine}")
+            out = _translate_deep(sent, source, target, engine, on_progress, on_log)
+    elif is_ai and out is None:
+        out = _translate_ai(
+            engine, texts, source, target, api_key, model, base_url, context_note,
+            translation_mode, glossary, on_progress, on_log,
+            speakers=speakers, cast=cast, auto_context=auto_context, examples=examples,
+        )
+    elif not is_ai:
+        raise TranslateError(f"Engine không hỗ trợ: {engine}")
 
     if cache_key is not None and out is not None:
         _write_cached(cache_key, out)
+
+    # Câu người dùng từng sửa tay thắng mọi engine: họ đã quyết định câu đó rồi.
+    for i, tr in remembered.items():
+        out[i] = tr
 
     _warn_long_translations(texts, out, translation_mode, on_log)
 
@@ -894,21 +923,212 @@ def make_tightener(
 
 # ------------------------------------------------------------------ Claude
 
-_SYS_PROMPT = """Bạn là chuyên gia dịch phụ đề phim/video.
+_SYS_PROMPT = """Bạn là biên dịch viên phụ đề và lời thoại lồng tiếng cho phim/video.
 
-Nhiệm vụ: dịch từng dòng phụ đề từ {src} sang {tgt}.
+Nhiệm vụ: dịch từng dòng thoại từ {src} sang {tgt}.
 
-Quy tắc bắt buộc:
-- Trả về ĐÚNG số dòng như đầu vào, mỗi dòng giữ nguyên số thứ tự dạng `<n>|nội dung`.
+Định dạng bắt buộc:
+- Chỉ dịch các dòng trong phần [CẦN DỊCH]. Trả về ĐÚNG số dòng đó, mỗi dòng dạng `<n>|bản dịch`.
 - Không gộp dòng, không tách dòng, không bỏ dòng nào. Dòng nào không cần dịch thì chép lại.
-- Dịch tự nhiên như người bản xứ nói, không dịch word-by-word.
+- Phần [ĐÃ DỊCH TRƯỚC ĐÓ] và [CÂU KẾ TIẾP] chỉ để hiểu mạch truyện: không xuất lại, không dịch lại.
+- Nếu đầu dòng có tên người nói trong ngoặc tròn, ví dụ `(Nữ 1)`, thì đó là chú thích: KHÔNG chép vào bản dịch.
+- Không thêm giải thích, không thêm ngoặc chú thích, không xuống dòng bên trong một dòng, không lời dẫn.
+
+Chất lượng dịch:
+- Dịch theo NGỮ CẢNH của cả đoạn hội thoại: ai nói với ai, đang đáp lại câu nào, thái độ ra sao.
+  Câu rút gọn, đại từ, câu trả lời cộc lốc phải hiểu theo câu trước đó chứ không dịch rời từng dòng.
+- Dịch tự nhiên như người bản xứ nói, không dịch từng chữ. Thành ngữ, tiếng lóng dịch theo nghĩa.
 - Chế độ dịch hiện tại: {mode}.
 - Giữ số từ gần bản gốc nhất có thể, thường trong khoảng 75–125% số từ gốc.
     Không thêm ý giải thích. Nếu bản dịch dài, hãy chủ động rút gọn mà vẫn giữ ý chính.
 - Với chế độ tối ưu lồng tiếng, ưu tiên câu ngắn, dễ nói và vừa thời lượng cue hơn dịch sát từng chữ.
-- Giữ nguyên tên riêng, thương hiệu, số liệu, đơn vị.
-- Không thêm giải thích, không thêm dấu ngoặc chú thích, không xuống dòng bên trong một dòng.
-- Chỉ xuất các dòng kết quả, không thêm lời dẫn nào khác.{note}{glossary}"""
+- Giữ nguyên thương hiệu, số liệu, đơn vị. {names}
+- Một tên riêng, một thuật ngữ, một cặp xưng hô đã dùng ở phần trước thì dùng lại y như vậy.{pronouns}{note}{cast}{brief}{glossary}{examples}"""
+
+_PRONOUN_RULE = """
+- Xưng hô tiếng Việt: chọn theo giới, tuổi, vai vế và quan hệ giữa người nói với người nghe
+  (anh/chị/em, cô/chú/bác, con/cháu, ông/bà, mày/tao; phim cổ trang: ta/ngươi, chàng/nàng/thiếp, huynh/đệ/muội…).
+  KHÔNG dùng "bạn" trừ khi hai người thật sự là bạn bè hoặc đang nói với khán giả.
+  Mỗi cặp nhân vật giữ MỘT cặp xưng hô suốt phim, chỉ đổi khi quan hệ đổi."""
+
+_BRIEF_PROMPT = """Bạn đọc lướt kịch bản phụ đề ({src}) của một video để chuẩn bị cho người dịch sang {tgt}.
+Viết một bản ghi chú NGẮN (tối đa 220 từ, viết bằng tiếng Việt), gồm đúng các mục:
+1. Thể loại, bối cảnh, giọng văn nên dùng (1–2 câu).
+2. Tóm tắt nội dung (2–3 câu).
+3. Nhân vật: tên (kèm cách viết ở ngôn ngữ đích), giới, vai vế, quan hệ với nhau.
+4. Xưng hô đề nghị cho từng cặp nhân vật chính (ai gọi ai là gì, tự xưng là gì).
+5. Tên riêng, địa danh, thuật ngữ lặp lại: `nguyên văn = cách dịch`.
+Chỉ ghi điều suy ra được từ kịch bản; không chắc thì bỏ qua, không bịa. Không lời dẫn."""
+
+# Số câu đã dịch / sắp tới đưa kèm mỗi lô để model nắm mạch hội thoại
+CONTEXT_BEFORE = 8
+CONTEXT_AFTER = 4
+# Kịch bản ngắn hơn ngần này câu thì một lô đã thấy trọn, khỏi đọc lướt trước
+BRIEF_MIN_LINES = 12
+BRIEF_MAX_CHARS = 9000
+
+
+def _names_rule(source: str | None, target: str) -> str:
+    src = (source or "").lower()
+    if (target or "").lower().startswith("vi") and src.startswith(("zh", "yue")):
+        return "Tên người, địa danh tiếng Trung chuyển sang âm Hán-Việt (không để pinyin)."
+    return "Giữ nguyên tên riêng theo cách viết quen thuộc ở ngôn ngữ đích."
+
+
+_GLOSS_SEP = re.compile(r"\s*(?:=>|->|→|=|：|:)\s*")
+
+
+def parse_glossary(text: str) -> list[tuple[str, str]]:
+    """Đọc bộ thuật ngữ `nguồn = đích` (nhận cả `->`, `:`; `a / b = c` là hai cách viết nguồn).
+
+    Trả về mục dài trước, để "朱大生" được thay trước "朱"."""
+    pairs: list[tuple[str, str]] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = _GLOSS_SEP.split(line, maxsplit=1)
+        if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+            continue
+        for src in re.split(r"\s*/\s*", parts[0].strip()):
+            if src:
+                pairs.append((src, parts[1].strip()))
+    pairs.sort(key=lambda p: -len(p[0]))
+    return pairs
+
+
+def apply_glossary(texts: list[str], pairs: list[tuple[str, str]]) -> tuple[list[str], int]:
+    """Thay thuật ngữ nguồn bằng cách dịch đã định ngay trong câu gốc. Trả về (câu, số câu có thay).
+
+    Google/NLLB không nhận chỉ dẫn, nhưng chữ Latinh nằm sẵn trong câu thì chúng để nguyên
+    (đo thật zh→vi: "朱大生" ra "Zhu Dasheng", thay sẵn thì ra "Chu Đại Sinh"; "奴家" ra
+    "gia đình nô lệ", thay sẵn thì hết). Từ chữ Latinh chỉ thay khi đứng trọn từ.
+    """
+    if not pairs:
+        return list(texts), 0
+    out, used = [], 0
+    for text in texts:
+        new = text
+        for src, tgt in pairs:
+            if _CJK.search(src):
+                if src in new:
+                    new = new.replace(src, f" {tgt} ")
+            else:
+                new = re.sub(rf"(?<!\w){re.escape(src)}(?!\w)", lambda _m, t=tgt: t, new, flags=re.IGNORECASE)
+        if new != text:
+            used += 1
+            new = re.sub(r"[ \t]{2,}", " ", new).strip()
+        out.append(new)
+    return out, used
+
+
+def _cast_label(person: dict) -> str:
+    return (person.get("name") or person.get("id") or "").strip()
+
+
+def _speaker_labels(cues: list[Cue], groups: list[list[int]], cast: list[dict] | None) -> list[str] | None:
+    """Tên người nói của từng câu gửi đi dịch, hoặc None nếu phụ đề chưa gán vai."""
+    names = {str(p.get("id") or ""): _cast_label(p) for p in (cast or [])}
+    labels = []
+    for g in groups:
+        sid = (cues[g[0]].speaker or "").strip()
+        labels.append(names.get(sid) or sid)
+    return labels if any(labels) else None
+
+
+def _cast_note(cast: list[dict] | None, speakers: list[str] | None) -> str:
+    if not cast or not speakers:
+        return ""
+    gender = {"M": "nam", "F": "nữ"}
+    age = {"C": "trẻ em", "A": "người lớn", "E": "cao tuổi"}
+    present = set(speakers)
+    rows = []
+    for p in cast:
+        label = _cast_label(p)
+        if not label or label not in present:
+            continue
+        facts = [x for x in (gender.get(p.get("gender") or ""), age.get(p.get("age") or "")) if x]
+        rows.append(f"  {label}: {', '.join(facts) if facts else 'chưa rõ'}")
+    if not rows:
+        return ""
+    return ("\n- Người nói (máy nghe giọng mà đoán, có thể nhầm — lời thoại mâu thuẫn thì tin lời thoại):\n"
+            + "\n".join(rows))
+
+
+def _recall(texts: list[str], source, target, on_log=None) -> tuple[dict[int, str], list[tuple[str, str]]]:
+    """Tra bộ nhớ dịch: (câu trùng khớp -> bản đã duyệt, vài cặp gần giống làm mẫu cho AI)."""
+    try:
+        from ..store import memory
+
+        exact, examples = memory.lookup(texts, source, target)
+    except Exception:  # bộ nhớ dịch hỏng không được làm hỏng việc dịch
+        return {}, []
+    if exact and on_log:
+        on_log(f"Bộ nhớ dịch: {len(exact)} câu dùng lại bản bạn đã sửa tay trước đây.")
+    return exact, examples
+
+
+def _story_brief(engine, texts, source, target, api_key, model, base_url, on_log=None) -> str:
+    """Cho model đọc lướt cả kịch bản một lượt, trả về ghi chú nhân vật / xưng hô / tên riêng.
+
+    Dịch theo lô 40 câu thì lô sau không biết lô trước gọi nhân vật là gì; ghi chú này
+    đi kèm MỌI lô nên tên và xưng hô thống nhất từ đầu tới cuối. Lỗi thì bỏ qua, dịch tiếp.
+    """
+    lines = [t.strip() for t in texts if t.strip()]
+    if len(lines) < BRIEF_MIN_LINES:
+        return ""
+    script = "\n".join(lines)
+    if len(script) > BRIEF_MAX_CHARS:
+        # Kịch bản dài: lấy đầu, giữa, cuối — nhân vật và quan hệ lộ ra ở cả ba chỗ
+        third = BRIEF_MAX_CHARS // 3
+        mid = len(script) // 2
+        script = "\n[…]\n".join([script[:third], script[mid - third // 2: mid + third // 2], script[-third:]])
+    system = _BRIEF_PROMPT.format(src=name_en(source), tgt=name_en(target))
+    if on_log:
+        on_log("Đọc lướt kịch bản để nắm nhân vật, xưng hô và tên riêng trước khi dịch…")
+    try:
+        brief = (_chat(engine, system, script, api_key, model, base_url) or "").strip()
+    except Exception as exc:
+        if on_log:
+            on_log(f"  Không đọc lướt được ({_short_error(exc)}) — dịch tiếp không có ghi chú tự động.")
+        return ""
+    # Một dòng "OK" hay câu từ chối không phải ghi chú
+    if len(brief) < 40:
+        return ""
+    return brief[:2400]
+
+
+def _batch_payload(texts, results, batch, speakers) -> str:
+    """Nội dung gửi cho một lô: vài câu đã dịch ngay trước, các câu cần dịch, vài câu kế tiếp."""
+    first, last = batch[0], batch[-1]
+
+    def said(i: int) -> str:
+        who = (speakers[i] if speakers else "") or ""
+        text = texts[i] if texts[i].strip() else "…"
+        # `|` trong lời thoại sẽ làm lệch định dạng `<n>|…`
+        text = text.replace("|", "/")
+        return f"({who}) {text}" if who else text
+
+    parts = []
+    before = [i for i in range(max(0, first - CONTEXT_BEFORE), first) if texts[i].strip() and results[i]]
+    if before:
+        parts.append("[ĐÃ DỊCH TRƯỚC ĐÓ]\n" + "\n".join(
+            f"- {said(i)} → {results[i].replace('|', '/')}" for i in before))
+    body = "\n".join(f"{i + 1}|{said(i)}" for i in batch)
+    after = [i for i in range(last + 1, min(len(texts), last + 1 + CONTEXT_AFTER)) if texts[i].strip()]
+    if not before and not after:
+        return body
+    parts.append("[CẦN DỊCH]\n" + body)
+    if after:
+        parts.append("[CÂU KẾ TIẾP]\n" + "\n".join(f"- {said(i)}" for i in after))
+    return "\n\n".join(parts)
+
+
+def _strip_speaker_tag(text: str, who: str) -> str:
+    """Model đôi khi chép luôn `(Nữ 1)` vào bản dịch — bỏ đi, nếu không TTS sẽ đọc cả tên vai."""
+    if who and text.startswith(f"({who})"):
+        return text[len(who) + 2:].lstrip(" :-")
+    return text
 
 
 def _numbered(texts: list[str], offset: int) -> str:
@@ -1011,25 +1231,33 @@ def _warn_long_translations(
         )
 
 
-def _translate_claude(texts, source, target, api_key, model, note, mode, glossary, on_progress=None, on_log=None):
-    client = _anthropic_client(api_key)
-    model = model or "claude-opus-5"
+def _translate_ai(engine, texts, source, target, api_key, model, base_url, note, mode, glossary,
+                  on_progress=None, on_log=None, speakers=None, cast=None, auto_context=True, examples=None):
+    """Dịch bằng Claude hoặc endpoint kiểu OpenAI, theo lô, mỗi lô mang theo ngữ cảnh quanh nó."""
+    label = "Claude" if engine == "claude" else "OpenAI"
+    model = model or ("claude-opus-5" if engine == "claude" else "gpt-4o-mini")
+    if on_log:
+        on_log(f"Dịch bằng {label} ({model})")
+
+    brief = _story_brief(engine, texts, source, target, api_key, model, base_url, on_log) if auto_context else ""
+    is_vi = (target or "").lower().startswith("vi")
     system = _SYS_PROMPT.format(
         src=name_en(source), tgt=name_en(target),
         mode=_mode_label(mode),
-        note=f"\n- Bối cảnh video: {note.strip()}" if note.strip() else "",
+        names=_names_rule(source, target),
+        pronouns=_PRONOUN_RULE if is_vi else "",
+        note=f"\n- Bối cảnh video (người dùng ghi): {note.strip()}" if note.strip() else "",
+        cast=_cast_note(cast, speakers),
+        brief=f"\n- Ghi chú đọc lướt kịch bản (tự động; bối cảnh người dùng ghi thì ưu tiên hơn):\n{brief}" if brief else "",
         glossary=f"\n- Bộ thuật ngữ bắt buộc áp dụng nhất quán:\n{glossary.strip()}" if glossary.strip() else "",
+        examples=("\n- Những câu người dùng đã duyệt ở dự án trước — theo đúng cách dịch và xưng hô này:\n"
+                  + "\n".join(f"  {a} → {b}" for a, b in examples)) if examples else "",
     )
-    if on_log:
-        on_log(f"Dịch bằng Claude ({model})")
 
-    results = [""] * len(texts)
-    missing = 0
-    batches = list(_ai_batches(texts))
-    for bi, batch in enumerate(batches):
-        payload = _numbered([texts[i] for i in batch], batch[0])
+    if engine == "claude":
+        client = _anthropic_client(api_key)
 
-        def call(payload=payload):
+        def ask(payload: str) -> str:
             resp = client.messages.create(
                 model=model,
                 max_tokens=8000,
@@ -1039,51 +1267,36 @@ def _translate_claude(texts, source, target, api_key, model, note, mode, glossar
             if resp.stop_reason == "refusal":
                 raise TranslateError("Claude từ chối xử lý nội dung này.")
             return "".join(b.text for b in resp.content if b.type == "text")
+    else:
+        client = _openai_client(api_key, base_url)
 
-        raw = _call_logged(call, "Claude", model, bi, len(batches), len(batch), on_log)
-        missing += _apply_parsed(results, batch, texts, _parse_numbered(raw, batch[0], len(batch)))
-        if on_progress:
-            on_progress((bi + 1) / len(batches))
-
-    _warn_missing(missing, len(texts), "Claude", on_log)
-    return results
-
-
-# ------------------------------------------------------------------ OpenAI
-
-
-def _translate_openai(texts, source, target, api_key, model, base_url, note, mode, glossary, on_progress=None, on_log=None):
-    client = _openai_client(api_key, base_url)
-    model = model or "gpt-4o-mini"
-    system = _SYS_PROMPT.format(
-        src=name_en(source), tgt=name_en(target),
-        mode=_mode_label(mode),
-        note=f"\n- Bối cảnh video: {note.strip()}" if note.strip() else "",
-        glossary=f"\n- Bộ thuật ngữ bắt buộc áp dụng nhất quán:\n{glossary.strip()}" if glossary.strip() else "",
-    )
-    if on_log:
-        on_log(f"Dịch bằng OpenAI ({model})")
+        def ask(payload: str) -> str:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": payload}],
+            )
+            return resp.choices[0].message.content or ""
 
     results = [""] * len(texts)
     missing = 0
     batches = list(_ai_batches(texts))
     for bi, batch in enumerate(batches):
-        payload = _numbered([texts[i] for i in batch], batch[0])
-
-        def call(payload=payload):
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": payload},
-                ],
-            )
-            return resp.choices[0].message.content or ""
-
-        raw = _call_logged(call, "OpenAI", model, bi, len(batches), len(batch), on_log)
-        missing += _apply_parsed(results, batch, texts, _parse_numbered(raw, batch[0], len(batch)))
+        payload = _batch_payload(texts, results, batch, speakers)
+        raw = _call_logged(lambda payload=payload: ask(payload), label, model, bi, len(batches), len(batch), on_log)
+        parsed = _parse_numbered(raw, batch[0], len(batch))
+        if speakers:
+            parsed = [_strip_speaker_tag(p, speakers[i]) for p, i in zip(parsed, batch)]
+        missing += _apply_parsed(results, batch, texts, parsed)
         if on_progress:
             on_progress((bi + 1) / len(batches))
 
-    _warn_missing(missing, len(texts), "OpenAI", on_log)
+    _warn_missing(missing, len(texts), label, on_log)
     return results
+
+
+def _translate_claude(texts, source, target, api_key, model, note, mode, glossary, on_progress=None, on_log=None):
+    return _translate_ai("claude", texts, source, target, api_key, model, "", note, mode, glossary, on_progress, on_log)
+
+
+def _translate_openai(texts, source, target, api_key, model, base_url, note, mode, glossary, on_progress=None, on_log=None):
+    return _translate_ai("openai", texts, source, target, api_key, model, base_url, note, mode, glossary, on_progress, on_log)

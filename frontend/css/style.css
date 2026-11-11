@@ -478,8 +478,67 @@
   --well: rgba(87,70,35,.07);
 }
 
+/* Rạp chiếu — đen phòng chiếu, ánh hổ phách của đèn máy chiếu, nhung đỏ */
+:root[data-theme="rap"] {
+  --bg: #060607;
+  --bg-2: #111015;
+  --card: rgba(19,18,22,.8);
+  --card-solid: #141317;
+  --stroke: rgba(255,214,150,.10);
+  --stroke-2: rgba(255,214,150,.22);
+  --text: #f3ede2;
+  --muted: #ada596;
+  --dim: #968e80;
+  --brand: #f0a53a;
+  --brand-2: #ffd27a;
+  --accent: #e5484d;
+  --accent-2: #c2333a;
+  --warn: #ffb648;
+  --danger: #ff6b81;
+  --ok: #4ade80;
+  --shadow: 0 22px 60px rgba(0,0,0,.7);
+  --brand-rgb: 240,165,58;
+  --brand-2-rgb: 255,210,122;
+  --accent-rgb: 229,72,77;
+  --ok-rgb: 74,222,128;
+  --warn-rgb: 255,182,72;
+  --danger-rgb: 255,107,129;
+  --ink-rgb: 255,214,150;
+  --backdrop-rgb: 0,0,0;
+  --surface-0: rgba(255,228,180,.025);
+  --surface-1: rgba(255,228,180,.05);
+  --surface-2: rgba(255,228,180,.075);
+  --field: rgba(0,0,0,.5);
+  --field-focus: rgba(0,0,0,.7);
+  --on-brand: #1f1403;
+  --brand-text: #ffd58a;
+  --ok-text: #b6f3d2;
+  --warn-text: #ffe0ad;
+  --danger-text: #ffc2cb;
+  --accent-text: #ffc9c4;
+  --toast-err: #2a1414;
+  --toast-ok: #10261c;
+  --toast-warn: #2a2213;
+  --blob-1: #6a4410;
+  --blob-2: #4a1016;
+  --blob-3: #1a2440;
+  --blob-opacity: .42;
+  --spk1: #60a5fa;
+  --spk2: #34d399;
+  --spk3: #fbbf24;
+  --spk4: #c084fc;
+  --spk5: #f87171;
+  --spk6: #4ade80;
+  --hi: rgba(255,226,170,.11);
+  --shade-rgb: 0,0,0;
+  --shade-k: 3;
+  --raise-1: rgba(255,228,180,.095);
+  --raise-2: rgba(255,228,180,.025);
+  --well: rgba(0,0,0,.46);
+}
+
 /* Bảng tối: để ô chọn, thanh cuộn, hộp màu gốc của trình duyệt cũng vẽ kiểu tối */
-:root[data-theme="toi"], :root[data-theme="than"], :root[data-theme="vang"] { color-scheme: dark; }
+:root[data-theme="toi"], :root[data-theme="than"], :root[data-theme="vang"], :root[data-theme="rap"] { color-scheme: dark; }
 
 /* ---------------------- vật liệu dùng chung cho mọi chủ đề ----------------------
    Giao diện dựng theo ba tầng khối:
@@ -1390,6 +1449,135 @@ button.spk:hover { background: var(--surface-2); transform: translateY(-1px); }
 }
 .swatch.custom input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 @media (max-width: 780px) { .theme-pick .lbl { display: none; } }
+
+/* =========================== lớp điện ảnh ===========================
+   Phủ lên mọi bảng màu: chữ tiêu đề kiểu poster, thanh bước là một dải phim
+   có lỗ răng, khung xem là màn ảnh có ánh đèn chiếu, dòng phụ đề là một dòng
+   kịch bản có timecode. Chỉ dùng font hệ thống (Bahnschrift có sẵn trên
+   Windows 10+, thiếu thì rơi về Segoe UI) — app chạy offline, không tải font. */
+:root {
+  --font-poster: "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-tc: "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+  --hole: rgba(var(--ink-rgb), .3);
+}
+
+/* Hạt phim phủ rất nhẹ lên toàn trang + tối dần về bốn góc như ống kính */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 70; pointer-events: none; opacity: .05; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.15' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(115% 85% at 50% 38%, transparent 52%, rgba(var(--shade-rgb), calc(.16 * var(--shade-k))) 100%);
+}
+/* Bảng Rạp chiếu: chùm sáng máy chiếu rọi từ trên xuống thay cho mảng màu trôi */
+:root[data-theme="rap"] .aurora {
+  background:
+    conic-gradient(from 180deg at 50% -12%, transparent 152deg, rgba(255,214,150,.085) 172deg, rgba(255,236,200,.13) 180deg, rgba(255,214,150,.085) 188deg, transparent 208deg),
+    radial-gradient(120% 80% at 50% -20%, #17140f 0%, var(--bg) 60%);
+}
+:root[data-theme="rap"] .aurora span { filter: blur(120px); }
+
+/* Tiêu đề kiểu poster: chữ hẹp, in hoa, giãn chữ */
+.logo h1 {
+  font-family: var(--font-poster); font-stretch: 82%; font-weight: 700;
+  font-size: 23px; letter-spacing: 3.5px; text-transform: uppercase;
+}
+.logo p { letter-spacing: 1.6px; text-transform: uppercase; font-size: 12px; }
+.card h2 {
+  font-family: var(--font-poster); font-stretch: 86%; font-weight: 650;
+  font-size: 18.5px; letter-spacing: 1.4px; text-transform: uppercase;
+}
+.card h2 .badge { letter-spacing: 0; text-transform: none; }
+:root[data-theme="rap"] { --radius: 14px; --radius-sm: 10px; }
+:root[data-theme="rap"] .card, :root[data-theme="rap"] header.top { backdrop-filter: blur(22px) saturate(1.1); }
+
+/* Thanh bước = dải phim: hai hàng lỗ răng, mỗi bước là một khung hình */
+.stepper {
+  position: relative; padding: 19px 8px; gap: 6px;
+  background: linear-gradient(180deg, rgba(var(--shade-rgb), calc(.10 * var(--shade-k))), rgba(var(--shade-rgb), calc(.04 * var(--shade-k)))), var(--well);
+}
+.stepper::before, .stepper::after {
+  content: ""; position: absolute; left: 14px; right: 14px; height: 7px; pointer-events: none; border-radius: 2px;
+  background: repeating-linear-gradient(90deg, var(--hole) 0 11px, transparent 11px 25px);
+}
+.stepper::before { top: 6px; }
+.stepper::after { bottom: 6px; }
+.step-btn { border-radius: 6px; border-color: var(--stroke); background: var(--surface-0); }
+.step-btn .num {
+  border-radius: 6px; font-family: var(--font-tc); font-size: 15px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.step-btn .num::before { content: "0"; opacity: .55; }
+.step-btn .num { display: flex; align-items: center; justify-content: center; }
+.step-btn .lbl { font-family: var(--font-poster); font-stretch: 88%; letter-spacing: .9px; text-transform: uppercase; font-size: 14.5px; }
+.step-btn .sub { font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; font-stretch: normal; letter-spacing: 0; text-transform: none; }
+.step-btn.active { box-shadow: var(--bevel), var(--elev-2), 0 0 26px -6px rgba(var(--brand-rgb), .55); }
+
+/* Chuyển cảnh giữa các bước: rõ nét dần như lấy nét ống kính */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(14px) scale(.992); filter: blur(7px); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+.panel.active > .card { animation: slideIn var(--dur-3) var(--ease) both; }
+.panel.active > .card:nth-child(2) { animation-delay: 60ms; }
+.panel.active > .card:nth-child(3) { animation-delay: 120ms; }
+.panel.active > .card:nth-child(n+4) { animation-delay: 170ms; }
+
+/* Màn ảnh xem trước: vỏ đen, bảng ghi cảnh phía trên, ánh đèn chiếu hắt quanh màn */
+.player-wrap > .card:first-child {
+  background: linear-gradient(180deg, #0c0b0a, #050505); border-color: rgba(255,214,150,.2);
+  box-shadow: var(--elev-3), 0 34px 80px -34px rgba(var(--brand-rgb), .5);
+}
+.player-wrap > .card:first-child .muted, .player-wrap > .card:first-child .btn.ghost { color: #cfc6b4; }
+.player-wrap > .card:first-child .btn.ghost { border-color: rgba(255,214,150,.24); }
+.player-wrap > .card:first-child .btn.ghost:hover:not(:disabled) { color: #fff; }
+.slate {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px; min-height: 26px;
+  font-family: var(--font-tc); font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: #cfc6b4;
+}
+.slate .stripes {
+  width: 46px; height: 12px; flex: none; border-radius: 2px;
+  background: repeating-linear-gradient(115deg, #efe6d2 0 7px, #141210 7px 14px);
+}
+.slate b { color: #ffd58a; font-weight: 700; }
+.slate .rec { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.slate .rec::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #e5484d; box-shadow: 0 0 8px #e5484d; animation: recBlink 1.6s steps(2, jump-none) infinite; }
+@keyframes recBlink { 50% { opacity: .25; } }
+.player-box {
+  border-radius: 4px; border-color: rgba(255,255,255,.12);
+  box-shadow: 0 0 0 1px #000, 0 0 46px -8px rgba(var(--brand-rgb), .38), var(--elev-2);
+}
+
+/* Dòng phụ đề = một dòng kịch bản: số cảnh, timecode đơn cách trên thẻ nhỏ */
+.cue { border-radius: 6px; border-left-width: 4px; }
+.cue .idx {
+  font-family: var(--font-tc); font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--muted);
+  min-width: 30px; padding: 2px 5px; border-radius: 4px; text-align: center; background: var(--well); border: 1px solid var(--stroke);
+}
+.cue .tc {
+  font-family: var(--font-tc); letter-spacing: .4px; padding: 2px 8px; border-radius: 4px;
+  background: var(--well); border: 1px solid var(--stroke); box-shadow: var(--carve);
+}
+.cue.active .tc { border-color: rgba(var(--brand-rgb), .55); }
+.cue textarea { border-radius: 5px; }
+
+/* Vòng tiến trình = đồng hồ đếm ngược đầu cuộn phim: vạch chữ thập trong lòng đĩa */
+.ring::after {
+  background:
+    linear-gradient(rgba(var(--ink-rgb), .2), rgba(var(--ink-rgb), .2)) center / 100% 1px no-repeat,
+    linear-gradient(rgba(var(--ink-rgb), .2), rgba(var(--ink-rgb), .2)) center / 1px 100% no-repeat,
+    var(--well);
+}
+.ring .val { font-family: var(--font-poster); font-stretch: 85%; letter-spacing: 1px; }
+.logbox { border-radius: 6px; }
+
+@media (max-width: 780px) {
+  .logo h1 { font-size: 19px; letter-spacing: 2.4px; }
+  .logo p { letter-spacing: .6px; text-transform: none; }
+  .stepper { padding: 17px 6px; }
+  .slate .hide-narrow { display: none; }
+}
 
 /* Người bật "giảm chuyển động" trong hệ điều hành: bỏ nền trôi và các hiệu ứng lặp */
 @media (prefers-reduced-motion: reduce) {

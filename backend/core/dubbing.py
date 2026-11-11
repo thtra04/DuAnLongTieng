@@ -552,6 +552,185 @@ def extract_reference(
     return out_path
 
 
+# Mẫu nhân bản ghép từ nhiều câu của CÙNG một nhân vật
+REF_TARGET = 8.0      # gom tới ngần này giây tiếng nói thì dừng
+REF_MAX = 10.0        # mẫu dài hơn không giống hơn mà TTS chậm đi — cắt bớt khúc cuối
+REF_OUTLIER_DROP = 0.2  # khúc kém "giọng chung" của vai hơn trung vị ngần này thì coi là lạc giọng
+REF_MIN_TOTAL = 3.0   # ít hơn thế thì mẫu ghép không đáng tin, quay về cách cắt một đoạn
+REF_MIN_PIECE = 0.8   # câu ngắn hơn chỉ là thán từ, không mang đủ màu giọng
+REF_MAX_TRIES = 12
+REF_JOIN_GAP = 0.12
+REF_SR = 24000
+
+
+def _cut_piece(video: Path, start: float, length: float, tmp: Path):
+    """Cắt một khúc tiếng mono 24 kHz, trả về mảng float hoặc None."""
+    import numpy as np
+
+    try:
+        media.run_ffmpeg_progress(
+            [
+                "-ss", f"{max(0.0, start):.2f}", "-t", f"{length:.2f}",
+                "-i", str(Path(video).resolve()),
+                "-vn", "-ac", "1", "-ar", str(REF_SR), "-c:a", "pcm_s16le",
+                str(tmp.resolve()),
+            ],
+            0.0,
+        )
+        if not tmp.exists():
+            return None
+        samples, _sr = _read_wav(tmp)
+    except Exception:
+        return None
+    data = np.asarray(samples, dtype=np.float32).reshape(-1)
+    return data if data.size else None
+
+
+def _piece_quality(data, sr: int = REF_SR) -> tuple[float, float]:
+    """(tỉ lệ khung 20 ms có tiếng, mức RMS dBFS của phần có tiếng) của một khúc đã cắt."""
+    import numpy as np
+
+    mag = np.abs(np.asarray(data, dtype=np.float32).reshape(-1))
+    if not mag.size:
+        return 0.0, -99.0
+    peak = float(mag.max())
+    if peak <= 1e-5:
+        return 0.0, -99.0
+    step = max(1, int(sr * 0.02))
+    n = mag.size // step
+    if n == 0:
+        return 0.0, -99.0
+    blocks = mag[: n * step].reshape(n, step)
+    loud = blocks.max(axis=1) > peak * 0.05
+    voiced = float(loud.mean())
+    rms = float(np.sqrt(np.mean(np.square(blocks[loud])))) if loud.any() else 0.0
+    return voiced, _db(rms)
+
+
+def compose_reference(video: Path, cues: list[Cue], out_path: Path, speaker: str) -> tuple[float, int] | None:
+    """Ghép mẫu nhân bản từ nhiều câu của đúng nhân vật `speaker`. Trả về (số giây, số câu) hoặc None.
+
+    Cách cũ cắt MỘT đoạn dài ít nhất 4 giây tính từ đầu một cue. Thoại phim thì ngắn
+    (bộ gold: trung vị 1,5 giây/câu), nên đoạn 4 giây ấy ăn sang câu đáp của người khác —
+    mẫu lai hai giọng, bản nhân bản nghe không ra ai. Ở đây mỗi khúc cắt đúng trong mốc
+    giờ của một câu do chính nhân vật đó nói, ưu tiên câu không sát lượt người khác và
+    câu dài, bỏ khúc lí nhí, rồi nối lại theo thứ tự thời gian cho tới khi đủ ~8 giây.
+    """
+    import numpy as np
+
+    pool = [
+        c for c in cues
+        if c.speaker == speaker and c.end - c.start >= REF_MIN_PIECE
+        and not _NOT_SPEECH.match((c.text or "").strip())
+    ]
+    if not pool:
+        return None
+    index = {id(c): i for i, c in enumerate(cues)}
+    pool.sort(key=lambda c: (not _clean_neighbours(cues, index, c), -(c.end - c.start)))
+
+    tmp = out_path.parent / (out_path.stem + ".piece.wav")
+    good: list[tuple[float, object]] = []
+    try:
+        for cue in pool[:REF_MAX_TRIES]:
+            length = min(8.0, cue.end - cue.start)
+            data = _cut_piece(video, cue.start, length, tmp)
+            if data is None:
+                continue
+            voiced, level = _piece_quality(data)
+            if voiced < 0.5 or level <= -40.0:
+                continue
+            data, _ = _trim_silence_sr(data, REF_SR)
+            if data.size < REF_SR * 0.4:
+                continue
+            good.append((cue.start, data))
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    picked: list[tuple[float, object]] = []
+    total = 0.0
+    for start, data in _typical_first(good):
+        room = REF_MAX - total
+        if room < REF_MIN_PIECE:
+            break
+        if data.size / REF_SR > room:
+            data = data[: int(room * REF_SR)]
+        picked.append((start, data))
+        total += data.size / REF_SR
+        if total >= REF_TARGET:
+            break
+
+    if total < REF_MIN_TOTAL:
+        return None
+
+    picked.sort(key=lambda item: item[0])
+    fade = int(REF_SR * 0.01)
+    ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+    gap = np.zeros(int(REF_SR * REF_JOIN_GAP), dtype=np.float32)
+    parts = []
+    for _start, data in picked:
+        data = np.array(data, dtype=np.float32)
+        if data.size > 2 * fade:  # mép mềm để chỗ nối không lách tách
+            data[:fade] *= ramp
+            data[-fade:] *= ramp[::-1]
+        parts += [data, gap]
+    _write_wav(out_path, np.concatenate(parts[:-1]), REF_SR)
+    return round(total, 2), len(picked)
+
+
+def _typical_first(pieces: list) -> list:
+    """Xếp các khúc theo độ giống "giọng chung" của cả nhóm và bỏ khúc lạc giọng.
+
+    Nhãn người nói do máy gán, thỉnh thoảng một câu của người khác lọt vào vai này;
+    câu dài cũng có thể chứa tiếng người đối diện chen ngang. Tính véc-tơ giọng từng
+    khúc, lấy trung bình làm "giọng chung", khúc nào xa hẳn thì loại — mẫu ghép khi
+    đó gồm những câu tiêu biểu nhất cho giọng của vai. Không có mô hình véc-tơ giọng
+    (chưa cài pyannote) hoặc quá ít khúc thì giữ nguyên thứ tự.
+    """
+    if len(pieces) < 3:
+        return pieces
+    try:
+        import numpy as np
+
+        from . import voiceprint
+
+        if not voiceprint.available()[0]:
+            return pieces
+        vecs = [voiceprint.embed_array(data, REF_SR) for _start, data in pieces]
+    except Exception:
+        return pieces
+    known = [v for v in vecs if v is not None]
+    if len(known) < 3:
+        return pieces
+    centre = np.mean(known, axis=0)
+    centre = centre / (np.linalg.norm(centre) + 1e-9)
+    sims = [float(v @ centre) if v is not None else None for v in vecs]
+    floor = float(np.median([s for s in sims if s is not None])) - REF_OUTLIER_DROP
+    ranked = sorted(
+        (i for i, s in enumerate(sims) if s is not None and s >= floor),
+        key=lambda i: -sims[i],
+    )
+    # khúc quá ngắn để tính véc-tơ thì xếp cuối, chỉ dùng khi chưa đủ giây
+    ranked += [i for i, s in enumerate(sims) if s is None]
+    return [pieces[i] for i in ranked]
+
+
+def _trim_silence_sr(audio, sr: int, keep: float = 0.03):
+    """Như `_trim_silence` nhưng cho tần số lấy mẫu bất kỳ (mẫu giọng là 24 kHz)."""
+    import numpy as np
+
+    data = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if not data.size:
+        return data, 0.0
+    mag = np.abs(data)
+    peak = float(mag.max())
+    if peak <= 1e-5:
+        return data, 0.0
+    loud = np.nonzero(mag > peak * 0.03)[0]
+    pad = int(sr * keep)
+    a, b = max(0, int(loud[0]) - pad), min(data.size, int(loud[-1]) + pad + 1)
+    return data[a:b], (data.size - (b - a)) / sr
+
+
 def speaker_ids(cues: list[Cue]) -> list[str]:
     """Nhãn nhân vật có trong `cues`, sắp theo tổng thời gian nói giảm dần."""
     talk: dict[str, float] = {}
@@ -587,6 +766,14 @@ def extract_references(
     for n, sid in enumerate(ids, 1):
         out_path = workdir / f"voice_ref_{sid}.wav"
         try:
+            made = compose_reference(video, cues, out_path, sid)
+            if made is not None:
+                refs[sid] = str(out_path)
+                if on_log:
+                    on_log(f"  {sid}: mẫu giọng ghép từ {made[1]} câu của chính vai này ({made[0]:.1f}s).")
+                if on_progress:
+                    on_progress(n / max(1, len(ids)))
+                continue
             extract_reference(video, cues, out_path, min_len=min_len, speaker=sid)
             refs[sid] = str(out_path)
             if on_log:
@@ -715,6 +902,69 @@ def _cap_unit(cues: list[Cue], idx: list[int]) -> list[list[int]]:
     return _cap_unit(cues, idx[:best]) + _cap_unit(cues, idx[best:])
 
 
+# Giọng lồng to/nhỏ theo thoại gốc: tối đa ngần này dB quanh mức thường của vai đó
+ENERGY_RANGE_DB = (-4.0, 4.0)
+# Chỉ theo một phần độ lệch — theo trọn thì câu thì thầm chìm dưới nhạc nền
+ENERGY_FOLLOW = 0.6
+ENERGY_SR = 8000
+
+
+def energy_gains(voice_wav: Path, units: list[dict], workdir: Path) -> list[float]:
+    """Hệ số khuếch đại cho từng đơn vị đọc, để câu gốc hét thì bản lồng to hơn, thì thầm thì nhỏ hơn.
+
+    TTS đọc mọi câu ở cùng một mức, nên cảnh cãi nhau và cảnh thì thầm nghe như nhau.
+    Đo RMS giọng gốc (đã tách khỏi nhạc) trong khung giờ của từng câu, so với trung vị
+    của CHÍNH nhân vật đó (mỗi người thu một mức khác nhau), rồi theo 60 % độ lệch,
+    chặn ±4 dB. Trả về toàn 1.0 nếu không đo được.
+    """
+    import numpy as np
+
+    flat = [1.0] * len(units)
+    if not units:
+        return flat
+    tmp = workdir / "_energy.wav"
+    try:
+        media.run_ffmpeg_progress(
+            ["-i", str(Path(voice_wav).resolve()), "-vn", "-ac", "1", "-ar", str(ENERGY_SR),
+             "-c:a", "pcm_s16le", str(tmp.resolve())],
+            0.0,
+        )
+        data, sr = _read_wav(tmp)
+    except Exception:
+        return flat
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    levels: list[float | None] = []
+    for u in units:
+        seg = data[int(u["start"] * sr): int(u["end"] * sr)]
+        if seg.size < sr * 0.2:
+            levels.append(None)
+            continue
+        mag = np.abs(seg)
+        peak = float(mag.max())
+        loud = seg[mag > max(peak * 0.05, 1e-4)]
+        if loud.size < sr * 0.1:
+            levels.append(None)
+            continue
+        levels.append(_db(float(np.sqrt(np.mean(np.square(loud))))))
+
+    by_speaker: dict[str, list[float]] = {}
+    for u, lv in zip(units, levels):
+        if lv is not None:
+            by_speaker.setdefault(u.get("speaker") or "", []).append(lv)
+    gains = []
+    for u, lv in zip(units, levels):
+        own = by_speaker.get(u.get("speaker") or "", [])
+        if lv is None or len(own) < 3:  # quá ít câu thì không biết mức "thường" của vai này
+            gains.append(1.0)
+            continue
+        delta = (lv - float(np.median(own))) * ENERGY_FOLLOW
+        delta = max(ENERGY_RANGE_DB[0], min(ENERGY_RANGE_DB[1], delta))
+        gains.append(float(10 ** (delta / 20)))
+    return gains
+
+
 def build_dub_track(
     cues: list[Cue],
     total_duration: float,
@@ -729,8 +979,12 @@ def build_dub_track(
     ref_map: dict[str, str] | None = None,
     on_progress: Callable[[float], None] | None = None,
     on_log: Callable[[str], None] | None = None,
+    energy_from: Path | None = None,
 ) -> tuple[Path, dict]:
     """Sinh file wav lồng tiếng khớp mốc giờ của `cues`.
+
+    `energy_from`: file giọng gốc đã tách khỏi nhạc — truyền vào thì từng câu lồng
+    được chỉnh to/nhỏ theo câu gốc tương ứng (xem `energy_gains`).
 
     Mặc định đọc theo **câu trọn** (xem `speech_units`). `per_cue=True` thì đọc
     từng cue một như trước — giữ lại để so sánh, chứ nghe kém hơn rõ rệt.
@@ -800,6 +1054,14 @@ def build_dub_track(
     }
     first_error = ""
     stats["units"] = len(units)
+
+    gains = [1.0] * len(units)
+    if energy_from is not None and units:
+        gains = energy_gains(Path(energy_from), units, workdir)
+        moved = sum(1 for g in gains if abs(g - 1.0) > 0.06)
+        stats["energy_matched"] = moved
+        if on_log and moved:
+            on_log(f"Chỉnh độ to theo thoại gốc cho {moved}/{len(units)} câu (câu gốc nói to thì lồng to, nói khẽ thì nhỏ).")
 
     for u, unit in enumerate(units):
         text = unit["text"]
@@ -896,7 +1158,7 @@ def build_dub_track(
         if end > track.size:
             track = np.pad(track, (0, end - track.size))
         # cộng dồn phòng khi hai đoạn chồng nhau
-        track[pos:end] += audio
+        track[pos:end] += audio * gains[u]
         stats["count"] += 1
 
         if on_progress:

@@ -218,6 +218,10 @@ def run_analyze(job: Job, cfg: dict) -> None:
             glossary=cfg.get("glossary", ""),
             on_progress=_progress_cb(job, "translate"),
             on_log=job.log,
+            # Bảng vai (giới, tuổi) từ bước tách giọng -> engine AI chọn xưng hô theo người nói
+            cast=speakers,
+            auto_context=bool(cfg.get("auto_context", True)),
+            use_memory=bool(cfg.get("use_memory", True)),
         )
         job.finish_step("translate")
         job.log("Dịch xong.")
@@ -767,6 +771,9 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         ref_map=ref_map,
         on_progress=lambda p: job.set_step_progress("tts", p),
         on_log=job.log,
+        # Chỉ theo độ to khi đã có giọng gốc sạch nhạc: đo trên tiếng còn lẫn nhạc thì
+        # đoạn nhạc lớn bị tưởng là nhân vật đang hét.
+        energy_from=ref_source if (ref_source != Path(state["video_path"]) and dcfg.get("match_energy", True)) else None,
     )
     detail = f"{stats['count']} câu"
     if stats["sped_up"]:

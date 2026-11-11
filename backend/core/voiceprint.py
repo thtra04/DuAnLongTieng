@@ -98,6 +98,20 @@ def _read(wav_path: str | Path, cue: Cue) -> np.ndarray:
     return x
 
 
+def embed_array(samples, sr: int):
+    """Véc-tơ giọng đã chuẩn hoá của một mảng âm thanh mono; `None` nếu quá ngắn."""
+    import torch
+
+    x = np.asarray(samples, dtype=np.float32).reshape(-1)
+    if x.size < sr * MIN_EMBED_S:
+        return None
+    if sr != SR:
+        idx = np.linspace(0, x.size - 1, int(x.size * SR / sr))
+        x = np.interp(idx, np.arange(x.size), x).astype(np.float32)
+    v = np.asarray(_load()({"waveform": torch.from_numpy(np.ascontiguousarray(x))[None], "sample_rate": SR})).reshape(-1)
+    return v / (np.linalg.norm(v) + 1e-9)
+
+
 def embed_cues(wav_path, cues: list[Cue], on_progress: Callable[[float], None] | None = None):
     """Véc-tơ giọng đã chuẩn hoá của từng cue; `None` cho cue quá ngắn."""
     import torch

@@ -213,6 +213,30 @@ Rồi chọn phụ đề lấy từ đâu:
 > giúp tránh dịch sai thuật ngữ — ví dụ Google dịch "Whisper" thành "lời thì thầm", còn AI biết
 > đó là tên model nếu bạn ghi rõ bối cảnh.
 
+**Dịch theo ngữ cảnh.** Engine AI không dịch rời từng lô nữa:
+
+| Việc | Cách làm |
+|---|---|
+| **Đọc lướt kịch bản** | Trước khi dịch, AI đọc cả kịch bản một lượt và tự ghi chú thể loại, nhân vật, quan hệ, xưng hô, tên riêng. Ghi chú đi kèm **mọi** lô nên tên và xưng hô thống nhất từ đầu tới cuối (tắt được ở bước 2) |
+| **Ngữ cảnh quanh mỗi lô** | Mỗi lô mang theo 8 câu vừa dịch xong và 4 câu sắp tới — câu đáp cộc lốc, đại từ được hiểu theo câu trước nó |
+| **Biết ai đang nói** | Đã tách giọng thì từng câu được gắn tên vai kèm giới và nhóm tuổi, để chọn xưng hô (anh / chị / em, chàng / thiếp, ta / ngươi…) |
+| **Tên riêng tiếng Trung** | Chuyển sang âm Hán-Việt, không để pinyin |
+| **Bộ thuật ngữ cho mọi engine** | Với Google / MyMemory / NLLB, thuật ngữ được cài thẳng vào câu gốc trước khi dịch (`朱大生 = Chu Đại Sinh`) |
+| **Bộ nhớ dịch** | Câu bạn sửa tay ở bước 4 rồi xuất được ghi nhớ. Lần sau gặp lại đúng câu đó thì dùng bản của bạn (engine nào cũng vậy); câu gần giống thì đưa cho AI làm mẫu |
+
+Đo trên bộ gold 271 câu (phim cổ trang zh→vi, so với bản dịch tham chiếu; mỗi cấu hình chạy một lần):
+
+| Cấu hình | BLEU | chrF | Câu còn tên pinyin |
+|---|---|---|---|
+| Google | 7,9 | 28,9 | 8 % |
+| Google + bộ thuật ngữ | 10,2 | 32,6 | 1 % |
+| LLM, dịch rời từng lô (bản cũ) | 38,9 | 59,4 | 0 % |
+| LLM + ghi chú bối cảnh và thuật ngữ viết tay (bản cũ) | 40,3 | 62,7 | 0 % |
+| LLM + đọc lướt tự động + ngữ cảnh lô, **không** ghi chú tay | 41,6 | 63,3 | 0 % |
+
+Bản có ngữ cảnh dài hơn tham chiếu 8 % (bản cũ 2 %) — bật **Rút gọn câu vượt khung thời gian** nếu định lồng tiếng.
+Đo lại: `PYTHONPATH=. python data/_bench/eval_context.py ai_auto`.
+
 **Bản dịch không bị lệch dòng.** Cả 5 engine đều gán bản dịch vào **đúng cue** kể cả khi trả về
 thiếu hoặc đảo thứ tự: Google/MyMemory kiểm số đoạn tách được, sai thì dịch lại từng dòng; engine
 AI dùng giao thức số dòng (`3 | nội dung`) nên gán theo số model trả về chứ không theo vị trí.
@@ -303,7 +327,8 @@ từng người — hoặc **nhân bản chính giọng nhân vật đó** trong
 | **Nhãn nhân vật** | `S1`, `S2`… đánh số theo **tổng thời gian nói giảm dần** — `S1` thường là vai chính, và thứ tự không đổi giữa các lần chạy |
 | **Gán dòng cho vai** | Theo **độ chồng lấn thời gian lớn nhất**. Dòng vắt qua hai người thì lấy bên chiếm nhiều hơn |
 | **Dòng không rõ ai nói** | Thường là phụ đề trên nền nhạc — đọc bằng giọng ở ô "Giọng đọc" chung |
-| **Mẫu nhân bản** | Ưu tiên đoạn thoại **không sát lượt của người khác**, tránh mẫu lai hai giọng |
+| **Mẫu nhân bản** | **Ghép từ nhiều câu của đúng vai đó** (tới ~8–10 giây), mỗi khúc cắt gọn trong mốc giờ của một câu, ưu tiên câu **không sát lượt của người khác**; có mô hình véc-tơ giọng thì chọn những câu tiêu biểu nhất và loại câu lạc giọng. Không gom đủ 3 giây thì quay về cắt một đoạn liền như trước |
+| **Độ to theo thoại gốc** | Khi đã tách giọng gốc khỏi nhạc: câu gốc nói to thì câu lồng to hơn, nói khẽ thì nhỏ hơn (theo 60 % độ lệch so với mức thường của chính vai đó, chặn ±4 dB) |
 | **Vai không cắt được mẫu** | Tự chuyển sang giọng dựng sẵn, có báo rõ — không làm hỏng cả bản lồng tiếng |
 | **Biết trước số vai** | Điền vào ô **Số nhân vật** ở bước 2 — chính xác hơn hẳn để tool tự đoán |
 
@@ -355,6 +380,14 @@ cao càng giống; hai vai gốc so với nhau được 0,34) trên cùng trích
 | Giọng có sẵn **gần cao độ gốc nhất** (Đoan Trang / Quang Sơn) | 0,26 | 0,34 | — |
 | **Nhân bản giọng từ video** (mặc định) | **0,43** | **0,55** | 15/17 câu |
 | Nhân bản rồi kéo cao độ về đúng cao độ gốc (`rubberband`) | 0,31 | 0,19 | — |
+
+Mẫu ghép so với mẫu cắt một đoạn (cosine WeSpeaker với giọng gốc của vai, TTS đọc cùng 6 câu;
+`data/_bench/ref_compare.py`, mỗi cấu hình chạy một lần nên chênh lệch nhỏ có thể là nhiễu):
+
+| Video | Độ thuần của mẫu | Giọng đọc giống giọng gốc |
+|---|---|---|
+| 16 phút, 6 vai nói nhiều nhất | 0,74 → **0,90** | 0,60 → **0,69** (5 vai tăng, 1 vai giảm 0,05) |
+| Clip 86 giây, 2 vai | 0,72 → **0,90** | 0,61 → **0,69** (1 vai tăng 0,17, 1 vai giảm 0,02) |
 
 Hai cách "khớp cao độ" đều làm giọng *kém* giống hơn — chất giọng quan trọng hơn cao độ — nên tool
 không dùng. Nhân bản chậm hơn giọng có sẵn (phải cắt mẫu và mã hoá giọng từng vai).

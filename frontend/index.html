@@ -6,9 +6,9 @@
 <title>VSub Studio — Tạo phụ đề & dịch video</title>
 <script>
 // Áp chủ đề đã lưu trước khi vẽ, tránh nháy sáng/tối; màu nhấn tuỳ chọn do js/theme.js lo.
-// Chưa chọn gì thì dùng 'vang' (Hoàng kim) — trùng DEFAULT_THEME trong js/theme.js.
-try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme || 'vang';
-  if (_t !== 'hong') document.documentElement.dataset.theme = _t; } catch (e) { document.documentElement.dataset.theme = 'vang'; }
+// Chưa chọn gì thì dùng 'rap' (Rạp chiếu) — trùng DEFAULT_THEME trong js/theme.js.
+try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme || 'rap';
+  if (_t !== 'hong') document.documentElement.dataset.theme = _t; } catch (e) { document.documentElement.dataset.theme = 'rap'; }
 </script>
 <link rel="stylesheet" href="/css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23151009'/><rect x='1.5' y='1.5' width='29' height='29' rx='6.5' fill='none' stroke='%23dbb15c' stroke-width='1.5'/><path d='M13 10.5v11l9-5.5z' fill='%23e2b659'/></svg>">
@@ -265,6 +265,14 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
           <span>Bối cảnh video <span class="muted">(tuỳ chọn — giúp AI dịch sát nghĩa hơn)</span></span>
           <input type="text" id="contextNote" placeholder="VD: video hướng dẫn nấu ăn, giọng vui vẻ, nhiều tiếng lóng">
         </label>
+        <label class="switch" style="margin:4px 0 14px">
+          <input type="checkbox" id="autoContext" checked>
+          <span class="track"></span>
+          <span class="txt"><b>Tự đọc lướt kịch bản trước khi dịch</b>
+            <small>AI đọc cả kịch bản một lượt để nắm nhân vật, quan hệ, xưng hô và tên riêng, rồi mới dịch
+              từng đoạn kèm các câu trước và sau nó. Tốn thêm một lượt gọi API. Nếu đã tách giọng ở bước này,
+              AI còn được biết ai (nam / nữ, trẻ / già) đang nói từng câu.</small></span>
+        </label>
         <label class="field">
           <span>Phong cách dịch AI</span>
           <select id="translationMode">
@@ -283,17 +291,20 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
               Claude/OpenAI là nhắc AI kèm giới hạn âm tiết, với Google/NLLB là bộ luật rút gọn tiếng Việt
               (bỏ từ đệm, cụm dài → cụm ngắn). Chỉ có tác dụng khi bật dịch.</small></span>
         </label>
-        <label class="field">
-          <span>Bộ thuật ngữ <span class="muted">(tuỳ chọn — mỗi dòng một quy tắc)</span></span>
-          <textarea id="glossary" rows="3" placeholder="John = anh John&#10;The Guild = Hội Đồng&#10;bro = ông bạn"></textarea>
-          <small class="muted">Dùng để giữ thống nhất tên riêng, cách xưng hô và từ chuyên ngành.</small>
-        </label>
         <div class="cache-tools">
           <span class="muted" id="cacheInfo">Cache AI đang kiểm tra…</span>
           <button class="btn sm" id="aiCheck" type="button" title="Gọi thử một câu ngắn với key, endpoint và model đang nhập"><svg class="i" aria-hidden="true"><use href="#i-plug"/></svg> Kiểm tra kết nối</button>
           <button class="btn sm ghost" id="clearCache" type="button"><svg class="i" aria-hidden="true"><use href="#i-eraser"/></svg> Xoá cache AI</button>
         </div>
       </div>
+
+      <label class="field" style="margin-top:18px">
+        <span>Bộ thuật ngữ <span class="muted">(tuỳ chọn — mỗi dòng một quy tắc, dùng cho mọi engine)</span></span>
+        <textarea id="glossary" rows="3" placeholder="John = anh John&#10;朱大生 = Chu Đại Sinh&#10;郎君 / 夫君 = lang quân"></textarea>
+        <small class="muted">Giữ thống nhất tên riêng, cách xưng hô và từ chuyên ngành. Với Google / NLLB,
+          thuật ngữ được cài thẳng vào câu gốc trước khi dịch nên tên không còn bị để dạng phiên âm.</small>
+      </label>
+      <p class="hint" id="tmInfo" style="margin:10px 0 0">Bộ nhớ dịch đang kiểm tra…</p>
     </div>
 
     <div class="card">
@@ -423,6 +434,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
     <div class="editor">
       <div class="player-wrap">
         <div class="card" style="padding:14px">
+          <div class="slate" aria-hidden="true"><span class="stripes"></span><b>Màn ảnh</b><span class="hide-narrow">Bản xem trước</span><span class="rec">Biên tập</span></div>
           <div class="player-box">
             <video id="player" controls preload="metadata"></video>
             <div class="hs-mask hide" id="hsMask" aria-hidden="true"></div>

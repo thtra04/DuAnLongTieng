@@ -10,6 +10,7 @@ from ..config import AI_MODELS, ASR_MODELS, DEFAULT_ASR_MODEL, MAX_UPLOAD_BYTES
 from ..core import diarize, dubbing, media, translate
 from ..core.languages import LANGUAGES
 from ..core.subtitles import DEFAULT_STYLE
+from ..store import memory
 
 router = APIRouter(prefix="/api", tags=["system"])
 
@@ -69,6 +70,17 @@ def system_info() -> dict:
 @router.get("/translation-cache")
 def translation_cache_info() -> dict:
     return translate.cache_info()
+
+
+@router.get("/translation-memory")
+def translation_memory_info() -> dict:
+    """Bộ nhớ dịch: số cặp câu đã học từ những lần người dùng sửa tay, số lượt dùng lại."""
+    return memory.stats()
+
+
+@router.delete("/translation-memory")
+def translation_memory_clear() -> dict:
+    return {"deleted": memory.clear()}
 
 
 @router.delete("/translation-cache")
