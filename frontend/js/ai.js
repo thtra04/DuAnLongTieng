@@ -83,10 +83,26 @@ function aiPayload() {
     context_note: $('#contextNote').value.trim(),
     translation_mode: $('#translationMode').value,
     glossary: $('#glossary').value.trim(),
+    // AI đọc lướt cả kịch bản trước khi dịch (nhân vật, xưng hô, tên riêng)
+    auto_context: !$('#autoContext') || $('#autoContext').checked,
     // HP-5: với engine AI là nhắc lại kèm giới hạn; với Google/NLLB là bộ luật rút gọn tiếng Việt
     budget_loop: !!($('#budgetLoop') && $('#budgetLoop').checked),
   };
 }
+
+/* ------------------------------ bộ nhớ dịch ------------------------------ */
+// Số câu tool đã học từ những lần bạn sửa bản dịch ở bước 4 rồi xuất
+async function refreshMemoryInfo() {
+  const el = $('#tmInfo');
+  if (!el) return;
+  try {
+    const info = await api('/api/translation-memory');
+    el.textContent = info.pairs
+      ? `Bộ nhớ dịch: đã học ${info.pairs} câu bạn sửa tay (dùng lại ${info.reused} lượt) — gặp lại câu đó sẽ dịch theo cách bạn đã chọn.`
+      : 'Bộ nhớ dịch: chưa có câu nào. Mỗi lần bạn sửa bản dịch ở bước 4 rồi xuất, tool ghi nhớ để lần sau dịch theo.';
+  } catch { el.textContent = ''; }
+}
+refreshMemoryInfo();
 
 /* ----------------------------- cache dịch AI ----------------------------- */
 async function refreshCacheInfo() {

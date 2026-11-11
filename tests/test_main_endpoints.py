@@ -239,3 +239,58 @@ def test_render_khong_chon_dinh_dang_nao(client, kho_tam):
     )
     r = client.post("/api/jobs/job1/render", json={"outputs": {}, "cues": [{"start": 0, "end": 1, "text": "a"}]})
     assert r.status_code == 400
+
+
+# ------------------------------------------------------------ bộ nhớ dịch
+
+
+def test_xuat_voi_ban_dich_da_sua_thi_ghi_vao_bo_nho_dich(client, kho_tam, monkeypatch):
+    from backend.api import jobs as api_jobs
+    from backend.store import memory
+
+    monkeypatch.setattr(memory, "_ready", False)
+    folder = kho_tam / "jobs" / "job9"
+    folder.mkdir(parents=True)
+    (folder / "state.json").write_text(
+        json.dumps({
+            "video_path": "", "video_name": "x.mp4", "info": {}, "cfg": {},
+            "source_lang": "zh", "target_lang": "vi",
+            "cues": [{"start": 0, "end": 1, "text": "郎君。", "text2": "Lang Jun."},
+                     {"start": 2, "end": 3, "text": "走吧。", "text2": "Đi thôi."}],
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    sua = [{"start": 0, "end": 1, "text": "郎君。", "text2": "Lang quân."},
+           {"start": 2, "end": 3, "text": "走吧。", "text2": "Đi thôi."}]
+
+    # yêu cầu bị từ chối (không chọn định dạng) thì không học
+    assert client.post("/api/jobs/job9/render", json={"outputs": {}, "cues": sua}).status_code == 400
+    assert memory.stats()["pairs"] == 0
+
+    (folder / "state.json").write_text(
+        json.dumps({
+            "video_path": "", "video_name": "x.mp4", "info": {}, "cfg": {},
+            "source_lang": "zh", "target_lang": "vi",
+            "cues": [{"start": 0, "end": 1, "text": "郎君。", "text2": "Lang Jun."},
+                     {"start": 2, "end": 3, "text": "走吧。", "text2": "Đi thôi."}],
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    logs: list[str] = []
+
+    class JobGia:
+        id = "render1"
+        dir = folder
+        result: dict = {}
+
+        def log(self, msg):
+            logs.append(msg)
+
+    monkeypatch.setattr(api_jobs, "create_job", lambda *a, **k: JobGia())
+    monkeypatch.setattr(api_jobs, "run_in_thread", lambda *a, **k: None)
+    r = client.post("/api/jobs/job9/render", json={"outputs": {"srt": True}, "cues": sua})
+    assert r.status_code == 200
+    assert memory.stats()["pairs"] == 1, "chỉ câu bị sửa mới được ghi nhớ"
+    assert any("ghi nhớ 1 câu" in ln for ln in logs)
+    assert client.get("/api/translation-memory").json()["pairs"] == 1
+    assert client.delete("/api/translation-memory").json() == {"deleted": 1}

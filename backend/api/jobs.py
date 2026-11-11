@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from ..config import JOB_DIR, UPLOAD_DIR
 from ..core import diarize, pipeline, translate
 from ..core.jobs import create_job, get_job, run_in_thread
-from ..store import films
+from ..store import films, memory
 from .deps import find_source_video, needs_video, rebuild_state, safe_id
 
 router = APIRouter(prefix="/api", tags=["jobs"])
@@ -149,6 +149,7 @@ async def render(job_id: str, payload: dict) -> dict:
         state_path = JOB_DIR / (job_id or "phien-moi") / "state.json"
 
     # Cho phép người dùng sửa phụ đề trước khi xuất
+    machine_cues = state.get("cues") or []
     if cfg.get("cues"):
         state["cues"] = cfg["cues"]
     if cfg.get("source_lang") and not state.get("source_lang"):
@@ -164,9 +165,26 @@ async def render(job_id: str, payload: dict) -> dict:
     if not any(cfg.get("outputs", {}).values()):
         raise HTTPException(400, "Chưa chọn định dạng nào để xuất.")
 
+    # Câu nào khác bản máy dịch tức là người dùng đã sửa tay -> ghi vào bộ nhớ dịch để
+    # lần sau gặp lại câu đó (hoặc câu gần giống) thì dịch theo cách họ đã chọn. Đặt sau
+    # mọi bước kiểm tra: yêu cầu bị từ chối thì không học gì.
+    learned = 0
+    if cfg.get("cues") and cfg.get("learn", True):
+        try:
+            learned = memory.learn_from_edit(
+                machine_cues, cfg["cues"],
+                source_lang=state.get("source_lang") or "",
+                target_lang=state.get("target_lang") or "",
+                job_id=job_id,
+            )
+        except Exception:  # học hỏng không được chặn việc xuất
+            learned = 0
+
     job = create_job("render", pipeline.render_steps(cfg))
     job.result = {"source_job": job_id}
     job.log("Bắt đầu xuất file.")
+    if learned:
+        job.log(f"Bộ nhớ dịch: ghi nhớ {learned} câu bạn đã sửa tay để lần sau dịch theo.")
     # File xuất ra nằm ở thư mục của job render này, không nằm cùng job phân
     # tích. Ghi lại mối liên hệ để mục "Dự án đã làm" còn tìm thấy chúng sau
     # khi khởi động lại tool (danh sách job trong RAM thì mất).

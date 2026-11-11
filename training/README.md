@@ -10,6 +10,20 @@ mục nào cũng chạy được.
 | `03_lora_nllb_dang_thoi.ipynb` | HP-4 | LoRA cho NLLB-200 dịch ràng buộc độ dài | GPU + corpus, **chưa chạy** |
 | `04_khung_do_ket_qua.ipynb` | Khung đo | Gom `data/jobs/*/eval.json` thành bảng C0–C4 (Bảng 5.2) | Không |
 
+## Corpus cho notebook 03
+
+```bash
+uv run python training/build_corpus.py --holdout data/_bench/gold/gold.json
+```
+
+Ghi `data/corpus/vidub_train.jsonl` (đúng định dạng notebook 03 đọc) từ ba nguồn:
+bộ nhớ dịch (câu người dùng đã sửa tay ở bước 4 rồi xuất — `backend/store/memory.py`),
+các dự án cũ dịch bằng engine AI (chưng cất tri thức), và file JSONL ngoài qua `--extra`
+(ví dụ OpenSubtitles đã lọc). Bản dịch Google không được lấy. `--holdout` loại các câu
+thuộc tập kiểm thử để điểm đo không bị rò.
+
+Dưới ~5.000 cặp thì chưa đủ cho LoRA; script tự cảnh báo.
+
 ## Chạy
 
 ```bash

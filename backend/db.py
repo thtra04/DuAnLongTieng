@@ -139,6 +139,22 @@ class Voice(Base):
     character = relationship("Character", back_populates="voice")
 
 
+class TranslationMemory(Base):
+    """Bộ nhớ dịch: cặp câu (gốc → bản dịch) người dùng đã sửa tay và duyệt khi xuất."""
+    __tablename__ = "translation_memory"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # câu gốc đã chuẩn hoá (thường, gọn khoảng trắng, bỏ dấu câu cuối) — khoá tra cứu
+    source_key = Column(String(400), nullable=False, index=True)
+    source = Column(Text, nullable=False)
+    target = Column(Text, nullable=False)
+    source_lang = Column(String(12), default="")
+    target_lang = Column(String(12), default="", index=True)
+    job_id = Column(String(32), default="")
+    hits = Column(Integer, default=0)
+    updated = Column(Float, default=0.0)
+
+
 # ------------------------------------------------------------------ engine
 
 
