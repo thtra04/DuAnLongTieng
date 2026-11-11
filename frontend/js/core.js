@@ -175,13 +175,24 @@ function goStep(n) {
 }
 
 function updateStepSummary() {
-  const source = S.mediaName || (S.url ? 'Link video' : 'Chưa chọn nguồn');
+  const source = (S.projectId && S.projectName) || S.mediaName || (S.url ? 'Link video' : 'Chưa chọn nguồn');
   $('#step1Sub').textContent = source.length > 28 ? source.slice(0, 27) + '…' : source;
   const target = $('#tgtLang')?.selectedOptions[0]?.textContent?.trim() || 'chưa chọn đích';
   const engine = S.engine === 'google' ? 'Google' : S.engine === 'openai' ? 'OpenAI' : S.engine === 'claude' ? 'Claude' : S.engine;
   $('#step2Sub').textContent = $('#doTranslate')?.checked ? `${target} · ${engine}` : 'Không dịch · phụ đề nguyên ngữ';
-  $('#step3Sub').textContent = S.jobId ? 'Đang xử lý hoặc đã hoàn tất' : 'Sẵn sàng chạy';
+  $('#step3Sub').textContent = S.cues.length ? 'Đã xử lý xong' : S.jobId ? 'Đang xử lý…' : 'Nghe, canh giờ, dịch';
+  syncRetranslate();
   $('#step4Sub').textContent = S.cues.length ? `${S.cues.length} dòng · sửa và xuất` : 'Sửa lời, chỉnh kiểu, tải về';
+}
+
+/** Đã có lời thoại (vừa xử lý xong hoặc mở dự án cũ) thì bước 2 có thêm nút "Chỉ dịch lại". */
+function syncRetranslate() {
+  const can = !!S.jobId && S.cues.length > 0;
+  $('#retransBtn').classList.toggle('hide', !can);
+  $('#retransHint').classList.toggle('hide', !can);
+  $('#startBtn').classList.toggle('primary', !can);
+  // Dự án mở lại từ kho không còn giữ video đã tải lên -> không chạy lại từ đầu được ở đây
+  $('#startBtn').disabled = can && !!S.projectId && !S.mediaId && !S.url;
 }
 
 function unlock(n) {
@@ -240,6 +251,35 @@ function _dialog({ message, input = null, ok = 'OK', cancel = 'Thôi', danger = 
     if (field) { field.focus(); field.select(); }
     else $('.m-cancel', wrap).focus();   // Enter vô tình thì huỷ, không xoá
   });
+}
+
+// Xem một video đã xuất ngay trong trang (danh sách phim): hộp phát nổi, Esc hoặc bấm ra ngoài để đóng.
+function showVideo(url, title) {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-wrap';
+  wrap.innerHTML = `
+    <div class="modal modal-video" role="dialog" aria-modal="true">
+      <div class="mv-top"><b class="mv-title"></b>
+        <button class="btn sm ghost m-cancel" type="button">Đóng</button></div>
+      <video controls autoplay playsinline></video>
+    </div>`;
+  $('.mv-title', wrap).textContent = title || '';
+  const video = $('video', wrap);
+  video.src = url;
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    wrap.remove();
+  };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  $('.m-cancel', wrap).addEventListener('click', close);
+  wrap.addEventListener('click', e => { if (e.target === wrap) close(); });
+  video.addEventListener('error', () => toast('Không phát được video này — file có thể đã bị xoá.', 'err', 7000));
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(wrap);
+  $('.m-cancel', wrap).focus();
 }
 
 // Thay confirm(): true khi bấm nút xác nhận, false khi huỷ.

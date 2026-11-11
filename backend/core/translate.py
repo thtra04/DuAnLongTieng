@@ -652,9 +652,54 @@ def _translate_one(tr, text: str, on_log=None) -> str:
 _nllb_lock = threading.Lock()
 _nllb_cache: dict[str, tuple] = {}
 NLLB_MODEL = os.environ.get("VSUB_NLLB_MODEL", "facebook/nllb-200-distilled-600M")
+NLLB_NO_REPEAT = 4  # một cụm 4 từ lặp lại trong cùng câu thoại gần như luôn là mô hình chạy loạn
+
+
+def lora_available() -> bool:
+    """Có adapter đẳng thời (HP-4) đã huấn luyện và đủ thư viện để nạp hay không.
+
+    Không import torch/peft ở đây — hàm này được gọi cả lúc chỉ dựng bộ siết.
+    Tắt hẳn bằng biến môi trường VSUB_NLLB_LORA=0.
+    """
+    import importlib.util
+
+    from . import isochron
+    from ..config import MODEL_DIR
+
+    if os.environ.get("VSUB_NLLB_LORA", "1") == "0" or not isochron.has_adapter(MODEL_DIR):
+        return False
+    return importlib.util.find_spec("peft") is not None
+
+
+def lora_applies(source: str | None, target: str | None) -> bool:
+    """Adapter chỉ được huấn luyện và đo cho Trung → Việt; cặp khác dùng NLLB gốc."""
+    return nllb_code(source or "en") == "zho_Hans" and nllb_code(target or "vi") == "vie_Latn"
+
+
+def _attach_lora(tok, mdl):
+    """Gắn adapter LoRA + 60 token ngân sách `<len:n>` lên NLLB gốc. Trả về (tok, mdl)."""
+    import torch
+    from peft import PeftModel
+    from transformers import AutoTokenizer
+
+    from . import isochron
+    from ..config import MODEL_DIR
+
+    path = str(isochron.adapter_dir(MODEL_DIR))
+    lora_tok = AutoTokenizer.from_pretrained(path)
+    old = mdl.get_input_embeddings().weight.shape[0]
+    if len(lora_tok) > old:
+        # đúng như lúc huấn luyện (training/train_nllb_lora.py::load_base): hàng mới
+        # khởi tạo bằng trung bình, giá trị đã học nằm trong adapter
+        mdl.resize_token_embeddings(len(lora_tok), mean_resizing=False)
+        with torch.no_grad():
+            w = mdl.get_input_embeddings().weight
+            w[old:] = w[:old].mean(dim=0, keepdim=True)
+    return lora_tok, PeftModel.from_pretrained(mdl, path)
 
 
 def _load_nllb():
+    """Trả về (tokenizer, model, device, có_lora)."""
     import torch
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
@@ -670,19 +715,41 @@ def _load_nllb():
             pass
         tok = AutoTokenizer.from_pretrained(NLLB_MODEL, cache_dir=str(MODEL_DIR))
         mdl = AutoModelForSeq2SeqLM.from_pretrained(NLLB_MODEL, cache_dir=str(MODEL_DIR))
+        lora = False
+        if lora_available() and "nllb-200-distilled-600M" in NLLB_MODEL:
+            try:
+                tok, mdl = _attach_lora(tok, mdl)
+                lora = True
+            except Exception:
+                # adapter hỏng / lệch phiên bản: nạp lại bản gốc sạch, app vẫn dịch được
+                tok = AutoTokenizer.from_pretrained(NLLB_MODEL, cache_dir=str(MODEL_DIR))
+                mdl = AutoModelForSeq2SeqLM.from_pretrained(NLLB_MODEL, cache_dir=str(MODEL_DIR))
         device = "cuda" if torch.cuda.is_available() else "cpu"
         mdl = mdl.to(device)
         mdl.eval()
-        _nllb_cache[NLLB_MODEL] = (tok, mdl, device)
+        _nllb_cache[NLLB_MODEL] = (tok, mdl, device, lora)
         return _nllb_cache[NLLB_MODEL]
 
 
-def _translate_nllb(texts, source, target, on_progress=None, on_log=None) -> list[str]:
+def _nllb_inputs(texts: list[str], budgets: list | None = None) -> list[str]:
+    """Câu đưa vào NLLB: câu rỗng thành "…", gắn token ngân sách nếu có."""
+    from . import isochron
+
+    budgets = list(budgets or []) + [None] * len(texts)
+    return [isochron.with_budget(t if t.strip() else "…", n) for t, n in zip(texts, budgets)]
+
+
+def _translate_nllb(texts, source, target, on_progress=None, on_log=None, budgets=None) -> list[str]:
+    """Dịch bằng NLLB-200. `budgets[i]` (số âm tiết) chỉ có tác dụng khi adapter đẳng thời
+    đang dùng cho cặp ngôn ngữ này; không thì bị bỏ qua."""
+    import contextlib
+
     import torch
 
-    tok, mdl, device = _load_nllb()
+    tok, mdl, device, lora = _load_nllb()
+    use_lora = lora and lora_applies(source, target)
     if on_log:
-        on_log(f"NLLB-200 chạy trên {device.upper()}")
+        on_log(f"NLLB-200 chạy trên {device.upper()}" + (" · adapter đẳng thời HP-4 (LoRA)" if use_lora else ""))
 
     src = nllb_code(source or "en")
     tgt = nllb_code(target)
@@ -697,18 +764,55 @@ def _translate_nllb(texts, source, target, on_progress=None, on_log=None) -> lis
     if bos is None:
         raise TranslateError(f"NLLB không hỗ trợ ngôn ngữ đích: {target}")
 
+    inputs = _nllb_inputs(texts, budgets if use_lora else None)
+    # có adapter nhưng cặp ngôn ngữ khác Trung → Việt: tắt adapter, chạy đúng NLLB gốc
+    scope = mdl.disable_adapter() if (lora and not use_lora) else contextlib.nullcontext()
     results: list[str] = []
     BATCH = 8
-    for i in range(0, len(texts), BATCH):
-        chunk = [t if t.strip() else "…" for t in texts[i : i + BATCH]]
-        enc = tok(chunk, return_tensors="pt", padding=True, truncation=True, max_length=400)
-        enc = {k: v.to(device) for k, v in enc.items()}
-        with torch.inference_mode():
-            gen = mdl.generate(**enc, forced_bos_token_id=bos, max_new_tokens=400, num_beams=4)
-        results.extend(tok.batch_decode(gen, skip_special_tokens=True))
-        if on_progress:
-            on_progress(min(1.0, (i + BATCH) / max(1, len(texts))))
+    with scope:
+        for i in range(0, len(inputs), BATCH):
+            enc = tok(inputs[i : i + BATCH], return_tensors="pt", padding=True, truncation=True, max_length=400)
+            enc = {k: v.to(device) for k, v in enc.items()}
+            with torch.inference_mode():
+                # no_repeat_ngram_size: chặn kiểu chạy loạn "Ồ, Ồ, Ồ, …" (gặp thật khi đo bộ gold)
+                gen = mdl.generate(**enc, forced_bos_token_id=bos, max_new_tokens=400, num_beams=4,
+                                   no_repeat_ngram_size=NLLB_NO_REPEAT)
+            results.extend(tok.batch_decode(gen, skip_special_tokens=True))
+            if on_progress:
+                on_progress(min(1.0, (i + BATCH) / max(1, len(inputs))))
     return [r.strip() for r in results]
+
+
+def _nllb_tightener(source: str, target: str, on_log=None):
+    """Bộ siết HP-4: dịch lại câu vượt khung với token ngân sách `<len:n>` nhỏ hơn.
+
+    Cần câu gốc (`request["source"]`, do `budget.run_loop` điền). Bản mới chỉ được nhận
+    khi thật sự ngắn hơn bản cũ; câu nào không ngắn đi được thì rơi về bộ luật rút gọn.
+    """
+    from . import duration, shorten
+
+    rules = shorten.make_tightener()
+
+    def tighten(requests: list[dict]) -> list:
+        out: list = [r["text"] for r in requests]
+        todo = [k for k, r in enumerate(requests) if (r.get("source") or "").strip()]
+        if todo:
+            if on_log:
+                on_log(f"  Dịch lại {len(todo)} câu với token ngân sách <len:n> (NLLB + LoRA đẳng thời).")
+            new = _translate_nllb(
+                [requests[k]["source"] for k in todo], source, target,
+                budgets=[int(requests[k].get("target_syllables") or 1) for k in todo],
+            )
+            for k, text in zip(todo, new):
+                if text and duration.syllables(text) < duration.syllables(requests[k]["text"]):
+                    out[k] = text
+        rest = [k for k, r in enumerate(requests) if out[k] == r["text"]]
+        if rest:
+            for k, text in zip(rest, rules([requests[k] for k in rest])):
+                out[k] = text
+        return out
+
+    return tighten
 
 
 # ----------------------------------------------- rút gọn có kiểm soát (HP-5)
@@ -722,6 +826,20 @@ Quy tắc bắt buộc:
 - Giữ nguyên ý chính, sắc thái, tên riêng và số liệu; bỏ từ đệm, rút gọn cách diễn đạt.
 - Không thêm ý mới, không chú thích, không xuống dòng bên trong một câu.
 - Trả về ĐÚNG số dòng, mỗi dòng dạng `<số dòng>|<câu đã rút gọn>`, không thêm lời dẫn."""
+
+
+# Dịch gọn ở bước 4: có câu gốc nên model được DỊCH LẠI cho vừa, không chỉ cắt chữ bản cũ
+_FIT_PROMPT = """Bạn là biên dịch viên lồng tiếng {tgt}. Mỗi dòng dưới đây gồm một câu thoại gốc và
+bản dịch hiện tại của nó — bản dịch này ĐANG DÀI HƠN khung thời gian của câu. Hãy DỊCH LẠI câu gốc
+sang {tgt} sao cho gọn, vừa khung.
+
+Định dạng đầu vào: `<số dòng>|<số âm tiết tối đa>|<câu gốc>|<bản dịch hiện tại>`.
+Quy tắc bắt buộc:
+- Câu dịch mới KHÔNG được quá số âm tiết tối đa đã cho ở dòng đó.
+- Đủ ý của câu gốc; giữ cách xưng hô, tên riêng và giọng điệu của bản dịch hiện tại.
+- Là lời nói tự nhiên, trọn câu — chọn cách nói ngắn hơn chứ không cắt cụt câu.
+- Không thêm ý mới, không chú thích, không xuống dòng bên trong một câu.
+- Trả về ĐÚNG số dòng, mỗi dòng dạng `<số dòng>|<câu dịch mới>`, không thêm lời dẫn."""
 
 
 # ---------------------------------------------------------- gọi API AI
@@ -880,8 +998,13 @@ def make_tightener(
     base_url: str = "",
     target: str = "vi",
     on_log: Callable[[str], None] | None = None,
+    source: str = "",
+    with_source: bool = False,
 ):
     """Hàm rút gọn có kiểm soát cho `budget.run_loop`, hoặc None nếu engine không hỗ trợ.
+
+    `with_source=True` (nút "Dịch gọn" ở bước 4): engine AI nhận cả câu gốc
+    (`request["source"]`) để dịch lại cho vừa thay vì chỉ rút bản dịch cũ.
 
     Google/MyMemory không điều khiển được độ dài; NLLB thường cũng không — đó là
     việc của mô hình đẳng thời (HP-4) với token ngân sách. Với các engine đó, bản
@@ -891,6 +1014,9 @@ def make_tightener(
     Câu nào model bỏ sót thì giữ nguyên văn cũ — vòng lặp sẽ thấy nó vẫn vượt và
     tự quyết định thử lượt nữa hay để atempo lo.
     """
+    if engine == "nllb" and source and lora_applies(source, target) and lora_available():
+        # HP-4: mô hình đẳng thời tự dịch lại ngắn hơn — siết ngay ở khâu dịch thay vì cắt chữ
+        return _nllb_tightener(source, target, on_log)
     if engine not in ("claude", "openai"):
         # Google/MyMemory/NLLB không điều khiển được độ dài, nhưng bản dịch tiếng
         # Việt thì rút gọn bằng luật được (bỏ từ đệm, cụm dài → cụm ngắn). Đây là
@@ -902,12 +1028,17 @@ def make_tightener(
                 on_log("  Engine dịch này không điều khiển được độ dài — rút gọn bằng luật tiếng Việt.")
             return shorten.make_tightener(on_log=on_log)
         return None
-    system = _TIGHTEN_PROMPT.format(tgt=name_en(target))
+    system = (_FIT_PROMPT if with_source else _TIGHTEN_PROMPT).format(tgt=name_en(target))
     label = model or ("claude-opus-5" if engine == "claude" else "gpt-4o-mini")
+
+    def flat(text: str) -> str:
+        return " ".join((text or "").replace("|", " ").split())
 
     def tighten(requests: list[dict]) -> list[str]:
         payload = "\n".join(
-            f"{i + 1}|{int(r.get('target_syllables') or 1)}|{r['text']}" for i, r in enumerate(requests)
+            f"{i + 1}|{int(r.get('target_syllables') or 1)}|"
+            + (f"{flat(r.get('source'))}|{flat(r['text'])}" if with_source else r["text"])
+            for i, r in enumerate(requests)
         )
         if on_log:
             on_log(f"  Rút gọn {len(requests)} câu → chờ {label} (tối đa {ai_timeout():.0f}s mỗi lượt)…")

@@ -21,6 +21,80 @@ bindRange('#stLineChars', '#stLineCharsOut');
 bindRange('#crf', '#crfOut');
 
 $('#startBtn').addEventListener('click', startAnalyze);
+$('#retransBtn').addEventListener('click', startRetranslate);
+$('#redoTransBtn').addEventListener('click', () => {
+  unlock(2);
+  $('#doTranslate').checked = true;
+  $('#doTranslate').dispatchEvent(new Event('change'));
+  goStep(2);
+  $('#engineCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+/* Dịch lại phụ đề của dự án đang mở: giữ lời gốc, mốc giờ, vai; chỉ viết lại bản dịch. */
+async function startRetranslate() {
+  if (!$('#doTranslate').checked) return toast('Bật "Dịch phụ đề" rồi chọn ngôn ngữ đích trước đã.', 'warn');
+  if (!aiReady()) return;
+  const had = S.cues.some(c => c.text2);
+  if (had && !(await askConfirm('Dịch lại sẽ thay toàn bộ bản dịch hiện có, kể cả những dòng bạn đã sửa tay trong lần mở này. '
+      + 'Những câu bạn đã sửa và từng xuất thì bộ nhớ dịch vẫn giữ và sẽ dùng lại.', { ok: 'Dịch lại', danger: false }))) return;
+  const payload = {
+    cues: S.cues.map(c => ({ start: c.start, end: c.end, text: c.text, text2: '', speaker: c.speaker || '' })),
+    target_lang: $('#tgtLang').value,
+    ...aiPayload(),
+    // dự án chưa dòng nào có vai thì máy chủ nhận vai nam / nữ luôn trong lượt này
+    gender_split: $('#genderOn').checked,
+  };
+  savePrefs();
+  $('#retransBtn').disabled = true;
+  try {
+    const r = await api(`/api/jobs/${S.jobId}/retranslate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    unlock(3);
+    goStep(3);
+    $('#toEditor').classList.add('hide');
+    $('#cancelBtn').disabled = false;
+    pollRetranslate(r.job_id);
+  } catch (e) {
+    toast(e.message, 'err', 9000);
+  } finally {
+    $('#retransBtn').disabled = false;
+  }
+}
+
+function pollRetranslate(id) {
+  clearInterval(S.poll);
+  S.transJob = id;
+  S.poll = setInterval(async () => {
+    let j;
+    try { j = await api(`/api/jobs/${id}`); }
+    catch (e) { clearInterval(S.poll); toast('Mất kết nối job: ' + e.message, 'err'); return; }
+    paintProgress(j, '#stepsList', '#logBox');
+    if (j.status === 'done') {
+      clearInterval(S.poll);
+      S.transJob = null;
+      $('#cancelBtn').disabled = true;
+      $('#phaseText').textContent = 'hoàn tất';
+      S.cues = (j.result.cues || []).map(c => ({ ...c }));
+      S.analyzed = { ...(S.analyzed || {}), target_lang: j.result.target_lang, speakers: j.result.speakers || [] };
+      await loadCharacters(S.jobId);   // lượt này có thể vừa nhận vai cho dự án chưa có vai
+      S.display = 'second';
+      $$('.tab[data-disp]').forEach(t => { t.disabled = false; t.classList.toggle('active', t.dataset.disp === 'second'); });
+      updateStepSummary();
+      $('#toEditor').classList.remove('hide');
+      unlock(4);
+      setupEditor();
+      goStep(4);
+      toast(`Đã dịch lại ${S.cues.length} dòng.`, 'ok', 4000);
+    } else if (j.status === 'error' || j.status === 'cancelled') {
+      clearInterval(S.poll);
+      S.transJob = null;
+      $('#cancelBtn').disabled = true;
+      $('#phaseText').textContent = j.status === 'cancelled' ? 'đã huỷ' : 'lỗi';
+      toast(j.error || 'Dịch lại thất bại — bản dịch cũ vẫn còn nguyên.', 'err', 12000);
+    }
+  }, 800);
+}
 
 async function startAnalyze() {
   if (!aiReady()) return;

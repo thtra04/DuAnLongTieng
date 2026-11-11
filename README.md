@@ -277,6 +277,12 @@ Xem tiến độ từng bước và log thời gian thực. Có thể bấm **Hu
 
 ### Bước 4 — Biên tập & xuất
 
+- Bố cục **bàn dựng phim**: màn hình xem bên trái, danh sách thoại bên phải, **dòng thời gian** chạy ngang bên dưới
+- Dòng thời gian: mỗi nhân vật một rãnh, mỗi dòng phụ đề một khối. Kéo khối để dời mốc giờ, kéo mép để co giãn,
+  kéo sang rãnh khác để đổi vai; bấm chỗ trống để tua. Ctrl + lăn chuột để thu phóng; Alt + ←/→ dời khối 0,1 giây
+- Rãnh **Lồng tiếng** vẽ thời lượng đọc dự đoán của từng câu (cùng hàm với lúc xuất) và tô đỏ phần đọc tràn khung —
+  thấy trước khi xuất, sửa chữ hay kéo mốc giờ là tính lại
+- Rãnh sóng âm: tiếng gốc, hoặc giọng gốc và nhạc nền riêng nếu dự án đã tách giọng
 - Bấm một dòng để tua video tới đúng chỗ đó
 - Sửa trực tiếp lời gốc và bản dịch trong ô
 - Chỉ số **cps** (ký tự/giây) chuyển vàng khi > 22 — dấu hiệu phụ đề trôi quá nhanh

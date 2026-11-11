@@ -24,8 +24,9 @@ cuda = [
 # Dich offline bang NLLB-200 (can torch, model ~2.5GB)
 offline = [
     "torch",
-    "transformers>=4.44",
+    "transformers>=4.44,<5",
     "sentencepiece",
+    "peft>=0.13",  # nap adapter LoRA dang thoi (HP-4)
 ]
 # Dich bang AI API (Claude / OpenAI)
 ai = [

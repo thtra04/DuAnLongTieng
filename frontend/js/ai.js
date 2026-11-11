@@ -12,6 +12,9 @@ function aiEnvKey() {
   return aiProvider() === 'anthropic' ? !!S.sys?.has_anthropic_key : !!S.sys?.has_openai_key;
 }
 
+// Engine đang chọn dùng được ngay: không phải engine AI, hoặc đã có key (ô nhập / biến môi trường)
+const aiKeyOk = () => !isAiEngine() || !!$('#apiKey').value.trim() || aiEnvKey();
+
 /* ------------------------------ chọn engine ------------------------------ */
 function fillEngines() {
   const grid = $('#engineGrid');

@@ -9,6 +9,8 @@ function setupEditor() {
   if (player.dataset.src !== src) {
     player.src = src;
     player.dataset.src = src;
+    // video khác -> bản đã xuất của video trước không còn liên quan
+    if (typeof setMonitorOutput === 'function') setMonitorOutput(null);
   }
   // Không có video gốc thì chỉ xuất được file chữ — khoá sẵn các mục cần video
   const noVideo = !!S.projectId && !S.videoSrc;
@@ -48,9 +50,11 @@ function setupEditor() {
   // Lồng tiếng đang bật từ dự án trước thì bảng vai phải dựng lại theo vai của bộ phụ đề mới,
   // không thì vẫn hiện vai cũ cho tới khi người dùng tắt rồi bật lại lồng tiếng.
   if ($('#dubOn').checked && S.voicesLoaded) renderSpeakerVoices();
+  if (typeof setupTimeline === 'function') setupTimeline();
 }
 
 function renderCues() {
+  setupFitButtons();
   const speakerIds = knownSpeakerIds();
   const list = $('#cueList');
   list.innerHTML = S.cues.map((c, i) => {
@@ -70,6 +74,7 @@ function renderCues() {
           : (speakerIds.length ? `<button type="button" class="spk none" data-i="${i}" title="Dòng này chưa gán vai — bấm để gán">+ vai</button>` : '')}
         <span class="len ${cps > 22 ? 'warn' : ''}" title="ký tự/giây — trên 22 là hơi nhanh">${cps} cps</span>
         ${tooLong ? '<span class="len warn" title="Bản dịch dài hơn 125% bản gốc — nên rút gọn trước khi lồng tiếng">Dài</span>' : ''}
+        ${cueIsLong(c) && showTr ? `<button type="button" class="fit-btn" data-i="${i}" title="Dịch lại dòng này cho gọn, vừa khung giờ — dùng engine đang chọn ở bước 2">Dịch gọn</button>` : ''}
       </div>
       <textarea class="src" rows="1" data-i="${i}">${escapeHtml(c.text)}</textarea>
       ${showTr ? `<textarea class="tr" rows="1" data-i="${i}">${escapeHtml(c.text2 || '')}</textarea>` : ''}
@@ -90,15 +95,103 @@ function renderCues() {
     if (e.target.tagName === 'TEXTAREA') return;
     const i = +el.dataset.i;
     $('#player').currentTime = S.cues[i].start + 0.02;
+    if (hasTimeline) tlReveal(S.cues[i].start);
   }));
+  // Sửa chữ thì khối trên dòng thời gian đổi theo, và thời lượng đọc được dự đoán lại
+  const hasTimeline = typeof renderTimeline === 'function';
+  const retitle = i => {
+    if (!hasTimeline) return;
+    const b = document.querySelector(`#tlInner .tl-lane[data-spk] .tl-blk[data-i="${i}"] b`);
+    if (b) b.textContent = tlBlockText(S.cues[i]);
+    tlQueueBudget();
+  };
   $$('textarea.src', list).forEach(t => t.addEventListener('input', () => {
     S.cues[+t.dataset.i].text = t.value;
     updateOverlay();
+    retitle(+t.dataset.i);
   }));
   $$('textarea.tr', list).forEach(t => t.addEventListener('input', () => {
     S.cues[+t.dataset.i].text2 = t.value;
     updateOverlay();
+    retitle(+t.dataset.i);
   }));
+  $$('.fit-btn', list).forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    fitLines([+b.dataset.i], b);
+  }));
+  syncFitButtons();
+  if (hasTimeline && TL.dur) renderTimeline();
+}
+
+/* ------------------------------ dịch gọn câu dài ------------------------------ */
+// Dòng bị gắn cờ: bản dịch dài quá 125 % bản gốc ("Dài") hoặc quá 22 ký tự/giây ("cps" vàng)
+function cueIsLong(c) {
+  if (!c.text2) return false;
+  if (lengthUnits(c.text2) > lengthUnits(c.text) * 1.25) return true;
+  return c.text2.length / Math.max(0.3, c.end - c.start) > 22;
+}
+
+function syncFitButtons() {
+  const all = $('#fitAllBtn');
+  if (!all) return;
+  const n = S.display !== 'main' && S.analyzed && S.analyzed.target_lang ? S.cues.filter(cueIsLong).length : 0;
+  all.classList.toggle('hide', !n);
+  $('#fitAllText').textContent = `Dịch gọn ${n} câu dài`;
+  $('#fitUndoBtn').classList.toggle('hide', !(S.fitUndo && S.fitUndo.length));
+}
+
+async function fitLines(indices, btn) {
+  if (S.fitBusy) return;
+  if (!aiKeyOk()) {
+    return toast('Engine AI đang chọn ở bước 2 chưa có API key — dán key ở bước 2 rồi bấm lại.', 'warn', 7000);
+  }
+  S.fitBusy = true;
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Đang dịch…'; }
+  $('#fitAllBtn').disabled = true;
+  try {
+    const r = await api('/api/fit-lines', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cues: S.cues.map(c => ({ start: c.start, end: c.end, text: c.text, text2: c.text2 || '', speaker: c.speaker || '' })),
+        indices,
+        source_lang: (S.analyzed && S.analyzed.source_lang) || '',
+        target_lang: (S.analyzed && S.analyzed.target_lang) || $('#tgtLang').value,
+        ...aiPayload(),
+      }),
+    });
+    const how = { ai: 'engine AI dịch lại', nllb: 'NLLB + LoRA dịch lại', rules: 'bộ luật rút gọn (engine đang chọn không dịch gọn được)' }[r.method] || '';
+    if (!r.changes.length) {
+      toast(r.asked ? `Không câu nào gọn hơn được — ${how}.` : 'Không có câu nào đang dài.', 'warn', 7000);
+    } else {
+      S.fitUndo = r.changes.map(ch => ({ i: ch.i, text2: S.cues[ch.i].text2 }));
+      r.changes.forEach(ch => { S.cues[ch.i].text2 = ch.text2; });
+      const tight = r.changes.filter(ch => ch.fits).length;
+      toast(`Đã dịch gọn ${r.changes.length}/${r.asked} câu (${tight} câu vừa hẳn khung) — ${how}.`, 'ok', 8000);
+    }
+  } catch (e) {
+    toast(e.message, 'err', 9000);
+  } finally {
+    S.fitBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+    $('#fitAllBtn').disabled = false;
+    renderCues();
+    updateOverlay();
+    if (typeof tlQueueBudget === 'function') tlQueueBudget();
+  }
+}
+
+function setupFitButtons() {
+  if (S.fitBound) return;
+  S.fitBound = true;
+  $('#fitAllBtn').addEventListener('click', () => fitLines([], null));
+  $('#fitUndoBtn').addEventListener('click', () => {
+    (S.fitUndo || []).forEach(u => { if (S.cues[u.i]) S.cues[u.i].text2 = u.text2; });
+    S.fitUndo = [];
+    renderCues();
+    updateOverlay();
+    if (typeof tlQueueBudget === 'function') tlQueueBudget();
+  });
 }
 
 function lengthUnits(text) {
@@ -170,6 +263,7 @@ function onTime() {
     }
   }
   updateOverlayText();
+  if (typeof timelineTick === 'function') timelineTick($('#player').currentTime);
 }
 
 /** Dòng phụ đề đang ứng với giây `t`, hoặc -1. Cue xếp theo giờ nên tìm nhị phân. */

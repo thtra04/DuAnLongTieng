@@ -53,6 +53,12 @@ def _render_dirs(job_id: str) -> list[Path]:
     return found
 
 
+def audio_dirs(job_id: str) -> list[Path]:
+    """Thư mục có thể chứa file âm thanh của dự án: job phân tích trước, rồi các lần xuất (mới nhất trước)."""
+    renders = sorted(_render_dirs(job_id), key=lambda p: p.stat().st_mtime, reverse=True)
+    return [JOB_DIR / job_id, *renders]
+
+
 def _dir_size(folder: Path) -> int:
     total = 0
     for path in folder.rglob("*"):

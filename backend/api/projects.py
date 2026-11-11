@@ -63,6 +63,46 @@ def project_hardsub(job_id: str) -> dict:
     return result
 
 
+# Các rãnh sóng âm của dòng thời gian: (id, nhãn, tên file trong thư mục job)
+_WAVE_TRACKS = (
+    ("vocals", "Giọng gốc", "vocals.wav"),
+    ("music", "Nhạc nền", "no_vocals.wav"),
+    ("audio", "Tiếng gốc", "audio.wav"),
+)
+
+
+@router.get("/{job_id}/waveform")
+def project_waveform(job_id: str, points: int = 2000) -> dict:
+    """Đỉnh sóng âm để vẽ dòng thời gian ở bước 4.
+
+    Đã tách giọng (lúc phân tích hoặc ở một lần xuất trước) thì trả hai rãnh giọng gốc /
+    nhạc nền; chưa tách thì trả một rãnh tiếng gốc. Không có file âm thanh nào thì
+    `tracks` rỗng — giao diện chỉ việc không vẽ sóng.
+    """
+    from ..core import waveform
+
+    job_id = Path(job_id).name
+    if not projects.full(job_id):
+        raise HTTPException(404, "Không tìm thấy dự án này.")
+    found: dict[str, Path] = {}
+    for folder in projects.audio_dirs(job_id):
+        for tid, _label, name in _WAVE_TRACKS:
+            if tid not in found and (folder / name).is_file():
+                found[tid] = folder / name
+    wanted = ["vocals", "music"] if "vocals" in found and "music" in found else ["audio"]
+    tracks, duration = [], 0.0
+    for tid, label, _name in _WAVE_TRACKS:
+        if tid not in wanted or tid not in found:
+            continue
+        try:
+            data, seconds = waveform.cached_peaks(found[tid], points)
+        except Exception:
+            continue  # file hỏng / không phải PCM 16 bit: bỏ rãnh đó
+        tracks.append({"id": tid, "label": label, "peaks": data})
+        duration = max(duration, seconds)
+    return {"duration": round(duration, 3), "tracks": tracks}
+
+
 @router.get("/{job_id}/files/{name}")
 def project_file(job_id: str, name: str):
     path = projects.output_file(Path(job_id).name, name)

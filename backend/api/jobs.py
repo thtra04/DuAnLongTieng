@@ -201,6 +201,110 @@ async def render(job_id: str, payload: dict) -> dict:
     return {"job_id": job.id}
 
 
+@router.post("/jobs/{job_id}/retranslate")
+async def retranslate(job_id: str, payload: dict) -> dict:
+    """Dịch lại phụ đề của dự án `job_id` với engine / thuật ngữ / bối cảnh mới, không chạy lại nhận dạng."""
+    from ..store import characters
+
+    cfg = dict(payload or {})
+    job_id = safe_id(job_id)
+    state_path = JOB_DIR / job_id / "state.json" if job_id else None
+    if not state_path or not state_path.exists():
+        raise HTTPException(410, "Dự án không còn trên máy chủ. Hãy chạy lại từ bước 1.")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if not (cfg.get("target_lang") or state.get("target_lang")):
+        raise HTTPException(400, "Chưa chọn ngôn ngữ đích.")
+    ok, why = translate.engine_available(cfg.get("engine", "google"))
+    if not ok:
+        raise HTTPException(400, why)
+    if cfg.get("cues") is not None and not isinstance(cfg["cues"], list):
+        raise HTTPException(400, "Danh sách phụ đề không hợp lệ.")
+
+    # Bảng vai (tên, giới, nhóm tuổi) để engine AI chọn xưng hô theo người nói
+    cast: list[dict] = []
+    try:
+        cast = [{"id": c["label"], "name": c.get("name") or "", "gender": c.get("gender") or "",
+                 "age": c.get("age") or ""} for c in characters.list_for(job_id)]
+    except Exception:
+        cast = []
+    if not cast:
+        cast = [s for s in state.get("speakers") or [] if isinstance(s, dict)]
+
+    # Chưa dòng nào có vai và người dùng bật tách giọng nam / nữ -> nhận vai trong lượt này
+    lines = cfg["cues"] if cfg.get("cues") is not None else (state.get("cues") or [])
+    has_roles = any(isinstance(c, dict) and (c.get("speaker") or "").strip() for c in lines)
+    cfg["resplit"] = bool(cfg.get("gender_split")) and not has_roles
+
+    job = create_job("retranslate", pipeline.retranslate_steps(cfg))
+    job.log("Bắt đầu dịch lại.")
+    run_in_thread(job, lambda j: pipeline.run_retranslate(j, state, state_path, cfg, cast))
+    return {"job_id": job.id}
+
+
+@router.post("/reading-budget")
+def reading_budget(payload: dict) -> dict:
+    """Dự đoán thời lượng đọc của từng câu lồng tiếng so với khung giờ của nó.
+
+    Dòng thời gian ở bước 4 gọi mỗi khi người dùng sửa chữ hoặc kéo mốc giờ, để tô đỏ
+    câu đọc không kịp TRƯỚC khi xuất. Dùng đúng hàm `budget.assess` mà bước xuất dùng.
+    """
+    from ..core import budget
+    from ..core.subtitles import Cue
+
+    raw = (payload or {}).get("cues") or []
+    if not isinstance(raw, list) or len(raw) > 20000:
+        raise HTTPException(400, "Danh sách phụ đề không hợp lệ.")
+    cues = [Cue.from_dict(c) for c in raw if isinstance(c, dict)]
+    items = [
+        {"cues": it["cues"], "start": cues[it["cues"][0]].start, "predicted": it["predicted"],
+         "budget": it["budget"], "over": max(0.0, it["over"])}
+        for it in budget.assess(cues)
+    ]
+    return {"items": items, "tolerance": budget.TOLERANCE}
+
+
+@router.post("/fit-lines")
+def fit_lines(payload: dict) -> dict:
+    """Dịch gọn lại những dòng phụ đề đang dài hơn khung giờ (nút "Dịch gọn" ở bước 4).
+
+    Engine AI dịch lại từ câu gốc với giới hạn âm tiết; NLLB có adapter đẳng thời dịch lại
+    với token ngân sách; engine còn lại rút gọn bản dịch tiếng Việt bằng luật. Không ghi gì
+    xuống đĩa — trả về các dòng đổi để trình duyệt áp vào bảng và hoàn tác được.
+    """
+    from ..core import budget
+    from ..core.subtitles import Cue
+
+    cfg = dict(payload or {})
+    raw = cfg.get("cues") or []
+    if not isinstance(raw, list) or len(raw) > 20000:
+        raise HTTPException(400, "Danh sách phụ đề không hợp lệ.")
+    indices = cfg.get("indices") or []
+    if not isinstance(indices, list) or not all(isinstance(i, int) for i in indices):
+        raise HTTPException(400, "Danh sách dòng cần dịch gọn không hợp lệ.")
+    engine = cfg.get("engine") or "google"
+    ok, why = translate.engine_available(engine)
+    if not ok:
+        raise HTTPException(400, why)
+    target = cfg.get("target_lang") or "vi"
+    logs: list[str] = []
+    tightener = translate.make_tightener(
+        engine, api_key=cfg.get("api_key") or "", model=cfg.get("ai_model") or "",
+        base_url=cfg.get("ai_base_url") or "", target=target, on_log=logs.append,
+        source=cfg.get("source_lang") or "", with_source=True,
+    )
+    if tightener is None:
+        raise HTTPException(400, "Engine này không dịch gọn được với ngôn ngữ đích đang chọn — hãy chọn engine AI ở bước 2.")
+    cues = [Cue.from_dict(c) for c in raw if isinstance(c, dict)]
+    try:
+        out = budget.fit_lines(cues, indices, tightener)
+    except Exception as exc:
+        raise HTTPException(502, f"Dịch gọn không thành: {exc}") from exc
+    method = "ai" if engine in ("claude", "openai") else (
+        "nllb" if engine == "nllb" and translate.lora_available() and translate.lora_applies(cfg.get("source_lang"), target)
+        else "rules")
+    return {**out, "method": method}
+
+
 @router.get("/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
     job = get_job(job_id)

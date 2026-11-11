@@ -1,14 +1,16 @@
-/* frontend/js/theme.js — chủ đề màu: 9 bảng màu dựng sẵn + màu nhấn tuỳ chọn.
+/* frontend/js/theme.js — chủ đề màu: 11 bảng màu dựng sẵn + màu nhấn tuỳ chọn.
    Lưu trong localStorage; đoạn script inline ở <head> áp data-theme trước khi
    vẽ để không nháy từ sáng sang tối, file này lo phần còn lại.
    Các file js dùng chung một phạm vi toàn cục; thứ tự nạp ghi trong index.html. */
 
 const THEME_KEY = 'vsub.theme.v1';
 // Chưa chọn gì thì dùng bảng này — phải trùng với đoạn script inline trong index.html
-const DEFAULT_THEME = 'rap';
+const DEFAULT_THEME = 'studio';
 
 // id trùng với data-theme trong css/style.css; `sw` là màu hiện trên nút tròn
 const THEMES = [
+  { id: 'studio', label: 'Studio (xám, xanh dương)', sw: 'linear-gradient(135deg, #262930 48%, #5b93ff 52%)' },
+  { id: 'sang', label: 'Sáng (trắng, xanh dương)', sw: 'linear-gradient(135deg, #ffffff 48%, #2f5be0 52%)' },
   { id: 'rap',  label: 'Rạp chiếu', sw: 'linear-gradient(135deg, #0a0a0c 48%, #f0a53a 52%)' },
   { id: 'vang', label: 'Hoàng kim', sw: 'linear-gradient(135deg, #17130c 48%, #e2b659 52%)' },
   { id: 'nga',  label: 'Ngà',       sw: 'linear-gradient(135deg, #f5f1e8 48%, #a16207 52%)' },
@@ -19,7 +21,7 @@ const THEMES = [
   { id: 'toi',  label: 'Đêm',       sw: '#1b2a6b' },
   { id: 'than', label: 'Than',      sw: '#2b2f38' },
 ];
-const DARK_THEMES = new Set(['toi', 'than', 'vang', 'rap']);
+const DARK_THEMES = new Set(['toi', 'than', 'vang', 'rap', 'studio']);
 
 function readTheme() {
   try { return JSON.parse(localStorage.getItem(THEME_KEY) || '{}'); } catch { return {}; }
