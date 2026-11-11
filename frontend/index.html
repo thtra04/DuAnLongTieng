@@ -2,13 +2,18 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0f14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="VSub Studio">
 <title>VSub Studio — Tạo phụ đề & dịch video</title>
 <script>
 // Áp chủ đề đã lưu trước khi vẽ, tránh nháy sáng/tối; màu nhấn tuỳ chọn do js/theme.js lo.
-// Chưa chọn gì thì dùng 'rap' (Rạp chiếu) — trùng DEFAULT_THEME trong js/theme.js.
-try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme || 'rap';
-  if (_t !== 'hong') document.documentElement.dataset.theme = _t; } catch (e) { document.documentElement.dataset.theme = 'rap'; }
+// Chưa chọn gì thì dùng 'studio' — trùng DEFAULT_THEME trong js/theme.js.
+try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme || 'studio';
+  if (_t !== 'hong') document.documentElement.dataset.theme = _t; } catch (e) { document.documentElement.dataset.theme = 'studio'; }
 </script>
 <link rel="stylesheet" href="/css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23151009'/><rect x='1.5' y='1.5' width='29' height='29' rx='6.5' fill='none' stroke='%23dbb15c' stroke-width='1.5'/><path d='M13 10.5v11l9-5.5z' fill='%23e2b659'/></svg>">
@@ -86,13 +91,13 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
 
   <nav class="stepper" aria-label="Các bước thực hiện">
     <button class="step-btn active" data-step="1"><span class="num">1</span>
-      <span class="lbl">Nguồn video<span class="sub" id="step1Sub">File, link, hoặc phụ đề sẵn</span></span></button>
+      <span class="lbl">Nguồn video<span class="sub" id="step1Sub">File, link, hoặc phụ đề sẵn</span></span><span class="lbl-m" aria-hidden="true">Nguồn</span></button>
     <button class="step-btn" data-step="2" disabled><span class="num">2</span>
-      <span class="lbl">Ngôn ngữ &amp; dịch<span class="sub" id="step2Sub">Chọn nguồn → đích</span></span></button>
+      <span class="lbl">Ngôn ngữ &amp; dịch<span class="sub" id="step2Sub">Chọn nguồn → đích</span></span><span class="lbl-m" aria-hidden="true">Dịch</span></button>
     <button class="step-btn" data-step="3" disabled><span class="num">3</span>
-      <span class="lbl">Xử lý<span class="sub" id="step3Sub">Nghe, canh giờ, dịch</span></span></button>
+      <span class="lbl">Xử lý<span class="sub" id="step3Sub">Nghe, canh giờ, dịch</span></span><span class="lbl-m" aria-hidden="true">Xử lý</span></button>
     <button class="step-btn" data-step="4" disabled><span class="num">4</span>
-      <span class="lbl">Biên tập &amp; xuất<span class="sub" id="step4Sub">Sửa lời, chỉnh kiểu, tải về</span></span></button>
+      <span class="lbl">Biên tập &amp; xuất<span class="sub" id="step4Sub">Sửa lời, chỉnh kiểu, tải về</span></span><span class="lbl-m" aria-hidden="true">Biên tập</span></button>
   </nav>
 
   <!-- ══════════════════════════ BƯỚC 1 ══════════════════════════ -->
@@ -393,8 +398,13 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
     <div class="actions">
       <button class="btn ghost" data-goto="1"><svg class="i" aria-hidden="true"><use href="#i-arrow-left"/></svg> Quay lại</button>
       <div style="flex:1"></div>
-      <button class="btn primary" id="startBtn"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg> Bắt đầu xử lý</button>
+      <button class="btn" id="startBtn"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg> Bắt đầu xử lý</button>
+      <button class="btn primary hide" id="retransBtn" title="Giữ nguyên lời thoại đã nhận dạng, mốc giờ và vai; chỉ viết lại bản dịch"><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg> Chỉ dịch lại phụ đề</button>
     </div>
+    <p class="hint hide" id="retransHint" style="text-align:right;margin-top:8px">Dự án này đã có lời thoại.
+      <b>Chỉ dịch lại</b> giữ nguyên lời gốc, mốc giờ và vai — đổi engine, bối cảnh hay bộ thuật ngữ ở trên rồi bấm.
+      Dự án chưa có vai (làm từ bản cũ) thì lượt này tự tách giọng nam / nữ nếu ô đó đang bật.
+      <b>Bắt đầu xử lý</b> là chạy lại từ đầu, kể cả nghe lại video.</p>
   </section>
 
   <!-- ══════════════════════════ BƯỚC 3 ══════════════════════════ -->
@@ -431,9 +441,9 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
 
   <!-- ══════════════════════════ BƯỚC 4 ══════════════════════════ -->
   <section class="panel" id="panel4">
-    <div class="editor">
+    <div class="editor bench">
       <div class="player-wrap">
-        <div class="card" style="padding:14px">
+        <div class="card bench-mon" style="padding:14px">
           <div class="slate" aria-hidden="true"><span class="stripes"></span><b>Màn ảnh</b><span class="hide-narrow">Bản xem trước</span><span class="rec">Biên tập</span></div>
           <div class="player-box">
             <video id="player" controls preload="metadata"></video>
@@ -444,11 +454,16 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
             <button class="btn sm ghost" id="prevCue"><svg class="i" aria-hidden="true"><use href="#i-skip-back"/></svg> Dòng trước</button>
             <button class="btn sm ghost" id="nextCue">Dòng sau <svg class="i" aria-hidden="true"><use href="#i-skip-forward"/></svg></button>
             <div style="flex:1"></div>
+            <div class="mon-src hide" id="monSrc" role="group" aria-label="Nguồn đang xem">
+              <button type="button" class="on" data-mon="orig">Video gốc</button>
+              <button type="button" data-mon="out" id="monOutBtn">Bản lồng tiếng</button>
+            </div>
             <span class="muted" id="cueCount"></span>
+            <p class="mon-note hide" id="monNote"></p>
           </div>
         </div>
 
-        <div class="card">
+        <div class="card bench-style">
           <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-palette"/></svg></span> Kiểu phụ đề</h2>
           <div class="stylebar">
             <label class="field"><span>Font</span>
@@ -524,10 +539,31 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
         </div>
       </div>
 
-      <div>
-        <div class="card">
+      <div class="card tl-card" id="tlCard">
+        <div class="tl-top">
+          <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-film"/></svg></span> Dòng thời gian</h2>
+          <span class="muted hide-narrow">Kéo khối để dời mốc giờ · kéo mép để co giãn · kéo sang rãnh khác để đổi vai</span>
+          <span class="tl-readout" id="tlReadout" aria-live="polite"></span>
+          <span class="tl-over" id="tlOver"></span>
+          <label class="tl-zoom"><span>Thu phóng</span>
+            <input type="range" id="tlZoom" min="0" max="100" value="40" aria-label="Thu phóng dòng thời gian"></label>
+          <button class="btn sm ghost" id="tlFitBtn" type="button">Xem trọn</button>
+        </div>
+        <div class="tl-body">
+          <div class="tl-names" id="tlNames"></div>
+          <div class="tl-scroll" id="tlScroll"><div class="tl-inner" id="tlInner"></div></div>
+        </div>
+      </div>
+
+      <div class="bench-right">
+        <div class="card bench-list">
           <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg></span> Nội dung phụ đề</h2>
           <p class="hint">Bấm vào một dòng để tua video tới đó. Sửa trực tiếp trong ô.</p>
+          <div class="actions" style="margin:0 0 10px">
+            <button class="btn sm ghost" id="redoTransBtn" type="button" title="Về bước 2 để đổi engine, bối cảnh, thuật ngữ rồi dịch lại — không phải tải video lên lại"><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg> Dịch lại…</button>
+            <button class="btn sm ghost hide" id="fitAllBtn" type="button" title="Dịch lại cho gọn những dòng đang gắn nhãn Dài hoặc cps vàng, bằng engine đang chọn ở bước 2"><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg> <span id="fitAllText">Dịch gọn câu dài</span></button>
+            <button class="btn sm ghost hide" id="fitUndoBtn" type="button">Hoàn tác dịch gọn</button>
+          </div>
           <div class="tabs" id="dispTabs">
             <button class="tab" data-disp="main">Nguyên ngữ</button>
             <button class="tab active" data-disp="second">Bản dịch</button>
@@ -705,9 +741,23 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
   </section>
 
   <footer class="foot">
-    VSub Studio · Whisper + Google/NLLB/AI · Lồng tiếng bằng
-    <a href="https://github.com/pnnbao97/VieNeu-TTS" target="_blank" rel="noopener">VieNeu-TTS</a>
-    <br>Chạy hoàn toàn trên máy bạn — video không rời khỏi máy (trừ khi dùng engine dịch online).
+    <div class="foot-card">
+      <p class="foot-kind">Đồ án tốt nghiệp · Ngành Công nghệ phần mềm</p>
+      <h2 class="foot-title">Ứng dụng lồng tiếng video tự động đa nhân vật với dịch máy đa ngữ ràng buộc đẳng thời</h2>
+      <dl class="foot-info">
+        <div><dt>Sinh viên thực hiện</dt><dd>Hoàng Thanh Trà</dd></div>
+        <div><dt>Mã số sinh viên</dt><dd>1150080120</dd></div>
+        <div><dt>Lớp</dt><dd>11_ĐH_CNPM2 · Khoá 2022–2026</dd></div>
+        <div><dt>Giảng viên hướng dẫn</dt><dd>TS. Dương Thị Thúy Nga</dd></div>
+        <div><dt>Đơn vị</dt><dd>Khoa Công nghệ thông tin · Trường Đại học Tài nguyên và Môi trường TP.HCM</dd></div>
+      </dl>
+      <p class="foot-about">VSub Studio nghe lời thoại trong video, tách từng nhân vật theo giọng, ngữ điệu, dịch sang tiếng Việt theo
+        ngữ cảnh rồi lồng tiếng lại — mỗi nhân vật một giọng — sao cho câu đọc vừa khung thời gian của lời gốc,
+        không mất nhạc nền hoặc âm thanh khác.
+        Nhận dạng bằng Whisper, dịch bằng Google / NLLB / mô hình ngôn ngữ lớn, lồng tiếng bằng
+        <a href="https://github.com/pnnbao97/VieNeu-TTS" target="_blank" rel="noopener">VieNeu-TTS</a>.</p>
+      <p class="foot-note">Chạy hoàn toàn trên máy bạn — video không rời khỏi máy (trừ khi dùng engine dịch online).</p>
+    </div>
   </footer>
 </div>
 
@@ -724,6 +774,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
 <script src="/js/editor.js"></script>
 <script src="/js/hardsub.js"></script>
 <script src="/js/dubbing.js"></script>
+<script src="/js/timeline.js"></script>
 <script src="/js/export.js"></script>
 <script src="/js/prefs.js"></script>
 <script src="/js/main.js"></script>

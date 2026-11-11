@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -76,11 +77,41 @@ def from_file(path: Path) -> list[dict]:
     return rows
 
 
+def _letters(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text or "").lower()
+
+
+def _bigrams(text: str) -> set[str]:
+    t = _letters(text)
+    return {t[i:i + 2] for i in range(len(t) - 1)}
+
+
+def near_holdout(src: str, held_grams: set[str], threshold: float = 0.5) -> bool:
+    """Câu này có phải là cùng lời thoại với tập kiểm thử, chỉ khác cách cắt câu / lỗi ASR?
+
+    Dự án cũ của chính tool có thể là đúng video dùng làm tập kiểm thử: cùng lời thoại
+    nhưng ghép cue khác đi ("一个人走夜路" + "不怕遇见歹人" thành một câu) hoặc ASR nghe
+    lệch một chữ, nên so khớp nguyên câu không bắt được — đo thật có 172 cặp lọt kiểu này.
+    Ở đây so theo cặp chữ liền nhau: quá nửa số cặp chữ của câu nằm trong tập kiểm thử
+    thì coi là rò.
+    """
+    grams = _bigrams(src)
+    if not grams or not held_grams:
+        return False
+    return len(grams & held_grams) / len(grams) >= threshold
+
+
 def merge(sources: list[list[dict]], holdout: set[str] | None = None) -> tuple[list[dict], dict]:
-    """Gộp các nguồn; nguồn đứng trước thắng khi trùng câu gốc. Trả về (corpus, thống kê)."""
+    """Gộp các nguồn; nguồn đứng trước thắng khi trùng câu gốc. Trả về (corpus, thống kê).
+
+    Tập kiểm thử bị loại hai mức: trùng nguyên câu với mọi nguồn; riêng dữ liệu của
+    chính tool (bộ nhớ dịch, dự án cũ) còn bị loại khi "gần trùng" (`near_holdout`).
+    Corpus ngoài (`extra`) không áp mức hai, kẻo mất oan các câu ngắn phổ biến.
+    """
     from backend.store.memory import normalize
 
     held = {normalize(t) for t in (holdout or set())}
+    held_grams = set().union(*[_bigrams(t) for t in held]) if held else set()
     seen: set[tuple[str, str]] = set()
     out: list[dict] = []
     stats = {"total": 0, "duplicate": 0, "holdout": 0, "by_origin": {}}
@@ -88,7 +119,7 @@ def merge(sources: list[list[dict]], holdout: set[str] | None = None) -> tuple[l
         for r in rows:
             stats["total"] += 1
             key = (normalize(r["src"]), (r.get("tgt_lang") or "").lower())
-            if key[0] in held:
+            if key[0] in held or (r.get("origin") != "extra" and near_holdout(r["src"], held_grams)):
                 stats["holdout"] += 1
                 continue
             if not key[0] or key in seen or normalize(r["src"]) == normalize(r["tgt"]):

@@ -19,6 +19,7 @@ sớm — nếu tính khác đi thì câu "vừa" theo vòng lặp vẫn "tràn"
 
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 from . import duration
@@ -173,6 +174,8 @@ def run_loop(
                 **it,
                 "target_syllables": target_syllables(it),
                 "pieces": [(cues[i].text2 or "").strip() for i in it["cues"]],
+                # câu gốc: bộ siết kiểu dịch lại (NLLB đẳng thời, HP-4) cần nó
+                "source": _join_fragments([(cues[i].text or "").strip() for i in it["cues"]]),
             }
             for it in pending
         ]
@@ -208,6 +211,82 @@ def run_loop(
     stats["over_after"] = len(pending)
     stats["unresolved"] = [_brief(it) for it in pending]
     return stats
+
+
+# ------------------------------------------------- dịch gọn từng dòng (bước 4)
+CPS_MAX = 22          # ký tự/giây — trùng ngưỡng tô vàng "cps" ở bảng phụ đề
+LENGTH_RATIO = 1.25   # bản dịch dài quá 125 % bản gốc thì bảng phụ đề gắn nhãn "Dài"
+_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]")
+
+
+def length_units(text: str) -> int:
+    """Đơn vị độ dài như bảng phụ đề đếm: chữ với tiếng Trung/Nhật, từ với ngôn ngữ còn lại."""
+    text = text or ""
+    if _CJK.search(text):
+        return max(1, len(re.sub(r"\s+", "", text)))
+    return max(1, len(text.split()))
+
+
+def line_target(cue: Cue, model: duration.DurationModel | None = None) -> int | None:
+    """Số âm tiết tối đa để dòng này hết bị gắn cờ, hoặc None nếu dòng không dài.
+
+    Ba cờ, lấy mức chặt nhất: dài quá 125 % bản gốc ("Dài"), quá 22 ký tự/giây ("cps"),
+    và giọng đọc dự đoán không kịp khung giờ của dòng.
+    """
+    text = (cue.text2 or "").strip()
+    if not text:
+        return None
+    model = model or duration.default_model()
+    syl = duration.syllables(text)
+    span = max(0.3, cue.end - cue.start)
+    caps: list[int] = []
+    if (cue.text or "").strip():
+        allowed = length_units(cue.text) * LENGTH_RATIO
+        units = length_units(text)
+        if units > allowed:
+            caps.append(int(syl * allowed / units))
+    if len(text) / span > CPS_MAX:
+        caps.append(int(syl * CPS_MAX * span / len(text)))
+    predicted = model.predict(text)
+    if predicted > span * (1.0 + TOLERANCE):
+        caps.append(int(syl * span / predicted * 0.92))
+    if not caps:
+        return None
+    return max(1, min(syl - 1, *caps))
+
+
+def fit_lines(
+    cues: list[Cue],
+    indices: list[int] | None,
+    tightener: Tightener,
+    model: duration.DurationModel | None = None,
+) -> dict:
+    """Dịch gọn lại các dòng bị gắn cờ dài. `indices` rỗng = mọi dòng đang dài.
+
+    Mỗi dòng là một yêu cầu riêng (không gộp đơn vị đọc) để chữ không chạy sang dòng
+    bên cạnh. Bản mới chỉ được nhận khi thật sự ngắn hơn bản cũ. Không sửa `cues`;
+    trả về danh sách thay đổi để bên gọi tự áp và hoàn tác được.
+    """
+    model = model or duration.default_model()
+    pool = range(len(cues)) if not indices else [i for i in indices if 0 <= i < len(cues)]
+    requests = []
+    for i in pool:
+        target = line_target(cues[i], model)
+        if target is None:
+            continue
+        text = (cues[i].text2 or "").strip()
+        requests.append({"cues": [i], "text": text, "pieces": [text], "target_syllables": target,
+                         "syllables": duration.syllables(text), "source": (cues[i].text or "").strip()})
+    changes: list[dict] = []
+    if requests:
+        for r, new in zip(requests, tightener(requests)):
+            if isinstance(new, (list, tuple)):
+                new = _join_fragments([(p or "").strip() for p in new])
+            new = " ".join((new or "").split())
+            if new and new != r["text"] and duration.syllables(new) < r["syllables"]:
+                changes.append({"i": r["cues"][0], "text2": new, "target": r["target_syllables"],
+                                "fits": duration.syllables(new) <= r["target_syllables"]})
+    return {"asked": len(requests), "changes": changes}
 
 
 def _brief(item: dict) -> dict:

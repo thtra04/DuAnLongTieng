@@ -123,13 +123,68 @@ function pollRender() {
 const FILE_ICON = { srt: 'captions', vtt: 'captions', txt: 'file-text', ass: 'palette', mp4: 'film', mkv: 'film', wav: 'volume' };
 
 function showFiles(files) {
+  const urlOf = f => `${API_BASE}/api/jobs/${S.renderJob}/files/${encodeURIComponent(f.name)}`;
+  const burned = files.some(f => /\.hardsub\.mp4$/i.test(f.name));
   $('#resultBox').classList.remove('hide');
   $('#fileList').innerHTML = files.map((f, i) => `
     <div class="fileitem" style="animation-delay:${i * 60}ms">
       <span class="ic">${icon(FILE_ICON[f.kind] || 'folder')}</span>
       <div class="meta"><b>${f.name}</b><small>${fmtBytes(f.size)}</small></div>
-      <a class="btn sm" href="${API_BASE}/api/jobs/${S.renderJob}/files/${encodeURIComponent(f.name)}" download>${icon('download')} Tải</a>
+      ${f.kind === 'mp4' ? `<button type="button" class="btn sm ghost play" data-play="${i}">${icon('film')} Xem thử</button>` : ''}
+      <a class="btn sm" href="${urlOf(f)}" download>${icon('download')} Tải</a>
     </div>`).join('');
-  $('#resultBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const labelOf = f => /\.longtieng\./i.test(f.name) ? 'Bản lồng tiếng'
+    : /\.hardsub\./i.test(f.name) ? 'Bản nung phụ đề' : 'Bản đã xuất';
+  const asOutput = f => ({
+    url: `${urlOf(f)}?download=0`, label: labelOf(f),
+    burned: /\.hardsub\./i.test(f.name) || (/\.longtieng\./i.test(f.name) && burned),
+  });
+  $$('#fileList [data-play]').forEach(b => b.addEventListener('click', () => {
+    setMonitorOutput(asOutput(files[+b.dataset.play]));
+    monitorShow('out');
+    $('#player').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }));
+  // Vừa xuất bản lồng tiếng -> đưa luôn lên màn hình xem để nghe và sửa tiếp
+  const dubbed = files.find(f => /\.longtieng\.mp4$/i.test(f.name));
+  if (dubbed) {
+    setMonitorOutput(asOutput(dubbed));
+    monitorShow('out');
+    toast('Bản lồng tiếng đã lên màn hình xem — bấm một dòng để nghe đúng câu đó, sửa rồi xuất lại.', 'ok', 8000);
+  } else {
+    $('#resultBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
+
+/* ---------------- màn hình xem: video gốc ↔ bản đã xuất ----------------
+   Nghe bản lồng tiếng ngay trong trình biên tập: cùng một khung xem, cùng danh sách
+   thoại và dòng thời gian, chỉ đổi nguồn phát. Đổi nguồn thì giữ nguyên vị trí đang xem. */
+function setMonitorOutput(out) {
+  S.monOut = out || null;
+  $('#monSrc').classList.toggle('hide', !S.monOut);
+  if (S.monOut) $('#monOutBtn').textContent = S.monOut.label;
+  if (!S.monOut) monitorShow('orig');
+}
+
+function monitorShow(which) {
+  const p = $('#player');
+  const useOut = which === 'out' && !!S.monOut;
+  const url = useOut ? S.monOut.url : p.dataset.src;
+  if (url && p.getAttribute('src') !== url) {
+    const at = p.currentTime || 0, playing = !p.paused;
+    p.src = url;
+    p.addEventListener('loadedmetadata', () => {
+      p.currentTime = at;
+      if (playing) p.play().catch(() => {});
+    }, { once: true });
+  }
+  $$('#monSrc button').forEach(b => b.classList.toggle('on', (b.dataset.mon === 'out') === useOut));
+  // Bản xuất đã nung chữ thì ẩn lớp phụ đề xem trước, không là thấy hai lần chữ
+  $('#subOverlay').classList.toggle('hide', useOut && !!S.monOut.burned);
+  const note = $('#monNote');
+  note.classList.toggle('hide', !useOut);
+  note.textContent = useOut
+    ? `Đang phát ${S.monOut.label.toLowerCase()} đã xuất. Chữ bạn sửa sau lần xuất đó chưa có trong tiếng — xuất lại để nghe bản mới.`
+    : '';
+}
+$$('#monSrc button').forEach(b => b.addEventListener('click', () => monitorShow(b.dataset.mon)));
 

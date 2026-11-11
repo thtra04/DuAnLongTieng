@@ -94,6 +94,16 @@ function filmCard(f) {
   </div>`;
 }
 
+/** Nút xem ngay video đã xuất của một tập (ưu tiên bản lồng tiếng) — không phải tải về. */
+function epWatch(p) {
+  const vids = (p.files || []).filter(x => /\.mp4$/i.test(x.name));
+  const v = vids.filter(x => /\.longtieng\./i.test(x.name)).pop() || vids[vids.length - 1];
+  if (!v) return '';
+  const what = /\.longtieng\./i.test(v.name) ? 'bản lồng tiếng' : 'video đã xuất';
+  return `<button class="btn sm primary ep-watch" data-name="${esc(v.name)}" data-what="${what}"
+    title="Xem ${what} ngay trong trang, không cần tải về">${icon('film')} Xem ${what}</button>`;
+}
+
 /** Tập đã có phụ đề. */
 function epDone(f, e) {
   const p = e.project;
@@ -120,6 +130,7 @@ function epDone(f, e) {
       </div>
     </div>
     <div class="ep-ops">
+      ${epWatch(p)}
       <button class="btn sm ep-open">Mở ra sửa</button>
       <button class="btn sm danger ep-del">${icon('trash')} Xoá tập</button>
     </div>
@@ -168,6 +179,7 @@ function looseSection(loose) {
                               : LANG_VI(p.source_lang || '?')}</div>
           </div>
           <div class="ep-ops">
+            ${epWatch(p)}
             <button class="btn sm lo-assign">Gán vào bộ</button>
             <button class="btn sm lo-open">Mở ra sửa</button>
             <button class="btn sm danger lo-del" title="Xoá video này" aria-label="Xoá video này">${icon('trash')}</button>
@@ -193,6 +205,11 @@ function bindFilm(f, box) {
     const no = +row.dataset.no;
     const ep = f.episodes.find(x => x.no === no);
     $('.ep-open', row)?.addEventListener('click', () => openProject(row.dataset.id));
+    $('.ep-watch', row)?.addEventListener('click', e => {
+      const b = e.currentTarget;
+      showVideo(`${API_BASE}/api/projects/${row.dataset.id}/files/${encodeURIComponent(b.dataset.name)}`,
+        `Tập ${row.dataset.no} — ${b.dataset.what}`);
+    });
     $('.ep-del', row)?.addEventListener('click', () => removeEpisode(f, ep, true));
     $('.ep-rm', row)?.addEventListener('click', () => removeEpisode(f, ep, false));
     $('.ep-src', row)?.addEventListener('click', () => giveSource(f, ep));
@@ -205,6 +222,11 @@ function bindLoose(loose, box) {
   $$('.ep', card).forEach(row => {
     const p = loose.find(x => x.id === row.dataset.id);
     $('.lo-open', row)?.addEventListener('click', () => openProject(row.dataset.id));
+    $('.ep-watch', row)?.addEventListener('click', e => {
+      const b = e.currentTarget;
+      showVideo(`${API_BASE}/api/projects/${row.dataset.id}/files/${encodeURIComponent(b.dataset.name)}`,
+        `${p.video_name} — ${b.dataset.what}`);
+    });
     $('.lo-del', row)?.addEventListener('click', () => deleteProject(p, null));
     $('.lo-assign', row)?.addEventListener('click', () => assignLoose(p));
   });
@@ -419,6 +441,7 @@ async function openProject(id) {
 
   S.jobId = id;                       // xuất file vẫn dùng state.json của job này
   S.projectId = id;
+  S.projectName = p.video_name || 'Dự án đã lưu';
   S.videoSrc = p.video_ok ? `${API_BASE}/api/projects/${id}/video` : '';
   S.cues = p.cues.map(c => ({ ...c }));
   applyCharacters(p.characters || []);   // tên vai & giọng đã chọn lần trước
@@ -432,9 +455,17 @@ async function openProject(id) {
   if (p.source_lang) $('#srcLang').value = p.source_lang;
   if (p.target_lang) $('#tgtLang').value = p.target_lang;
 
+  unlock(2);   // quay lại bước 2 để dịch lại được, không phải tải video lên lại
   unlock(4);
   goStep(4);
   setupEditor();
+  // Dự án đã từng xuất bản lồng tiếng -> cho nghe lại ngay ở màn hình xem
+  const dubbed = (p.files || []).filter(f => /\.longtieng\.mp4$/i.test(f.name)).pop();
+  setMonitorOutput(dubbed && p.video_ok ? {
+    url: `${API_BASE}/api/projects/${id}/files/${encodeURIComponent(dubbed.name)}`,
+    label: 'Bản lồng tiếng',
+    burned: (p.files || []).some(f => /\.hardsub\.mp4$/i.test(f.name)),
+  } : null);
   // Thanh bước phía trên phải ghi dự án vừa mở, không phải video làm trước đó trong phiên
   updateStepSummary();
   const nm = p.video_name || 'Dự án đã lưu';

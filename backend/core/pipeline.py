@@ -82,6 +82,86 @@ def _progress_cb(job, key: str):
     return cb
 
 
+def retranslate_steps(cfg: dict) -> list[Step]:
+    steps = []
+    if cfg.get("resplit"):
+        steps.append(Step("gender", "Tách giọng nam / nữ", weight=0.6))
+    steps.append(Step("translate", "Dịch lại phụ đề", weight=3.0))
+    if cfg.get("budget_loop"):
+        steps.append(Step("budget", "Rút gọn câu vượt khung thời gian", weight=1.5))
+    steps.append(Step("write", "Lưu bản dịch mới", weight=0.2))
+    return steps
+
+
+def run_retranslate(job: Job, state: dict, state_path: Path, cfg: dict, cast: list[dict]) -> None:
+    """Dịch lại phụ đề của một dự án đã phân tích, KHÔNG nghe lại video.
+
+    Bản dịch chưa ưng (sai xưng hô, thiếu thuật ngữ, muốn đổi engine) thì trước đây
+    phải tải video lên và chạy lại từ đầu — mất cả khâu nhận dạng lẫn tách giọng.
+    Ở đây lời gốc, mốc giờ và nhãn vai giữ nguyên; chỉ `text2` được viết lại.
+    """
+    cues = [Cue.from_dict(c) for c in (cfg.get("cues") or state.get("cues") or [])]
+    if not any(c.text.strip() for c in cues):
+        raise RuntimeError("Dự án không có dòng phụ đề nào để dịch.")
+    target = cfg.get("target_lang") or state.get("target_lang") or ""
+    source = state.get("source_lang") or cfg.get("source_lang") or None
+    engine = cfg.get("engine", "google")
+
+    # Dự án làm từ trước khi có tách giọng (hoặc lúc đó tắt) thì chưa dòng nào có vai:
+    # nhận vai ngay ở đây, không thì bản lồng tiếng chỉ có một giọng cho mọi nhân vật.
+    if cfg.get("resplit") and not any(c.speaker for c in cues):
+        project_dir = state_path.parent
+        found = _run_gender(job, cfg, Path(state.get("video_path") or ""), project_dir, cues, [],
+                            project_id=project_dir.name)
+        if found:
+            state["speakers"] = found
+            cast = found
+        job.check_cancel()
+
+    job.start_step("translate", f"{len(cues)} dòng")
+    job.log(f"Dịch lại {len(cues)} dòng sang {target} bằng {engine} — giữ nguyên lời gốc, mốc giờ và vai.")
+    for c in cues:  # dòng engine bỏ sót không được giữ bản dịch cũ mà tưởng là mới
+        c.text2 = ""
+    translate.translate_cues(
+        cues, source=source, target=target, engine=engine,
+        api_key=cfg.get("api_key", ""), model=cfg.get("ai_model", ""), base_url=cfg.get("ai_base_url", ""),
+        context_note=cfg.get("context_note", ""), translation_mode=cfg.get("translation_mode", "natural"),
+        glossary=cfg.get("glossary", ""),
+        on_progress=_progress_cb(job, "translate"), on_log=job.log,
+        cast=cast, auto_context=bool(cfg.get("auto_context", True)), use_memory=bool(cfg.get("use_memory", True)),
+    )
+    job.finish_step("translate")
+    job.check_cancel()
+
+    if cfg.get("budget_loop"):
+        job.start_step("budget")
+        tightener = translate.make_tightener(
+            engine, api_key=cfg.get("api_key", ""), model=cfg.get("ai_model", ""),
+            base_url=cfg.get("ai_base_url", ""), target=target, on_log=job.log,
+            source=source or "",
+        )
+        stats = budget.run_loop(cues, tightener, on_log=job.log, on_progress=_progress_cb(job, "budget"))
+        job.finish_step("budget", f"còn {stats['over_after']}/{stats['groups']} câu vượt (trước: {stats['over_before']})")
+        job.check_cancel()
+
+    job.start_step("write")
+    state["cues"] = [c.to_dict() for c in cues]
+    state["target_lang"] = target
+    saved_cfg = dict(state.get("cfg") or {})
+    # key không bao giờ được ghi xuống đĩa
+    saved_cfg.update({k: cfg.get(k) for k in ("engine", "ai_model", "context_note", "translation_mode", "glossary")
+                      if cfg.get(k) is not None})
+    saved_cfg["translate"] = True
+    state["cfg"] = saved_cfg
+    write_utf8(state_path, json.dumps(state, ensure_ascii=False, indent=1))
+    job.finish_step("write")
+    job.result = {
+        "cues": state["cues"], "target_lang": target, "source_lang": state.get("source_lang") or "",
+        "retranslated": True, "speakers": state.get("speakers") or [],
+    }
+    job.log("Dịch lại xong.")
+
+
 def run_analyze(job: Job, cfg: dict) -> None:
     workdir = job.dir
     video_path = Path(cfg["video_path"]) if cfg.get("video_path") else None
@@ -238,6 +318,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
             base_url=cfg.get("ai_base_url", ""),
             target=target,
             on_log=job.log,
+            source=detected_lang or "",
         )
         budget_stats = budget.run_loop(
             cues, tightener, on_log=job.log, on_progress=_progress_cb(job, "budget")
@@ -383,7 +464,7 @@ def _run_hardsub(job: Job, video_path: Path, cues, info: dict) -> dict:
 
 
 def _run_gender(job: Job, cfg: dict, video_path: Path, workdir: Path, cues, speakers: list[dict],
-                clean_wav: Path | None = None) -> list[dict]:
+                clean_wav: Path | None = None, project_id: str | None = None) -> list[dict]:
     """Đoán giọng nam / nữ theo cao độ để lúc lồng tiếng nam ra nam, nữ ra nữ.
 
     Đã có nhãn nhân vật từ bước phân đoạn người nói thì chỉ gắn thêm giới tính
@@ -443,7 +524,8 @@ def _run_gender(job: Job, cfg: dict, video_path: Path, workdir: Path, cues, spea
                     "sẽ đọc bằng giọng chung. Bấm vào nhãn vai ở bước 4 để sửa dòng gán sai."
                 )
         try:
-            characters.sync(job.id, speakers)
+            # dịch lại chạy trong job riêng: bảng vai phải lưu theo dự án, không theo job dịch lại
+            characters.sync(project_id or job.id, speakers)
         except Exception as exc:
             job.log(f"Không lưu được danh sách nhân vật vào CSDL: {exc}")
         job.finish_step("gender", detail[:70])
