@@ -227,16 +227,14 @@ def _atempo_chain(factor: float) -> str:
     return ",".join(parts)
 
 
-def _time_stretch(samples, factor: float, tmpdir: Path, tag: str):
-    """Tăng/giảm tốc audio mà giữ nguyên cao độ (ffmpeg atempo)."""
-    if abs(factor - 1.0) < 0.02:
-        return samples
+def _run_filter(samples, filt: str, tmpdir: Path, tag: str):
+    """Cho `samples` qua một chuỗi lọc âm thanh của ffmpeg. Lỗi thì trả lại nguyên bản."""
     src = tmpdir / f"s{tag}.wav"
     dst = tmpdir / f"d{tag}.wav"
     _write_wav(src, samples)
     cmd = [
         media.ffmpeg_exe(), "-hide_banner", "-nostdin", "-y", "-loglevel", "error",
-        "-i", str(src), "-filter:a", _atempo_chain(factor),
+        "-i", str(src), "-filter:a", filt,
         "-ar", str(SR), "-ac", "1", "-c:a", "pcm_s16le", str(dst),
     ]
     proc = subprocess.run(
@@ -244,11 +242,36 @@ def _time_stretch(samples, factor: float, tmpdir: Path, tag: str):
         creationflags=(0x08000000 if sys.platform == "win32" else 0),
     )
     if proc.returncode != 0 or not dst.exists():
-        return samples  # không ép được thì giữ nguyên
+        src.unlink(missing_ok=True)
+        return samples  # không lọc được thì giữ nguyên
     out, _ = _read_wav(dst)
     src.unlink(missing_ok=True)
     dst.unlink(missing_ok=True)
     return out
+
+
+def _time_stretch(samples, factor: float, tmpdir: Path, tag: str):
+    """Tăng/giảm tốc audio mà giữ nguyên cao độ (ffmpeg atempo)."""
+    if abs(factor - 1.0) < 0.02:
+        return samples
+    return _run_filter(samples, _atempo_chain(factor), tmpdir, tag)
+
+
+def _pitch_shift(samples, semitones: float, tmpdir: Path, tag: str):
+    """Nâng/hạ cao độ `semitones` nửa cung mà giữ nguyên độ dài.
+
+    Có `rubberband` thì dùng nó với formant giữ nguyên — chỉ dây thanh "căng/chùng",
+    khoang miệng không đổi, nên nghe vẫn là người đó. Không có thì đổi tần số lấy mẫu
+    rồi bù tốc độ: formant trượt theo, chấp nhận được vì biên chỉnh chỉ vài nửa cung.
+    """
+    if abs(semitones) < 0.05:
+        return samples
+    ratio = 2.0 ** (semitones / 12.0)
+    if _has_filter("rubberband"):
+        filt = f"rubberband=pitch={ratio:.5f}:formant=preserved"
+    else:
+        filt = f"asetrate={SR * ratio:.0f},aresample={SR},{_atempo_chain(1.0 / ratio)}"
+    return _run_filter(samples, filt, tmpdir, f"p{tag}")
 
 
 # Cho câu vào sớm tối đa bao nhiêu giây khi khung không đủ. Vào sớm khó nhận ra
@@ -558,7 +581,9 @@ REF_MAX = 10.0        # mẫu dài hơn không giống hơn mà TTS chậm đi �
 REF_OUTLIER_DROP = 0.2  # khúc kém "giọng chung" của vai hơn trung vị ngần này thì coi là lạc giọng
 REF_MIN_TOTAL = 3.0   # ít hơn thế thì mẫu ghép không đáng tin, quay về cách cắt một đoạn
 REF_MIN_PIECE = 0.8   # câu ngắn hơn chỉ là thán từ, không mang đủ màu giọng
-REF_MAX_TRIES = 12
+REF_MAX_TRIES = 30
+# Khúc thấp hơn tầm giọng của vai quá ngần này nửa cung thì không đưa vào mẫu (xem `_upper_pitch`)
+REF_PITCH_FLOOR = -0.25
 REF_JOIN_GAP = 0.12
 REF_SR = 24000
 
@@ -615,6 +640,7 @@ def compose_reference(video: Path, cues: list[Cue], out_path: Path, speaker: str
     mẫu lai hai giọng, bản nhân bản nghe không ra ai. Ở đây mỗi khúc cắt đúng trong mốc
     giờ của một câu do chính nhân vật đó nói, ưu tiên câu không sát lượt người khác và
     câu dài, bỏ khúc lí nhí, rồi nối lại theo thứ tự thời gian cho tới khi đủ ~8 giây.
+    Trong số đó chỉ giữ các câu có cao độ từ tầm giọng của vai trở lên (`_upper_pitch`).
     """
     import numpy as np
 
@@ -648,7 +674,7 @@ def compose_reference(video: Path, cues: list[Cue], out_path: Path, speaker: str
 
     picked: list[tuple[float, object]] = []
     total = 0.0
-    for start, data in _typical_first(good):
+    for start, data in _typical_first(_upper_pitch(good)):
         room = REF_MAX - total
         if room < REF_MIN_PIECE:
             break
@@ -675,6 +701,58 @@ def compose_reference(video: Path, cues: list[Cue], out_path: Path, speaker: str
         parts += [data, gap]
     _write_wav(out_path, np.concatenate(parts[:-1]), REF_SR)
     return round(total, 2), len(picked)
+
+
+def _upper_pitch(pieces: list) -> list:
+    """Giữ các khúc có cao độ từ tầm giọng của vai trở lên, để giọng nhân bản không bị trầm.
+
+    Đo trên phim thật: VieNeu-TTS đọc THẤP hơn mẫu của nó 2–3 nửa cung, và một người nói
+    trong phim trải rộng 4–7 nửa cung giữa các câu. Mẫu ghép lấy cả câu trầm thì bản đọc
+    trầm hơn người thật trung bình 4,5 nửa cung (vai nữ có khi 7 — nghe ra người khác);
+    chỉ lấy các câu ở nửa trên thì còn 1,7, và cosine véc-tơ giọng với giọng gốc không
+    giảm (0,68 → 0,71; `data/_bench/ref_pitch.py`). Tầm giọng = trung vị F0 của chính các
+    khúc ứng viên. Lọc xong mà không còn đủ giây để ghép thì trả lại nguyên danh sách.
+    """
+    if len(pieces) < 3:
+        return pieces
+    try:
+        import math
+
+        import numpy as np
+
+        pitch = [_median_f0(_to_pitch_sr(data, REF_SR), PITCH_SR) for _start, data in pieces]
+    except Exception:
+        return pieces
+    known = [f for f in pitch if f > 0]
+    if len(known) < 3:
+        return pieces
+    base = float(np.median(known))
+    kept = [
+        item for item, f in zip(pieces, pitch)
+        if f > 0 and 12.0 * math.log2(f / base) >= REF_PITCH_FLOOR
+    ]
+    if sum(data.size for _start, data in kept) < REF_MIN_TOTAL * REF_SR:
+        return pieces
+    return kept
+
+
+def _to_pitch_sr(data, sr: int):
+    """Hạ tần số lấy mẫu về `PITCH_SR` để đo cao độ cho nhanh."""
+    import numpy as np
+
+    x = np.asarray(data, dtype=np.float32).reshape(-1)
+    if sr <= PITCH_SR:
+        return x
+    step = sr // PITCH_SR
+    if sr % PITCH_SR == 0:
+        try:
+            from scipy.signal import resample_poly
+
+            return resample_poly(x, 1, step).astype(np.float32)
+        except Exception:
+            return x[::step]
+    idx = np.linspace(0, x.size - 1, int(x.size * PITCH_SR / sr))
+    return np.interp(idx, np.arange(x.size), x).astype(np.float32)
 
 
 def _typical_first(pieces: list) -> list:
@@ -965,6 +1043,128 @@ def energy_gains(voice_wav: Path, units: list[dict], workdir: Path) -> list[floa
     return gains
 
 
+# ------------------------------------------------ tone giọng theo thoại gốc
+#
+# Nhân bản giọng bắt được màu giọng nhưng hay lệch cao độ: vai nam trầm đọc ra cao hơn
+# người thật một hai nửa cung, và câu nào cũng đọc ở cùng một tầm dù câu gốc đang lên
+# giọng hay xuống giọng. Ở đây đo cao độ (F0) của giọng gốc rồi kéo câu lồng về đó.
+
+PITCH_SR = 16000
+# Theo ngần này phần độ lệch của CÂU so với tầm thường của vai (lên giọng / xuống giọng)
+PITCH_FOLLOW = 0.5
+# ... nhưng không quá ngần này nửa cung quanh tầm thường
+PITCH_FOLLOW_RANGE = (-2.0, 2.0)
+# Không chỉnh một câu quá ngần này nửa cung: xa hơn là nghe ra tiếng máy
+PITCH_MAX_SHIFT = 3.0
+# Lệch ít hơn thế thì tai không phân biệt được, khỏi xử lý
+PITCH_DEADBAND = 0.5
+# Lệch từ ngần này trở lên thường là đo nhầm quãng tám, không phải lệch thật — bỏ qua
+PITCH_DISTRUST = 7.0
+# Ít hơn ngần này khung hữu thanh (~0,25 s) thì trung vị F0 chưa đáng tin
+PITCH_MIN_FRAMES = 25
+
+
+def _median_f0(samples, sr: int) -> float:
+    """Trung vị F0 (Hz) của đoạn tiếng, 0.0 nếu không đủ khung hữu thanh."""
+    import numpy as np
+
+    from . import gender
+
+    f0 = gender.frame_pitches(samples, sr)
+    return float(np.median(f0)) if f0.size >= PITCH_MIN_FRAMES else 0.0
+
+
+def pitch_targets(voice_wav: Path, units: list[dict], workdir: Path) -> list[float]:
+    """Cao độ đích (Hz) cho từng đơn vị đọc; 0.0 = không đủ căn cứ, đừng chỉnh.
+
+    Tầm giọng của mỗi vai là trung vị F0 các câu của CHÍNH vai đó trong giọng gốc (đã
+    tách khỏi nhạc). Câu nào gốc nói cao/thấp hơn tầm đó thì đích nhích theo 50 % độ
+    lệch, chặn ±2 nửa cung. Câu không đo được (quá ngắn, thì thầm) lấy tầm của vai.
+    Vai có dưới 3 câu đo được thì không chỉnh.
+    """
+    import math
+
+    import numpy as np
+
+    none = [0.0] * len(units)
+    if not units:
+        return none
+    tmp = workdir / "_pitch.wav"
+    try:
+        media.run_ffmpeg_progress(
+            ["-i", str(Path(voice_wav).resolve()), "-vn", "-ac", "1", "-ar", str(PITCH_SR),
+             "-c:a", "pcm_s16le", str(tmp.resolve())],
+            0.0,
+        )
+        data, sr = _read_wav(tmp)
+    except Exception:
+        return none
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    own = [_median_f0(data[int(u["start"] * sr): int(u["end"] * sr)], sr) for u in units]
+    by_speaker: dict[str, list[float]] = {}
+    for u, f in zip(units, own):
+        if f > 0:
+            by_speaker.setdefault(u.get("speaker") or "", []).append(f)
+
+    out = []
+    for u, f in zip(units, own):
+        vals = by_speaker.get(u.get("speaker") or "", [])
+        if len(vals) < 3:
+            out.append(0.0)
+            continue
+        base = float(np.median(vals))
+        if f <= 0:
+            out.append(base)
+            continue
+        dev = 12.0 * math.log2(f / base) * PITCH_FOLLOW
+        dev = max(PITCH_FOLLOW_RANGE[0], min(PITCH_FOLLOW_RANGE[1], dev))
+        out.append(base * 2.0 ** (dev / 12.0))
+    return out
+
+
+def pitch_gap(audio, target_hz: float, sr: int = SR) -> float | None:
+    """Câu vừa đọc cần nâng (+) / hạ (−) bao nhiêu nửa cung mới tới `target_hz`. None = không đo được."""
+    import math
+
+    if not target_hz or target_hz <= 0:
+        return None
+    x = _to_pitch_sr(audio, sr)
+    have = _median_f0(x, PITCH_SR if sr >= PITCH_SR else sr)
+    if have <= 0:
+        return None
+    return 12.0 * math.log2(target_hz / have)
+
+
+def pitch_correction(audio, target_hz: float, sr: int = SR) -> float:
+    """Số nửa cung cần nâng (+) / hạ (−) để câu vừa đọc về đúng `target_hz`. 0.0 = để yên."""
+    semis = pitch_gap(audio, target_hz, sr)
+    if semis is None or abs(semis) < PITCH_DEADBAND or abs(semis) >= PITCH_DISTRUST:
+        return 0.0
+    return max(-PITCH_MAX_SHIFT, min(PITCH_MAX_SHIFT, semis))
+
+
+# Giọng nhân bản của một vai lệch tầm giọng gốc từ ngần này nửa cung trở lên (trung vị các
+# câu) thì báo cho người dùng: nghe ra người khác, nên chọn giọng dựng sẵn cho vai đó.
+PITCH_WARN = 4.0
+PITCH_WARN_MIN_LINES = 3
+
+
+def clone_pitch_report(gaps: dict[str, list[float]]) -> dict[str, float]:
+    """{vai: độ lệch} cho các vai nhân bản lệch tone. Dương = bản đọc CAO hơn gốc, âm = trầm hơn."""
+    import numpy as np
+
+    out: dict[str, float] = {}
+    for speaker, vals in gaps.items():
+        if len(vals) < PITCH_WARN_MIN_LINES:
+            continue
+        off = -float(np.median(vals))  # gaps là "cần nâng bao nhiêu" -> đổi dấu thành "đang lệch bao nhiêu"
+        if abs(off) >= PITCH_WARN:
+            out[speaker] = round(off, 1)
+    return out
+
+
 def build_dub_track(
     cues: list[Cue],
     total_duration: float,
@@ -980,11 +1180,19 @@ def build_dub_track(
     on_progress: Callable[[float], None] | None = None,
     on_log: Callable[[str], None] | None = None,
     energy_from: Path | None = None,
+    pitch_from: Path | None = None,
+    pitch_shift: bool = True,
 ) -> tuple[Path, dict]:
     """Sinh file wav lồng tiếng khớp mốc giờ của `cues`.
 
     `energy_from`: file giọng gốc đã tách khỏi nhạc — truyền vào thì từng câu lồng
     được chỉnh to/nhỏ theo câu gốc tương ứng (xem `energy_gains`).
+
+`pitch_from`: cũng file đó — truyền vào thì câu đọc bằng giọng NHÂN BẢN được kéo về
+    cao độ của vai gốc và lên/xuống giọng theo câu gốc (xem `pitch_targets`). Giọng dựng
+    sẵn do người dùng tự chọn nên không đụng tới.
+    `pitch_shift=False`: chỉ ĐO chứ không chỉnh — vai nào bản nhân bản lệch tầm giọng gốc
+    từ 4 nửa cung trở lên thì ghi vào `stats["pitch_off"]` và báo trong nhật ký.
 
     Mặc định đọc theo **câu trọn** (xem `speech_units`). `per_cue=True` thì đọc
     từng cue một như trước — giữ lại để so sánh, chứ nghe kém hơn rõ rệt.
@@ -1063,6 +1271,13 @@ def build_dub_track(
         if on_log and moved:
             on_log(f"Chỉnh độ to theo thoại gốc cho {moved}/{len(units)} câu (câu gốc nói to thì lồng to, nói khẽ thì nhỏ).")
 
+    targets = [0.0] * len(units)
+    if pitch_from is not None and units:
+        targets = pitch_targets(Path(pitch_from), units, workdir)
+    stats["pitch_matched"] = 0
+    pitch_moves: list[float] = []
+    pitch_gaps: dict[str, list[float]] = {}
+
     for u, unit in enumerate(units):
         text = unit["text"]
         first_cue, last_cue = unit["cues"][0], unit["cues"][-1]
@@ -1119,6 +1334,17 @@ def build_dub_track(
         audio, trimmed = _trim_silence(audio)
         stats["trimmed_ms"] += trimmed * 1000
 
+        # Tone giọng: chỉ với giọng nhân bản, và làm TRƯỚC khi ép tốc độ để đo cho sạch
+        if unit_ref and targets[u] > 0:
+            gap = pitch_gap(audio, targets[u])
+            if gap is not None and abs(gap) < 12.0:
+                pitch_gaps.setdefault(speaker, []).append(gap)
+            semis = pitch_correction(audio, targets[u]) if pitch_shift else 0.0
+            if semis:
+                audio = _pitch_shift(audio, semis, tmpdir, str(u))
+                stats["pitch_matched"] += 1
+                pitch_moves.append(semis)
+
         window = unit["end"] - unit["start"]
         gap_after = (cues[last_cue + 1].start - unit["end"]) if last_cue + 1 < len(cues) else 2.0
         gap_before = (unit["start"] - cues[first_cue - 1].end) if first_cue > 0 else unit["start"]
@@ -1168,6 +1394,26 @@ def build_dub_track(
         raise DubError(
             "Không đọc được câu nào." + (f" Lỗi: {first_error}" if first_error else "")
         )
+
+    off = clone_pitch_report(pitch_gaps)
+    if off:
+        stats["pitch_off"] = off
+        if on_log:
+            for speaker, d in sorted(off.items(), key=lambda kv: -abs(kv[1])):
+                on_log(
+                    f"⚠ Vai {speaker or '(không nhãn)'}: giọng nhân bản đọc "
+                    f"{'trầm' if d < 0 else 'cao'} hơn giọng gốc {abs(d):.1f} nửa cung — dễ nghe ra người khác. "
+                    "Nên chọn một giọng dựng sẵn cho vai này ở bảng vai rồi xuất lại."
+                )
+    if pitch_moves:
+        stats["pitch_mean_shift"] = round(sum(abs(m) for m in pitch_moves) / len(pitch_moves), 2)
+        if on_log:
+            up = sum(1 for m in pitch_moves if m > 0)
+            on_log(
+                f"Chỉnh tone giọng theo thoại gốc cho {len(pitch_moves)}/{len(units)} câu "
+                f"({up} câu nâng, {len(pitch_moves) - up} câu hạ; trung bình "
+                f"{stats['pitch_mean_shift']:.1f} nửa cung, tối đa {PITCH_MAX_SHIFT:.0f})."
+            )
 
     stats["worst"].sort(key=lambda w: w["over_s"], reverse=True)
     del stats["worst"][8:]

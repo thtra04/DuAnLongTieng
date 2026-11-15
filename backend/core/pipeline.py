@@ -856,6 +856,12 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         # Chỉ theo độ to khi đã có giọng gốc sạch nhạc: đo trên tiếng còn lẫn nhạc thì
         # đoạn nhạc lớn bị tưởng là nhân vật đang hét.
         energy_from=ref_source if (ref_source != Path(state["video_path"]) and dcfg.get("match_energy", True)) else None,
+        # Chỉnh tone giọng MẶC ĐỊNH TẮT: đo trên phim thật, cao độ về gần giọng gốc hơn
+        # (lệch 2,0 → 0,4 nửa cung) nhưng cosine véc-tơ giọng tụt 0,68 → 0,45 với mọi cách
+        # dịch cao độ đã thử — xem data/_bench/pitch_variants.py. Bật bằng dub.match_pitch.
+        # ... nhưng vẫn ĐO, để báo vai nào bản nhân bản lệch tone hẳn so với người thật.
+        pitch_from=ref_source if ref_source != Path(state["video_path"]) else None,
+        pitch_shift=bool(dcfg.get("match_pitch", False)),
     )
     detail = f"{stats['count']} câu"
     if stats["sped_up"]:

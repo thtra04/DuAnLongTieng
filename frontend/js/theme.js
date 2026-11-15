@@ -5,7 +5,7 @@
 
 const THEME_KEY = 'vsub.theme.v1';
 // Chưa chọn gì thì dùng bảng này — phải trùng với đoạn script inline trong index.html
-const DEFAULT_THEME = 'studio';
+const DEFAULT_THEME = 'nga';
 
 // id trùng với data-theme trong css/style.css; `sw` là màu hiện trên nút tròn
 const THEMES = [

@@ -335,6 +335,9 @@ từng người — hoặc **nhân bản chính giọng nhân vật đó** trong
 | **Dòng không rõ ai nói** | Thường là phụ đề trên nền nhạc — đọc bằng giọng ở ô "Giọng đọc" chung |
 | **Mẫu nhân bản** | **Ghép từ nhiều câu của đúng vai đó** (tới ~8–10 giây), mỗi khúc cắt gọn trong mốc giờ của một câu, ưu tiên câu **không sát lượt của người khác**; có mô hình véc-tơ giọng thì chọn những câu tiêu biểu nhất và loại câu lạc giọng. Không gom đủ 3 giây thì quay về cắt một đoạn liền như trước |
 | **Độ to theo thoại gốc** | Khi đã tách giọng gốc khỏi nhạc: câu gốc nói to thì câu lồng to hơn, nói khẽ thì nhỏ hơn (theo 60 % độ lệch so với mức thường của chính vai đó, chặn ±4 dB) |
+| **Mẫu không lấy câu trầm** | VieNeu-TTS đọc thấp hơn mẫu của nó 2–3 nửa cung, nên mẫu ghép chỉ lấy các câu có cao độ (F0) **từ tầm giọng của vai trở lên** — bản đọc bớt trầm hơn người thật. Không còn đủ 3 giây sau khi lọc thì dùng lại mọi câu |
+| **Báo vai nhân bản lệch tone** | Khi đã tách giọng gốc khỏi nhạc: lúc lồng tiếng, đo cao độ từng câu đọc so với tầm giọng gốc của vai. Vai nào lệch từ 4 nửa cung trở lên (trung vị, ít nhất 3 câu) thì nhật ký báo rõ, để bạn đổi sang giọng dựng sẵn cho vai đó |
+| **Tone giọng theo thoại gốc** (thử nghiệm, mặc định tắt — bật bằng `dub.match_pitch`) | Đo trên tập phim 16 phút, 4 vai: lệch tầm giọng giảm 2,0 → 0,4 nửa cung nhưng độ giống giọng (cosine WeSpeaker) tụt 0,68 → 0,45, với cả bốn cách dịch cao độ đã thử (`data/_bench/pitch_variants.py`), nên chưa bật mặc định. Cách làm: khi đã tách giọng gốc khỏi nhạc và vai dùng giọng nhân bản, đo cao độ (F0) của vai trong tiếng gốc, rồi nâng/hạ từng câu lồng về tầm đó; câu gốc lên giọng hay xuống giọng thì câu lồng nhích theo 50 % (chặn ±2 nửa cung). Mỗi câu chỉnh tối đa 3 nửa cung, giữ nguyên độ dài và formant (ffmpeg `rubberband`); lệch dưới nửa nửa-cung thì để yên. Đây là xử lý tín hiệu, không huấn luyện lại VieNeu-TTS |
 | **Vai không cắt được mẫu** | Tự chuyển sang giọng dựng sẵn, có báo rõ — không làm hỏng cả bản lồng tiếng |
 | **Biết trước số vai** | Điền vào ô **Số nhân vật** ở bước 2 — chính xác hơn hẳn để tool tự đoán |
 
@@ -394,6 +397,17 @@ Mẫu ghép so với mẫu cắt một đoạn (cosine WeSpeaker với giọng g
 |---|---|---|
 | 16 phút, 6 vai nói nhiều nhất | 0,74 → **0,90** | 0,60 → **0,69** (5 vai tăng, 1 vai giảm 0,05) |
 | Clip 86 giây, 2 vai | 0,72 → **0,90** | 0,61 → **0,69** (1 vai tăng 0,17, 1 vai giảm 0,02) |
+
+Chọn câu theo cao độ (tập 16 phút, 6 vai nói nhiều nhất, TTS đọc cùng 6 câu; `data/_bench/pitch_compare.py`,
+mỗi cấu hình chạy một lần và TTS có ngẫu nhiên nên chênh lệch nhỏ ở từng vai có thể là nhiễu):
+
+| | Mẫu lấy mọi câu | Mẫu chỉ lấy câu từ tầm giọng trở lên |
+|---|---|---|
+| Bản đọc lệch tầm giọng gốc (nửa cung, trung bình \|.\|) | 3,82 | **3,00** |
+| Giọng đọc giống giọng gốc (cosine) | 0,684 | **0,699** |
+
+Không đều giữa các vai: một vai nữ từ lệch 7,3 xuống 2,1; một vai nữ khác vẫn lệch 8 nửa cung (mẫu nào cũng ra
+giọng trầm hẳn) và một vai tệ đi 1,4 — vì vậy có thêm bước báo vai lệch tone ở trên.
 
 Hai cách "khớp cao độ" đều làm giọng *kém* giống hơn — chất giọng quan trọng hơn cao độ — nên tool
 không dùng. Nhân bản chậm hơn giọng có sẵn (phải cắt mẫu và mã hoá giọng từng vai).
