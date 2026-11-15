@@ -14,6 +14,8 @@ from backend.store import memory
 def cach_ly(workdir, monkeypatch, tmp_db):
     monkeypatch.setattr(translate, "_CACHE_FILE", workdir / "cache.json")
     monkeypatch.setattr(memory, "_ready", False)
+    # CI không cài nhóm `ai` (thư viện anthropic / openai); các test ở đây đều giả lập `_chat`
+    monkeypatch.setattr(translate, "engine_available", lambda engine: (True, ""))
 
 
 def c(start, end, text, speaker="", text2=""):

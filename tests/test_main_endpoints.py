@@ -443,6 +443,8 @@ def test_dich_gon_chi_dong_dong_dang_dai_va_khong_ghi_gi_xuong_dia(client, monke
         return "1|Lang quân chẳng bảo cho thiếp ăn sung mặc sướng sao"
 
     monkeypatch.setattr(translate, "_chat", fake_chat)
+    # CI không cài nhóm `ai` (thư viện openai): giả lập luôn bước kiểm tra, _chat đã là bản giả
+    monkeypatch.setattr(translate, "engine_available", lambda engine: (True, ""))
     r = client.post("/api/fit-lines", json={"cues": cues, "indices": [], "engine": "openai", "api_key": "k",
                                             "source_lang": "zh", "target_lang": "vi"})
     assert r.status_code == 200, r.text
@@ -461,6 +463,7 @@ def test_dich_gon_bo_qua_ban_khong_ngan_hon_va_engine_thuong_dung_luat(client, m
 
     dai = {"start": 0, "end": 1.0, "text": "好", "text2": "Thật ra thì tôi nghĩ là chuyện này rất là tốt đấy"}
     monkeypatch.setattr(translate, "_chat", lambda *a, **k: "1|" + dai["text2"] + " nhé bạn ơi")
+    monkeypatch.setattr(translate, "engine_available", lambda engine: (True, ""))  # CI không cài nhóm `ai`
     r = client.post("/api/fit-lines", json={"cues": [dai], "indices": [0], "engine": "openai", "api_key": "k"})
     assert r.json()["changes"] == [], "bản mới dài hơn thì không nhận"
 
