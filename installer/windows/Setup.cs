@@ -9,6 +9,9 @@ using System.Drawing;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -32,8 +35,10 @@ namespace VSubStudioSetup
         }
 
         /// Giải nén gói vào dir; giữ nguyên data\ và .venv\ nếu đã cài trước đó (cập nhật phiên bản).
-        public static void Install(string dir, bool shortcut, bool reg, Action<int, string> progress)
+        /// Trả về cảnh báo (null nếu không có) — lỗi tạo lối tắt không làm hỏng cả lần cài.
+        public static string Install(string dir, bool shortcut, bool reg, Action<int, string> progress)
         {
+            string warn = null;
             Directory.CreateDirectory(dir);
             using (Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream("payload.zip"))
             using (var zip = new ZipArchive(s, ZipArchiveMode.Read))
@@ -57,9 +62,16 @@ namespace VSubStudioSetup
                 if (shortcut)
                 {
                     progress(94, "Tạo lối tắt…");
-                    Link(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "VSub Studio.lnk"), exe, "", dir);
-                    Link(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "VSub Studio.lnk"), exe, "", dir);
-                    Link(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Gỡ VSub Studio.lnk"), exe, "/uninstall", dir);
+                    string[,] links = {
+                        { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "VSub Studio.lnk"), "" },
+                        { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "VSub Studio.lnk"), "" },
+                        { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Gỡ VSub Studio.lnk"), "/uninstall" },
+                    };
+                    for (int k = 0; k < links.GetLength(0); k++)
+                    {
+                        try { Link(links[k, 0], exe, links[k, 1], dir); }
+                        catch (Exception ex) { warn = "không tạo được lối tắt " + Path.GetFileName(links[k, 0]) + " (" + ex.Message + ")"; }
+                    }
                 }
                 if (reg)
                 {
@@ -79,22 +91,48 @@ namespace VSubStudioSetup
                 }
                 progress(100, "Xong.");
             }
+            return warn;
         }
 
-        // Tạo lối tắt .lnk qua WScript.Shell (COM có sẵn trên Windows), gọi bằng reflection để khỏi cần thư viện interop
+        // Tạo lối tắt .lnk qua IShellLinkW (COM có sẵn của Windows, nhận Unicode). Không dùng WScript.Shell: nó lưu
+        // đường dẫn theo bảng mã ANSI nên tên có chữ Việt như "Gỡ VSub Studio.lnk" làm Save() báo lỗi.
         static void Link(string lnk, string target, string args, string workdir)
         {
-            Type t = Type.GetTypeFromProgID("WScript.Shell");
-            object shell = Activator.CreateInstance(t);
-            object sc = t.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { lnk });
-            Type st = sc.GetType();
-            st.InvokeMember("TargetPath", BindingFlags.SetProperty, null, sc, new object[] { target });
-            st.InvokeMember("Arguments", BindingFlags.SetProperty, null, sc, new object[] { args });
-            st.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, sc, new object[] { workdir });
-            st.InvokeMember("IconLocation", BindingFlags.SetProperty, null, sc, new object[] { target + ",0" });
-            st.InvokeMember("Description", BindingFlags.SetProperty, null, sc, new object[] { "VSub Studio — lồng tiếng video tự động" });
-            st.InvokeMember("Save", BindingFlags.InvokeMethod, null, sc, null);
+            var link = (IShellLinkW)new ShellLink();
+            link.SetPath(target);
+            link.SetArguments(args);
+            link.SetWorkingDirectory(workdir);
+            link.SetIconLocation(target, 0);
+            link.SetDescription("VSub Studio — lồng tiếng video tự động");
+            ((IPersistFile)link).Save(lnk, false);
+            Marshal.FinalReleaseComObject(link);
         }
+    }
+
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+    class ShellLink { }
+
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214F9-0000-0000-C000-000000000046")]
+    interface IShellLinkW
+    {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cch, IntPtr pfd, int fFlags);
+        void GetIDList(out IntPtr ppidl);
+        void SetIDList(IntPtr pidl);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cch);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir, int cch);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs, int cch);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+        void GetHotkey(out short pwHotkey);
+        void SetHotkey(short wHotkey);
+        void GetShowCmd(out int piShowCmd);
+        void SetShowCmd(int iShowCmd);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath, int cch, out int piIcon);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, int dwReserved);
+        void Resolve(IntPtr hwnd, int fFlags);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
     }
 
     static class Program
@@ -115,7 +153,8 @@ namespace VSubStudioSetup
             {
                 try
                 {
-                    Installer.Install(dir, shortcut, reg, (p, m) => { });
+                    string w = Installer.Install(dir, shortcut, reg, (p, m) => { });
+                    if (w != null) Console.Error.WriteLine("Cảnh báo: " + w);
                     return 0;
                 }
                 catch (Exception ex)
@@ -207,16 +246,16 @@ namespace VSubStudioSetup
             }
             go.Enabled = browse.Enabled = path.Enabled = desk.Enabled = false;
             bool sc = desk.Checked;
-            new Thread(delegate ()
+            var th = new Thread(delegate ()
             {
                 try
                 {
-                    Installer.Install(dir, sc, true, (p, m) => BeginInvoke((MethodInvoker)delegate { bar.Value = p; status.Text = m; }));
+                    string w = Installer.Install(dir, sc, true, (p, m) => BeginInvoke((MethodInvoker)delegate { bar.Value = p; status.Text = m; }));
                     BeginInvoke((MethodInvoker)delegate
                     {
                         done = true;
                         path.Text = dir;
-                        status.Text = "Đã cài vào " + dir;
+                        status.Text = "Đã cài vào " + dir + (w != null ? "\n(" + w + ")" : "");
                         status.ForeColor = ACCENT;
                         go.Text = "Hoàn tất";
                         go.Enabled = true;
@@ -231,7 +270,9 @@ namespace VSubStudioSetup
                         go.Enabled = browse.Enabled = path.Enabled = desk.Enabled = true;
                     });
                 }
-            }) { IsBackground = true }.Start();
+            }) { IsBackground = true };
+            th.SetApartmentState(ApartmentState.STA);   // lối tắt tạo qua COM của Shell
+            th.Start();
         }
 
         void Finish()

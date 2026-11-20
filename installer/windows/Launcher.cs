@@ -381,11 +381,15 @@ namespace VSubStudio
                 "Gỡ VSub Studio khỏi máy?\n\nThư mục sẽ bị xoá: " + dir + "\n(gồm cả dự án phim, video và mô hình đã tải trong thư mục data)",
                 "Gỡ cài đặt VSub Studio", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (r != DialogResult.Yes) return 1;
+            // Lối tắt "Gỡ VSub Studio" đặt thư mục làm việc là chính thư mục cài → rời khỏi đó, không thì Windows
+            // không cho xoá thư mục gốc khi tiến trình này còn chạy
+            try { Directory.SetCurrentDirectory(Path.GetTempPath()); } catch { }
+            int me = Process.GetCurrentProcess().Id;
             foreach (var p in Process.GetProcesses())
             {
                 try
                 {
-                    if (p.Id != Process.GetCurrentProcess().Id && p.MainModule.FileName.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) p.Kill();
+                    if (p.Id != me && p.MainModule.FileName.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) p.Kill();
                 }
                 catch { }
             }
@@ -396,11 +400,33 @@ namespace VSubStudio
             };
             foreach (string l in links) { try { File.Delete(l); } catch { } }
             try { Registry.CurrentUser.DeleteSubKeyTree(KEY, false); } catch { }
-            // Không xoá được thư mục đang chứa chính exe này → nhờ cmd xoá sau khi thoát
-            Process.Start(new ProcessStartInfo("cmd.exe", "/c timeout /t 2 /nobreak >nul & rmdir /s /q \"" + dir + "\"")
+            // Xoá ngay mọi thứ trừ chính VSubStudio.exe đang chạy
+            string self = Application.ExecutablePath;
+            try
             {
-                CreateNoWindow = true, UseShellExecute = false, WorkingDirectory = Path.GetTempPath()
-            });
+                foreach (string d in Directory.GetDirectories(dir)) { try { Directory.Delete(d, true); } catch { } }
+                foreach (string f in Directory.GetFiles(dir))
+                {
+                    if (!string.Equals(Path.GetFullPath(f), Path.GetFullPath(self), StringComparison.OrdinalIgnoreCase)) { try { File.Delete(f); } catch { } }
+                }
+            }
+            catch { }
+            // Phần còn lại (exe này + thư mục gốc, tệp chỉ đọc nếu có): một tiến trình PowerShell ẩn CHỜ tiến trình này thoát
+            // hẳn rồi mới xoá. Không dùng "timeout" của cmd — lệnh đó báo lỗi ngay khi chạy ẩn không có bàn phím.
+            string lit = "'" + dir.Replace("'", "''") + "'";
+            string ps = "$p = Get-Process -Id " + me + " -ErrorAction SilentlyContinue; if ($p) { $p.WaitForExit(600000) | Out-Null }; " +
+                        "for ($i = 0; $i -lt 20 -and (Test-Path -LiteralPath " + lit + "); $i++) { " +
+                        "Remove-Item -LiteralPath " + lit + " -Recurse -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500 }";
+            try
+            {
+                Process.Start(new ProcessStartInfo("powershell.exe",
+                    "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " +
+                    Convert.ToBase64String(Encoding.Unicode.GetBytes(ps)))
+                {
+                    CreateNoWindow = true, UseShellExecute = false, WorkingDirectory = Path.GetTempPath()
+                });
+            }
+            catch { }
             MessageBox.Show("Đã gỡ VSub Studio.", "Gỡ cài đặt VSub Studio");
             return 0;
         }
