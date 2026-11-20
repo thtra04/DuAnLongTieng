@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lớp trước của biểu tượng thích ứng (Android 8+): vùng an toàn là vòng tròn 66/108 ở giữa -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FAF8F3"
+        android:pathData="M42,38L42,70L66,54Z" />
+    <path
+        android:strokeColor="#E2B659"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M70,45a12,12 0,0 1,0 18M76,39a21,21 0,0 1,0 30" />
+</vector>

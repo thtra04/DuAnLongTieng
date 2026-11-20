@@ -124,6 +124,36 @@ VSUB_EXTRAS="--extra queue --extra tts --extra ai --extra diarize --extra clone"
 
 Trong container không có GPU NVIDIA trừ khi cài NVIDIA Container Toolkit; Whisper sẽ chạy bằng CPU.
 
+### Bộ cài Windows (không cần Docker, không cần gõ lệnh)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\windows\build_exe.ps1
+```
+
+Lệnh trên biên dịch hai tệp bằng `csc` có sẵn của .NET Framework 4 (Windows 10/11, không cần Visual Studio)
+vào `installer/windows/dist/`:
+
+| Tệp | Làm gì |
+|---|---|
+| `VSubStudio_Setup.exe` (~23 MB) | Bộ cài: chép mã nguồn + `uv.exe` vào `%LOCALAPPDATA%\Programs\VSubStudio` (không cần quyền quản trị), tạo lối tắt, thêm mục gỡ cài đặt vào Cài đặt → Ứng dụng. Cài im lặng: `/S /D=<thư mục>` |
+| `VSubStudio.exe` | Trình khởi động đặt cạnh `run.py` (bản sao ở gốc repo, đã gitignore). Lần đầu hỏi bản đầy đủ (~6 GB) hay gọn (~1,5 GB) rồi chạy `uv sync`; sau đó chạy server, chờ sẵn sàng, mở trình duyệt. Ô *Cho điện thoại cùng Wi-Fi kết nối* khởi động lại với `--host 0.0.0.0` và hiện địa chỉ IP. Đóng cửa sổ là dừng server |
+
+Tệp chưa ký số nên Windows SmartScreen có thể cảnh báo (*More info → Run anyway*).
+
+### Ứng dụng Android
+
+`mobile/android/` là ứng dụng khách (Java, không AndroidX, Android 7.0+): lưu địa chỉ máy tính đang chạy
+VSub Studio, mở giao diện điện thoại trong WebView, cho chọn video trong máy để tải lên và lưu video kết quả
+vào thư mục Download. Nhận dạng, dịch, lồng tiếng vẫn chạy trên máy tính (cần GPU).
+
+```powershell
+cd mobile\android
+.\gradlew.bat assembleRelease      # cần JDK 17 + Android SDK; APK ở app\build\outputs\apk\release\
+```
+
+Trên máy tính chạy `uv run python run.py --host 0.0.0.0` (hoặc tích ô điện thoại trong `VSubStudio.exe`),
+cài APK lên điện thoại cùng Wi-Fi rồi nhập `IP-máy-tính:8000`.
+
 ---
 
 ## Dùng thế nào

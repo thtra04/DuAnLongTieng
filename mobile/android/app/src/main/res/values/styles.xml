@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tông "Ngà" giống giao diện web: nền ngà, chữ nâu đen, điểm nhấn vàng đồng -->
+    <color name="nga_bg">#FAF8F3</color>
+    <color name="nga_bg2">#F1ECE0</color>
+    <color name="nga_ink">#1C1917</color>
+    <color name="nga_muted">#57534E</color>
+    <color name="nga_accent">#A16207</color>
+
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/nga_ink</item>
+        <item name="android:colorPrimaryDark">@color/nga_ink</item>
+        <item name="android:colorAccent">@color/nga_accent</item>
+        <item name="android:statusBarColor">@color/nga_ink</item>
+        <item name="android:navigationBarColor">@color/nga_bg</item>
+        <item name="android:windowBackground">@color/nga_bg</item>
+    </style>
+</resources>

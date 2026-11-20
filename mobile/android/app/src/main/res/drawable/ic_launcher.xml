@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Biểu tượng cho Android 7.x: ô vuông bo góc, nút phát và hai vệt sóng âm -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#1C1917"
+        android:pathData="M24,6h60a18,18 0,0 1,18 18v60a18,18 0,0 1,-18 18h-60a18,18 0,0 1,-18 -18v-60a18,18 0,0 1,18 -18z" />
+    <path
+        android:fillColor="#FAF8F3"
+        android:pathData="M38,34L38,74L68,54Z" />
+    <path
+        android:strokeColor="#E2B659"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M74,42a16,16 0,0 1,0 24M82,34a28,28 0,0 1,0 40" />
+</vector>

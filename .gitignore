@@ -10,3 +10,7 @@ eval_out/
 runs/
 .coverage
 htmlcov/
+
+# Ban dung exe (installer/windows/build_exe.ps1)
+installer/windows/dist/
+/VSubStudio.exe
