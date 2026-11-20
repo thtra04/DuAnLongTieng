@@ -31,8 +31,12 @@ AGE_NAMES = {CHILD: "Trẻ em", ADULT: "Người lớn", ELDER: "Cao tuổi"}
 
 MODEL_ID = "pyannote/wespeaker-voxceleb-resnet34-LM"
 SR = 16000
-# Cue ngắn hơn ngần này không đủ để lấy véc-tơ giọng đáng tin
+# Cue ngắn hơn ngần này không đủ để lấy véc-tơ giọng đáng tin cho việc GOM CỤM
 MIN_EMBED_S = 1.2
+# ...nhưng vẫn đủ để GÁN vào cụm đã có. Đo trên trích đoạn 86 giây có nhãn tay: 14/43 câu ngắn hơn
+# 1,2 giây ("老爷", "这是谁"), trước đây chỉ được gán theo cao độ nên rơi vào vai nữ lớn nhất; lấy véc-tơ từ
+# 0,4 giây thì mọi câu đều gần tâm đúng nhân vật của nó (data/_bench/speaker_explore.py).
+MIN_ASSIGN_S = 0.4
 # Hai cụm cùng giới có độ giống trung bình (cosine) từ ngưỡng này trở lên thì là MỘT người.
 # Chọn trên thoại thật (clip bilibili, có nhạc nền và cảm xúc): cùng một người chỉ giống nhau
 # ~0,4–0,5 nên ngưỡng 0,45 trở lên tách thừa tới 8–9 vai; 0,35 cho 1 nam + 2 nữ. Đổi lại,
@@ -40,7 +44,15 @@ MIN_EMBED_S = 1.2
 MERGE_SIM = 0.35
 # Cụm ít hơn ngần này giây tiếng nói thì dồn vào cụm gần nhất, tránh đẻ ra vai "ma"
 MIN_CLUSTER_S = 4.0
+# ...hoặc ít hơn tỉ lệ này của tổng thời lượng thoại (video dài): video 16 phút từ 16 cụm / 4 vai ma
+# còn 9 vai, video 13 phút từ 22 / 6 còn 10 / 1 (data/_bench/speaker_minfrac.py)
+MIN_CLUSTER_FRAC = 0.015
 MAX_PER_GENDER = 6
+# Chia nam / nữ theo cao độ TỪNG CÂU trước khi gom cụm làm vỡ một người thành hai vai: nam quát to
+# lên 205–220 Hz bị đẩy sang nhóm nữ, thành vai "Nữ 2". Cụm nào giống một cụm KHÁC GIỚI lớn hơn từ
+# ngưỡng này trở lên, và giống nó hơn hẳn mọi cụm cùng giới, thì gộp vào.
+XMERGE_SIM = 0.45
+XMERGE_GAP = 0.1
 # Ngưỡng gộp thích nghi: ratio × độ giống láng giềng gần nhất, kẹp trong [MIN_MERGE, MAX_MERGE]
 SIM_RATIO = 0.7
 MIN_MERGE, MAX_MERGE = 0.3, 0.7
@@ -113,13 +125,13 @@ def embed_array(samples, sr: int):
 
 
 def embed_cues(wav_path, cues: list[Cue], on_progress: Callable[[float], None] | None = None):
-    """Véc-tơ giọng đã chuẩn hoá của từng cue; `None` cho cue quá ngắn."""
+    """Véc-tơ giọng đã chuẩn hoá của từng cue; `None` cho cue quá ngắn (dưới `MIN_ASSIGN_S`)."""
     import torch
 
     model = _load()
     out: list[np.ndarray | None] = []
     for i, cue in enumerate(cues):
-        if cue.end - cue.start < MIN_EMBED_S:
+        if cue.end - cue.start < MIN_ASSIGN_S:
             out.append(None)
         else:
             x = _read(wav_path, cue)
@@ -190,18 +202,29 @@ def split_speakers(
     """Gán nhãn S1, S2… cho cue, tách nhiều người trong cùng một giới. Sửa `cues` tại chỗ.
 
     Trả về ``{"labeled", "empty", "speakers": {nhãn: {"gender", "f0", "age"}}}``.
-    Cue không đủ cao độ để biết giới mà có véc-tơ giọng thì theo cụm gần nhất của mọi giới.
+
+    Các bước (số đo trên data/_bench/speaker_bench.py — trích đoạn 86 giây có nhãn tay đúng
+    69,8 % → 88,4 %; 6 giọng dựng sẵn 7 vai → đúng 6 vai):
+
+    1. Gom cụm trong từng giới (đoán theo cao độ) chỉ bằng các câu đủ dài (`MIN_EMBED_S`).
+    2. Cụm quá ít tiếng nói (dưới `MIN_CLUSTER_S` hoặc `MIN_CLUSTER_FRAC` tổng thoại) dồn vào
+       cụm cùng giới gần nhất.
+    3. Cụm bị chia nhầm giới (nam nói to, nữ nói trầm) gộp vào cụm khác giới nó giống hẳn.
+    4. Mỗi giới giữ tối đa `MAX_PER_GENDER` cụm.
+    5. MỌI câu có véc-tơ — kể cả câu ngắn và câu đã nằm trong cụm — về tâm gần nhất, không chặn
+       theo giới: cao độ một câu lẻ kém tin hơn véc-tơ giọng.
     """
     from . import gender as G
 
     n = len(cues)
     guess = [G.gender_of(p["f0"]) for p in pitches]
     dur = np.array([max(0.0, c.end - c.start) for c in cues])
+    min_cluster = max(MIN_CLUSTER_S, MIN_CLUSTER_FRAC * float(dur.sum()))
 
     stats_thr: dict[str, float] = {}
     clusters: list[dict] = []  # {"gender", "members": [chỉ số cue], "centroid"}
     for g in (G.MALE, G.FEMALE):
-        idx = [i for i in range(n) if guess[i] == g and embeds[i] is not None]
+        idx = [i for i in range(n) if guess[i] == g and embeds[i] is not None and dur[i] >= MIN_EMBED_S]
         if not idx:
             continue
         vecs = np.stack([embeds[i] for i in idx])
@@ -221,7 +244,7 @@ def split_speakers(
     while changed and len(clusters) > 1:
         changed = False
         for c in sorted(clusters, key=lambda c: dur[c["members"]].sum()):
-            if dur[c["members"]].sum() >= MIN_CLUSTER_S:
+            if dur[c["members"]].sum() >= min_cluster:
                 continue
             others = [o for o in clusters if o is not c and o["gender"] == c["gender"]]
             if not others:
@@ -232,6 +255,24 @@ def split_speakers(
             clusters.remove(c)
             changed = True
             break
+    # Cụm bị chia nhầm giới -> gộp vào cụm khác giới lớn hơn mà nó giống hẳn
+    changed = True
+    while changed and len(clusters) > 1:
+        changed = False
+        for c in sorted(clusters, key=lambda c: dur[c["members"]].sum()):
+            cv = centroid(c)
+            same = [float(cv @ centroid(o)) for o in clusters if o is not c and o["gender"] == c["gender"]]
+            opp = [o for o in clusters if o["gender"] != c["gender"]
+                   and dur[o["members"]].sum() > dur[c["members"]].sum()]
+            if not opp:
+                continue
+            tgt = max(opp, key=lambda o: float(cv @ centroid(o)))
+            s_opp = float(cv @ centroid(tgt))
+            if s_opp >= XMERGE_SIM and s_opp >= max(same, default=-1.0) + XMERGE_GAP:
+                tgt["members"] += c["members"]
+                clusters.remove(c)
+                changed = True
+                break
     # Giữ tối đa MAX_PER_GENDER cụm lớn nhất mỗi giới (phần dư dồn vào cụm gần nhất)
     for g in (G.MALE, G.FEMALE):
         same = sorted((c for c in clusters if c["gender"] == g), key=lambda c: -dur[c["members"]].sum())
@@ -244,20 +285,24 @@ def split_speakers(
     clusters.sort(key=lambda c: (-dur[c["members"]].sum(), c["gender"]))
     cents = [centroid(c) for c in clusters]
     owner: dict[int, int] = {}
-    for k, c in enumerate(clusters):
-        for i in c["members"]:
-            owner[i] = k
-
-    # Cue chưa vào cụm nào: có véc-tơ -> cụm gần nhất (trong giới đã đoán nếu có);
-    # chỉ có cao độ -> cụm lớn nhất của giới đó; còn lại để trống.
+    # Mọi câu có véc-tơ -> tâm gần nhất (mọi giới). Câu chỉ có cao độ -> cụm lớn nhất cùng giới;
+    # không có gì -> để trống.
     for i in range(n):
-        if i in owner or not clusters:
-            continue
-        cand = [k for k, c in enumerate(clusters) if not guess[i] or c["gender"] == guess[i]] or list(range(len(clusters)))
+        if not clusters:
+            break
         if embeds[i] is not None:
-            owner[i] = max(cand, key=lambda k: float(embeds[i] @ cents[k]))
+            owner[i] = int(np.argmax([float(embeds[i] @ v) for v in cents]))
         elif guess[i]:
-            owner[i] = cand[0]
+            cand = [k for k, c in enumerate(clusters) if c["gender"] == guess[i]]
+            if cand:
+                owner[i] = cand[0]
+            else:
+                owner[i] = 0
+    # cụm có thể rỗng sau bước trên -> đánh số lại theo thời lượng nói thật
+    used = sorted({k for k in owner.values()}, key=lambda k: -sum(dur[i] for i in owner if owner[i] == k))
+    remap = {k: r for r, k in enumerate(used)}
+    owner = {i: remap[k] for i, k in owner.items()}
+    clusters = [clusters[k] for k in used]
 
     stats = {"labeled": 0, "empty": 0, "speakers": {}, "threshold": stats_thr}
     for i, cue in enumerate(cues):

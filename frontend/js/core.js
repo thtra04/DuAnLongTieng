@@ -172,6 +172,7 @@ function goStep(n) {
     b.classList.toggle('done', i < n);
   });
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (n === 4 && typeof markScriptStale === 'function') markScriptStale();
 }
 
 function updateStepSummary() {

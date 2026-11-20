@@ -584,6 +584,10 @@ REF_MIN_PIECE = 0.8   # câu ngắn hơn chỉ là thán từ, không mang đủ
 REF_MAX_TRIES = 30
 # Khúc thấp hơn tầm giọng của vai quá ngần này nửa cung thì không đưa vào mẫu (xem `_upper_pitch`)
 REF_PITCH_FLOOR = -0.25
+# ...và cao hơn quá ngần này nửa cung cũng không: đó là câu quát, hét. Từ khi gán vai theo véc-tơ giọng
+# không chặn giới, câu nam chính quát lên 205–220 Hz (tầm thường ~148 Hz, +6 nửa cung) nằm đúng vai
+# nam chính — đưa vào mẫu thì giọng nhân bản the thé.
+REF_PITCH_CEIL = 4.0
 REF_JOIN_GAP = 0.12
 REF_SR = 24000
 
@@ -729,7 +733,7 @@ def _upper_pitch(pieces: list) -> list:
     base = float(np.median(known))
     kept = [
         item for item, f in zip(pieces, pitch)
-        if f > 0 and 12.0 * math.log2(f / base) >= REF_PITCH_FLOOR
+        if f > 0 and REF_PITCH_FLOOR <= 12.0 * math.log2(f / base) <= REF_PITCH_CEIL
     ]
     if sum(data.size for _start, data in kept) < REF_MIN_TOTAL * REF_SR:
         return pieces
@@ -881,6 +885,152 @@ def _spoken_text(cue: Cue, use_translation: bool, add_stop: bool = True) -> str:
     return _clean_for_tts(cue.text or "", add_stop=add_stop)
 
 
+# ------------------------------------------------ kịch bản lồng tiếng (đặt dấu câu)
+# Dịch từng dòng (Google, NLLB) trả mỗi dòng một mảnh không dấu câu, viết hoa chữ đầu.
+# Nối thẳng các mảnh đó thành câu đọc thì ra "Đồ ăn và quần áo sang trọng Thật là một
+# giai điệu lớn Đó là trường hợp Gia đình…": giọng đọc không có chỗ nghỉ, chữ hoa giữa
+# câu. Ở chỗ nối, đặt dấu chấm / phẩy / hỏi dựa vào câu gốc của từng dòng.
+_END_MARKS = ".!?…"
+_ANY_MARK = ".!?…,;:"
+# Câu gốc tiếng Trung là câu hỏi: tiểu từ cuối câu hoặc đại từ nghi vấn
+_ZH_QUESTION = re.compile(r"(吗|嗎|呢|么|麼)\s*$|什么|什麼|谁|誰|哪|为何|為何|为什么|為什麼|怎么|怎麼|怎样|如何|多少|是不是|何必|何时|何處|何处|几时|幾時")
+# Vế phụ tiếng Trung (nếu / đã… thì / tuy / vì…) → nối vế sau bằng dấu phẩy
+_ZH_SUB_START = re.compile(r"^(若|如果|要是|既然|虽然|雖然|因为|因為|既|倘若|只要|即使|就算|哪怕|当|當|一旦|除非|不管|无论|無論)")
+_ZH_LINK_START = re.compile(r"^(便|就|所以|但|但是|可是|而且|而|那么|那麼|还|還|也|又|才|却|卻|则|則|否则|否則)")
+# Vế phụ tiếng Việt mở đầu bằng liên từ → dấu phẩy
+_VI_SUB_START = re.compile(r"^(nếu|khi|vì|bởi vì|bởi|do|tuy|tuy rằng|dù|mặc dù|hễ|giá mà|giá như|một khi|trước khi|sau khi|để|lỡ|nhỡ|miễn là)\b", re.I)
+_HAN_CHAR = re.compile(r"[一-鿿]")
+# Dòng chữ Hán từ ngần này chữ trở lên thường là dòng bị cắt vì đủ độ dài (subtitles.cues_from_words cắt
+# ở max_chars // 3 = 28 với cấu hình mặc định), không phải ranh giới câu
+CJK_CUT_CHARS = 22
+
+
+def _is_question(src: str) -> bool:
+    src = (src or "").strip()
+    return src.endswith(("?", "？")) or bool(_ZH_QUESTION.search(src))
+
+
+def _cap_first(text: str) -> str:
+    for i, ch in enumerate(text):
+        if ch.isalpha():
+            return text[:i] + ch.upper() + text[i + 1:]
+    return text
+
+
+def _lower_first(text: str) -> str:
+    """Hạ chữ hoa đầu mảnh khi nó chỉ là chữ thường bị dịch máy viết hoa ("Tôi thấy" → "tôi thấy").
+
+    Giữ nguyên nếu từ thứ hai cũng viết hoa: đó là tên riêng ("Chu Đại Thăng", "Lang Quân")."""
+    words = text.split()
+    if not words or not words[0][:1].isupper():
+        return text
+    if len(words) > 1 and words[1][:1].isupper():
+        return text
+    if len(words[0]) > 1 and words[0].isupper():
+        return text  # viết tắt: "AI", "TV"
+    return text[0].lower() + text[1:] if text[0].isalpha() else text
+
+
+def _join_mark(src_a: str, src_b: str, vi_a: str) -> str:
+    """Dấu đặt giữa hai mảnh dịch không dấu: '?', ',' hay '.'."""
+    src_a, src_b = (src_a or "").strip(), (src_b or "").strip()
+    if _is_question(src_a):
+        return "?"
+    if _ZH_SUB_START.search(src_a) or _ZH_LINK_START.search(src_b) or _VI_SUB_START.search(vi_a.strip()):
+        return ","
+    han = len(_HAN_CHAR.findall(src_a))
+    if 0 < han <= 3:
+        return ","  # lời gọi / thán từ ngắn: "Lão gia, đây là ai?"
+    return "."
+
+
+def script_join(cues: list[Cue], idx: list[int], parts: list[str]) -> str:
+    """Nối các mảnh dịch của một câu đọc thành câu có dấu câu đúng chỗ."""
+    if not parts:
+        return ""
+    out = parts[0].strip()
+    for k in range(1, len(parts)):
+        nxt = parts[k].strip()
+        if not nxt:
+            continue
+        src_a = (cues[idx[k - 1]].text or "").strip()
+        if out and out[-1] in _ANY_MARK:
+            mark = ""
+        elif nxt[:1].isupper() or _is_question(src_a) or src_a.endswith(("。", "！", "!", "？", "…")):
+            # mảnh sau viết hoa = dòng được dịch riêng (Google/NLLB viết hoa đầu mỗi dòng)
+            mark = _join_mark(src_a, cues[idx[k]].text, parts[k - 1])
+        elif 0 < len(_HAN_CHAR.findall(src_a)) < CJK_CUT_CHARS:
+            # Dòng gốc chữ Hán NGẮN: Whisper ngắt ở ranh giới đoạn, tức hết một vế; Google vẫn có khi trả
+            # mảnh sau viết thường ("他不懂事" + "别理他" → "…không biết gì, phớt lờ anh ấy"). Lời gọi ngắn
+            # ("老爷" + "这是谁") cũng rơi vào đây → dấu phẩy; câu hỏi thì dấu hỏi.
+            mark = _join_mark(src_a, cues[idx[k]].text, parts[k - 1])
+            if mark == ".":
+                mark = ","
+        else:
+            # Dòng gốc dài tới mức bị cắt vì đủ ký tự: câu dịch bị chia giữa chừng ra nhiều dòng — nối liền
+            mark = ""
+        end = mark or out[-1:]
+        if end in _END_MARKS:
+            nxt = _cap_first(nxt)
+        elif end in ",;:":
+            nxt = _lower_first(nxt)
+        out = f"{out}{mark} {nxt}" if out else nxt
+    return out
+
+
+def finish_sentence(text: str, last_src: str = "") -> str:
+    """Viết hoa chữ đầu, chấm hết câu (câu gốc là câu hỏi thì dấu hỏi)."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    text = _cap_first(text)
+    if text[-1] in ",;:":
+        text = text[:-1].rstrip()
+    if text and text[-1] not in _END_MARKS:
+        text += "?" if _is_question(last_src) else "."
+    return text
+
+
+def script_text(units: list[dict], names: dict[str, str] | None = None) -> str:
+    """Kịch bản lồng tiếng dạng văn bản: mỗi câu đọc một dòng, kèm mốc giờ và vai."""
+    names = names or {}
+    lines = []
+    for u in units:
+        m, s = divmod(u["start"], 60)
+        who = u.get("speaker") or ""
+        who = f"{names.get(who) or who}: " if who else ""
+        lines.append(f"[{int(m):02d}:{s:04.1f}] {who}{u['text']}")
+    return "\n".join(lines) + "\n"
+
+
+def apply_script(units: list[dict], script: list[dict] | None) -> int:
+    """Thay chữ của câu đọc bằng bản người dùng đã sửa ở khung "Kịch bản lồng tiếng".
+
+    Mỗi mục sửa nhớ `cues` (các dòng của câu) và `base` (chữ tự dựng lúc người dùng
+    mở kịch bản). Chỉ áp khi cả hai còn khớp: nếu sau đó người dùng sửa lại bản
+    dịch hay chia lại dòng, bản sửa cũ đã lỗi thời và bị bỏ qua thay vì đọc nhầm."""
+    if not script:
+        return 0
+    edits = {}
+    for s in script:
+        try:
+            key = tuple(int(i) for i in s.get("cues") or [])
+        except (TypeError, ValueError):
+            continue
+        if key and (s.get("text") or "").strip():
+            edits[key] = s
+    used = 0
+    for u in units:
+        e = edits.get(tuple(u["cues"]))
+        if not e or (e.get("base") is not None and e.get("base") != u["text"]):
+            continue
+        text = finish_sentence(_clean_for_tts(e["text"], add_stop=False))
+        if text and text != u["text"]:
+            u["text"] = text
+            used += 1
+    return used
+
+
 def speech_units(cues: list[Cue], use_translation: bool = True) -> list[dict]:
     """Gộp cue thành **đơn vị đọc**: một câu trọn = một lần đọc TTS.
 
@@ -912,7 +1062,11 @@ def speech_units(cues: list[Cue], use_translation: bool = True) -> list[dict]:
                     if raw:
                         parts.append(raw)
                         taken.append(i)
-                text = _clean_for_tts(_join_fragments(parts))
+                if use_translation and len(parts) > 1:
+                    text = _clean_for_tts(script_join(cues, taken, parts), add_stop=False)
+                else:
+                    text = _clean_for_tts(_join_fragments(parts), add_stop=False)
+                text = finish_sentence(text, cues[taken[-1]].text if taken else "")
                 if not text or not taken:
                     continue
                 # `taken` chứ không phải `part`: cue nào không góp chữ nào (thiếu
@@ -1182,8 +1336,12 @@ def build_dub_track(
     energy_from: Path | None = None,
     pitch_from: Path | None = None,
     pitch_shift: bool = True,
+    script: list[dict] | None = None,
 ) -> tuple[Path, dict]:
     """Sinh file wav lồng tiếng khớp mốc giờ của `cues`.
+
+    `script`: các câu người dùng đã sửa trong khung "Kịch bản lồng tiếng" (xem
+    `apply_script`); câu nào không sửa thì đọc đúng kịch bản tự dựng có dấu câu.
 
     `energy_from`: file giọng gốc đã tách khỏi nhạc — truyền vào thì từng câu lồng
     được chỉnh to/nhỏ theo câu gốc tương ứng (xem `energy_gains`).
@@ -1218,6 +1376,13 @@ def build_dub_track(
         units = [u for u in units if u["text"]]
     else:
         units = speech_units(cues, use_translation)
+    edited = apply_script(units, script) if not per_cue else 0
+    if edited and on_log:
+        on_log(f"Đọc theo kịch bản đã sửa tay cho {edited} câu.")
+    try:
+        (workdir / "kich_ban_long_tieng.txt").write_text(script_text(units), encoding="utf-8")
+    except OSError:
+        pass
 
     # Dòng có chữ nhưng không đọc được (thiếu bản dịch, hoặc chỉ có dấu câu /
     # chữ Hán) — nói rõ là dòng nào, đừng lặng lẽ bỏ trống.

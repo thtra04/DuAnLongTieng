@@ -60,3 +60,38 @@ def tts_preview(payload: dict):
     except Exception as exc:
         raise HTTPException(500, f"Không đọc thử được: {exc}") from exc
     return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/script")
+def tts_script(payload: dict) -> dict:
+    """Kịch bản lồng tiếng: đúng các câu sẽ được đọc lúc xuất, đã đặt dấu câu.
+
+    Chạy y như lúc xuất (rút gọn bằng luật nếu bật, gộp câu theo người nói) trên
+    một bản sao của phụ đề, để người dùng xem và sửa trước khi lồng tiếng. Chữ
+    trả về nằm ở `base` — gửi kèm khi xuất để biết bản sửa còn khớp hay đã cũ.
+    """
+    import copy
+
+    from ..core import budget, shorten
+    from ..core.subtitles import Cue
+
+    cues = [Cue.from_dict(c) for c in payload.get("cues") or [] if isinstance(c, dict)]
+    if not cues:
+        return {"units": []}
+    use_translation = any((c.text2 or "").strip() for c in cues)
+    target = (payload.get("target_lang") or "vi").lower()
+    if use_translation and payload.get("shorten", True) and target.startswith("vi"):
+        cues = copy.deepcopy(cues)
+        try:
+            budget.run_loop(cues, shorten.make_tightener())
+        except Exception:
+            pass
+    units = dubbing.speech_units(cues, use_translation)
+    return {
+        "use_translation": use_translation,
+        "units": [
+            {"cues": u["cues"], "start": round(u["start"], 3), "end": round(u["end"], 3),
+             "speaker": u["speaker"], "text": u["text"]}
+            for u in units
+        ],
+    }

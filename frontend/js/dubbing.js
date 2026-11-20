@@ -361,3 +361,140 @@ async function previewSpeaker(id, btn) {
   }
 }
 
+
+/* ------------------------- kịch bản lồng tiếng -------------------------- */
+// Máy chủ ghép bản dịch thành từng câu đọc có dấu câu (/api/tts/script). Người dùng
+// sửa ở đây; lúc xuất chỉ gửi những câu đã sửa, kèm chữ gốc (`base`) để máy chủ bỏ
+// qua bản sửa đã cũ nếu sau đó phụ đề bị đổi.
+S.dubScript = null;
+
+function scriptSig() {
+  return JSON.stringify([
+    S.cues.map(c => [c.text, c.text2 || '', c.speaker || '']),
+    $('#dubShorten').checked,
+  ]);
+}
+
+async function buildScript() {
+  const btn = $('#scriptBtn');
+  if (!S.cues?.length) return toast('Chưa có phụ đề để dựng kịch bản.', 'warn');
+  btn.disabled = true;
+  $('#scriptMsg').textContent = 'Đang dựng…';
+  try {
+    const r = await api('/api/tts/script', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cues: S.cues,
+        target_lang: S.analyzed?.target_lang || 'vi',
+        shorten: $('#dubShorten').checked,
+      }),
+    });
+    // giữ lại câu đã sửa nếu câu đó vẫn y như cũ
+    const old = new Map((S.dubScript?.units || [])
+      .filter(u => u.text !== u.base).map(u => [u.cues.join(','), u]));
+    const units = r.units.map(u => {
+      const prev = old.get(u.cues.join(','));
+      return { ...u, base: u.text, text: prev && prev.base === u.text ? prev.text : u.text };
+    });
+    S.dubScript = { units, sig: scriptSig() };
+    renderScript();
+    $('#scriptMsg').textContent = '';
+  } catch (e) {
+    $('#scriptMsg').textContent = '';
+    toast('Không dựng được kịch bản: ' + e.message, 'err', 7000);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderScript() {
+  const sc = S.dubScript, box = $('#scriptList');
+  if (!sc) { box.classList.add('hide'); return; }
+  const edited = sc.units.filter(u => u.text !== u.base).length;
+  $('#scriptCount').textContent = `${sc.units.length} câu đọc · ${S.cues.length} dòng phụ đề`
+    + (edited ? ` · ${edited} câu đã sửa` : '');
+  $('#scriptBtn').innerHTML = `${icon('refresh')} Dựng lại`;
+  $('#scriptDl').classList.remove('hide');
+  box.classList.remove('hide');
+  box.innerHTML = sc.units.map((u, k) => `
+    <div class="script-row${u.text !== u.base ? ' edited' : ''}" data-k="${k}">
+      <div class="script-meta">
+        <span class="t">${fmtTime(u.start)}</span>
+        ${u.speaker ? `<span class="spk s${spkSlot(u.speaker)}">${esc(spkName(u.speaker))}</span>` : ''}
+        <span class="n muted">${u.cues.length} dòng</span>
+      </div>
+      <textarea rows="1" spellcheck="false" aria-label="Câu đọc ${k + 1}">${esc(u.text)}</textarea>
+      <button type="button" class="btn sm ghost reset" title="Trả về câu tự dựng" aria-label="Trả về câu tự dựng">${icon("rotate")} Trả về</button>
+    </div>`).join('');
+  box.querySelectorAll('textarea').forEach(fitArea);
+}
+
+function fitArea(t) {
+  t.style.height = 'auto';
+  t.style.height = t.scrollHeight + 2 + 'px';
+}
+
+function scriptStale() {
+  return S.dubScript && S.dubScript.sig !== scriptSig();
+}
+
+/** Câu đã sửa để gửi kèm lúc xuất (rỗng nếu chưa sửa câu nào). */
+function collectScript() {
+  if (!S.dubScript) return [];
+  return S.dubScript.units
+    .filter(u => u.text.trim() && u.text !== u.base)
+    .map(u => ({ cues: u.cues, base: u.base, text: u.text.trim() }));
+}
+
+function scriptText() {
+  return S.dubScript.units.map(u =>
+    `[${fmtTime(u.start)}] ${u.speaker ? spkName(u.speaker) + ': ' : ''}${u.text}`).join('\n') + '\n';
+}
+
+$('#scriptBtn').addEventListener('click', buildScript);
+$('#scriptDl').addEventListener('click', () => {
+  if (!S.dubScript) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([scriptText()], { type: 'text/plain;charset=utf-8' }));
+  a.download = (S.mediaName || 'video').replace(/\.[^.]+$/, '') + '.kichban.txt';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+});
+$('#scriptList').addEventListener('input', e => {
+  const row = e.target.closest('.script-row');
+  if (!row || e.target.tagName !== 'TEXTAREA') return;
+  const u = S.dubScript.units[+row.dataset.k];
+  u.text = e.target.value;
+  row.classList.toggle('edited', u.text !== u.base);
+  fitArea(e.target);
+  const edited = S.dubScript.units.filter(x => x.text !== x.base).length;
+  $('#scriptCount').textContent = `${S.dubScript.units.length} câu đọc · ${S.cues.length} dòng phụ đề`
+    + (edited ? ` · ${edited} câu đã sửa` : '');
+});
+$('#scriptList').addEventListener('click', e => {
+  const b = e.target.closest('.reset');
+  if (!b) return;
+  const row = b.closest('.script-row');
+  const u = S.dubScript.units[+row.dataset.k];
+  u.text = u.base;
+  renderScript();
+});
+
+/** Phụ đề đổi sau khi dựng kịch bản: báo để dựng lại; đổi hẳn dự án thì bỏ kịch bản cũ. */
+function markScriptStale() {
+  const sc = S.dubScript;
+  if (!sc) return;
+  const maxIdx = Math.max(-1, ...sc.units.flatMap(u => u.cues));
+  if (maxIdx >= S.cues.length) {
+    S.dubScript = null;
+    $('#scriptList').classList.add('hide');
+    $('#scriptDl').classList.add('hide');
+    $('#scriptCount').textContent = '';
+    $('#scriptBtn').innerHTML = `${icon('file-text')} Dựng kịch bản`;
+    return;
+  }
+  const stale = scriptStale();
+  $('#scriptList').classList.toggle('stale', stale);
+  $('#scriptMsg').textContent = stale ? 'Phụ đề đã đổi — bấm Dựng lại để cập nhật kịch bản.' : '';
+}

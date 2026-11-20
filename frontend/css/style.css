@@ -1977,3 +1977,36 @@ body::after {
   .logo p { display: none; }
   .bench-list .cuelist { max-height: 70vh; }
 }
+
+/* ---------- Kịch bản lồng tiếng (bước 4, thẻ Lồng tiếng) ---------- */
+.script-list {
+  max-height: 440px; overflow-y: auto; margin-top: 8px;
+  border: 1px solid var(--stroke); border-radius: 12px; background: var(--surface-0);
+}
+.script-list.stale { opacity: .6; }
+.script-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 5px 8px; align-items: center;
+  padding: 10px 12px 11px; border-bottom: 1px solid var(--stroke);
+}
+.script-row:last-child { border-bottom: none; }
+.script-meta { display: flex; align-items: center; gap: 9px; font-size: 12px; min-width: 0; }
+.script-meta .t { font-variant-numeric: tabular-nums; color: var(--muted); }
+.script-meta .spk { font-weight: 600; font-size: 12px; }
+.script-meta .n { font-size: 11.5px; }
+.script-row textarea {
+  grid-column: 1 / -1; width: 100%; resize: none; overflow: hidden; min-height: 34px;
+  font: inherit; font-size: 14.5px; line-height: 1.55; color: var(--text);
+  background: var(--field); border: 1px solid var(--stroke); border-radius: 9px; padding: 7px 10px;
+}
+.script-row textarea:focus { outline: none; border-color: rgba(var(--brand-rgb), .55); background: var(--field-focus); }
+.script-row .reset { grid-row: 1; grid-column: 2; display: none; padding: 3px 9px; font-size: 12px; }
+.script-row.edited .reset { display: inline-flex; }
+.script-row.edited textarea { border-color: rgba(var(--warn-rgb), .6); }
+.script-row.edited .script-meta .t::after { content: " · đã sửa"; color: var(--warn); font-weight: 600; }
+#scriptBox .spk-head { flex-wrap: wrap; row-gap: 2px; }
+@media (max-width: 560px) {
+  .script-list { max-height: 62vh; }
+  .script-row { padding: 9px 10px; }
+  .script-row textarea { font-size: 16px; }
+  #scriptBox .spk-head .muted { margin-left: 0; flex-basis: 100%; }
+}

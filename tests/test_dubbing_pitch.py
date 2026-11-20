@@ -137,6 +137,15 @@ def test_mau_ghep_chi_lay_cau_tu_tam_giong_tro_len():
     assert got == pytest.approx([200, 220, 240], abs=2), "hai câu trầm hơn tầm giọng (200 Hz) phải bị loại"
 
 
+def test_mau_ghep_bo_cau_quat_qua_cao():
+    """Nam chính thường ~148 Hz, câu quát ~210 Hz (+6 nửa cung): không đưa câu quát vào mẫu nhân bản."""
+    pieces = [khuc(hz, 2.0) for hz in (140.0, 148.0, 150.0, 152.0, 155.0, 210.0)]
+    kept = dubbing._upper_pitch(pieces)
+    got = sorted(round(dubbing._median_f0(dubbing._to_pitch_sr(d, dubbing.REF_SR), dubbing.PITCH_SR)) for _s, d in kept)
+    assert all(f < 180 for f in got), got
+    assert len(got) >= 2
+
+
 def test_cac_cau_cung_cao_do_thi_giu_het():
     pieces = [khuc(180.0) for _ in range(4)]
     assert len(dubbing._upper_pitch(pieces)) == 4

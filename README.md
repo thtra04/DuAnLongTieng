@@ -366,6 +366,7 @@ từng người — hoặc **nhân bản chính giọng nhân vật đó** trong
 | **Mẫu nhân bản** | **Ghép từ nhiều câu của đúng vai đó** (tới ~8–10 giây), mỗi khúc cắt gọn trong mốc giờ của một câu, ưu tiên câu **không sát lượt của người khác**; có mô hình véc-tơ giọng thì chọn những câu tiêu biểu nhất và loại câu lạc giọng. Không gom đủ 3 giây thì quay về cắt một đoạn liền như trước |
 | **Độ to theo thoại gốc** | Khi đã tách giọng gốc khỏi nhạc: câu gốc nói to thì câu lồng to hơn, nói khẽ thì nhỏ hơn (theo 60 % độ lệch so với mức thường của chính vai đó, chặn ±4 dB) |
 | **Mẫu không lấy câu trầm** | VieNeu-TTS đọc thấp hơn mẫu của nó 2–3 nửa cung, nên mẫu ghép chỉ lấy các câu có cao độ (F0) **từ tầm giọng của vai trở lên** — bản đọc bớt trầm hơn người thật. Không còn đủ 3 giây sau khi lọc thì dùng lại mọi câu |
+| **Kịch bản lồng tiếng có dấu câu** | Dịch từng dòng (Google, NLLB) cho ra mảnh không dấu câu; nối thẳng thì giọng đọc liền một mạch qua ranh giới câu. Lúc ghép câu đọc, chỗ nối được đặt dấu chấm / phẩy / hỏi theo câu gốc (tiểu từ hỏi 吗 呢, đại từ 什么 谁 哪, vế phụ 若 既然, lời gọi ngắn). Khung **Kịch bản lồng tiếng** ở bước 4 cho xem và sửa từng câu trước khi xuất (`POST /api/tts/script`); lúc xuất đọc đúng kịch bản và ghi kèm `<tên>.kichban.txt`. Đo trên 4 dự án: 227/291 chỗ nối thiếu dấu → 0 |
 | **Báo vai nhân bản lệch tone** | Khi đã tách giọng gốc khỏi nhạc: lúc lồng tiếng, đo cao độ từng câu đọc so với tầm giọng gốc của vai. Vai nào lệch từ 4 nửa cung trở lên (trung vị, ít nhất 3 câu) thì nhật ký báo rõ, để bạn đổi sang giọng dựng sẵn cho vai đó |
 | **Tone giọng theo thoại gốc** (thử nghiệm, mặc định tắt — bật bằng `dub.match_pitch`) | Đo trên tập phim 16 phút, 4 vai: lệch tầm giọng giảm 2,0 → 0,4 nửa cung nhưng độ giống giọng (cosine WeSpeaker) tụt 0,68 → 0,45, với cả bốn cách dịch cao độ đã thử (`data/_bench/pitch_variants.py`), nên chưa bật mặc định. Cách làm: khi đã tách giọng gốc khỏi nhạc và vai dùng giọng nhân bản, đo cao độ (F0) của vai trong tiếng gốc, rồi nâng/hạ từng câu lồng về tầm đó; câu gốc lên giọng hay xuống giọng thì câu lồng nhích theo 50 % (chặn ±2 nửa cung). Mỗi câu chỉnh tối đa 3 nửa cung, giữ nguyên độ dài và formant (ffmpeg `rubberband`); lệch dưới nửa nửa-cung thì để yên. Đây là xử lý tín hiệu, không huấn luyện lại VieNeu-TTS |
 | **Vai không cắt được mẫu** | Tự chuyển sang giọng dựng sẵn, có báo rõ — không làm hỏng cả bản lồng tiếng |
@@ -392,7 +393,15 @@ ngay trên đường tiếng của video — dưới 165 Hz là giọng nam, t�
 | **Không bật nhận diện người nói** | Chia các dòng thành hai vai *Nam* / *Nữ* (`S1`, `S2`, vai nói nhiều hơn là `S1`) |
 | **Có bật nhận diện người nói** | Giữ nguyên các vai pyannote tìm ra, chỉ gắn thêm giới tính cho từng vai (gộp cao độ mọi câu của vai đó) |
 | **Câu quá ngắn / lẫn nhạc** | Không đoán, để trống — đọc bằng giọng chung |
-| **Có model WeSpeaker (extra `diarize`)** | Chia tiếp nhiều người cùng giới (*Nam 1*, *Nam 2*, *Nữ 1*…, tối đa 6 mỗi giới) bằng véc-tơ giọng, không cần token; ngưỡng gộp tự thích nghi theo độ sạch của thoại |
+| **Có model WeSpeaker (extra `diarize`)** | Chia tiếp nhiều người cùng giới (*Nam 1*, *Nam 2*, *Nữ 1*…, tối đa 6 mỗi giới) bằng véc-tơ giọng, không cần token; ngưỡng gộp tự thích nghi theo độ sạch của thoại. Cụm bị chia nhầm giới (nam quát to vượt 165 Hz) gộp về cụm khác giới nó giống hẳn; mọi câu từ 0,4 s — kể cả lời gọi ngắn — về tâm giọng gần nhất; cụm dưới 1,5 % tổng thoại dồn vào cụm gần nhất |
+
+Đo bằng `data/_bench/speaker_bench.py` (trích đoạn 86 giây có nhãn tay theo mạch truyện, 6 giọng dựng sẵn, hai video dài):
+
+| | Cách cũ | Cách mới |
+|---|---|---|
+| Trích đoạn 86 giây (3 nhân vật, 43 câu) | 3 vai, đúng 69,8 % — nam quát to thành vai "Nữ 2" | 2 vai, **đúng 88,4 %** — mọi câu nam chính đúng; bà vợ còn gộp với nữ chính (hai giọng giống nhau 0,64) |
+| 6 giọng dựng sẵn | 7 vai, đúng 93,3 % | **6 vai, đúng 100 %** |
+| Video 16 phút / 13 phút | 12 vai (4 / 2 vai dưới 5 câu) | 9 / 10 vai (0 / 1 vai dưới 5 câu) |
 
 **Nhóm tuổi:** chỉ tự đoán được *Trẻ em* (cao độ nam ≥ 215 Hz, nữ ≥ 285 Hz). *Cao tuổi* không đoán được từ cao độ nên chọn tay ở bảng vai (nút Tuổi bên cạnh nút Nam/Nữ).
 

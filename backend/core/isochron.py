@@ -17,6 +17,10 @@ from . import duration
 
 BUDGET_MAX = 60  # câu thoại dài hơn 60 âm tiết thì gộp vào mức cao nhất
 ADAPTER_DIRNAME = "nllb_lora_dangthoi"
+# Ngôn ngữ nguồn có adapter riêng (đích luôn là tiếng Việt). Trung → Việt nằm ở thư mục gốc
+# `nllb_lora_dangthoi` (huấn luyện 11/11/2026); các thứ tiếng sau thêm hậu tố `_ko`, `_ja`, `_en`.
+LANGS = ("zh", "ko", "ja", "en")
+NLLB_SRC = {"zh": "zho_Hans", "ko": "kor_Hang", "ja": "jpn_Jpan", "en": "eng_Latn"}
 
 
 def budget_token(n: int) -> str:
@@ -38,10 +42,20 @@ def to_example(source_text: str, target_text: str, keep_budget: bool = True) -> 
     return {"src": with_budget(source_text, n if keep_budget else None), "tgt": target_text}
 
 
-def adapter_dir(model_dir: Path) -> Path:
-    return Path(model_dir) / ADAPTER_DIRNAME
+def adapter_dir(model_dir: Path, lang: str = "zh") -> Path:
+    return Path(model_dir) / (ADAPTER_DIRNAME if lang == "zh" else f"{ADAPTER_DIRNAME}_{lang}")
 
 
-def has_adapter(model_dir: Path) -> bool:
+def has_adapter(model_dir: Path, lang: str = "zh") -> bool:
     """Thư mục adapter đã huấn luyện xong (có file cấu hình của PEFT) hay chưa."""
-    return (adapter_dir(model_dir) / "adapter_config.json").is_file()
+    return (adapter_dir(model_dir, lang) / "adapter_config.json").is_file()
+
+
+def adapter_langs(model_dir: Path) -> list[str]:
+    """Các ngôn ngữ nguồn đã có adapter, theo thứ tự LANGS."""
+    return [lang for lang in LANGS if has_adapter(model_dir, lang)]
+
+
+def lang_key(nllb_src: str) -> str | None:
+    """Mã NLLB của câu nguồn → khoá adapter ('zh', 'ko'…), hoặc None nếu không có loại adapter đó."""
+    return next((k for k, v in NLLB_SRC.items() if v == nllb_src), None)

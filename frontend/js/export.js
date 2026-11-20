@@ -54,8 +54,11 @@ $('#renderBtn').addEventListener('click', async () => {
       shorten: $('#dubShorten').checked,      // HP-5 lúc xuất: rút gọn bằng luật trước khi đọc
       keep_wav: $('#outDubWav').checked,
       voices: collectSpeakerVoices(),
+      script: collectScript(),                // câu đã sửa trong khung Kịch bản lồng tiếng
     },
   };
+  if (outputs.dub && scriptStale() && payload.dub.script.length)
+    toast('Phụ đề đã đổi sau khi sửa kịch bản — câu nào không còn khớp sẽ đọc theo bản tự dựng.', 'warn', 8000);
 
   $('#renderBtn').disabled = true;
   $('#resultBox').classList.add('hide');

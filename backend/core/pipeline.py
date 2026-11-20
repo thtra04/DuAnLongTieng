@@ -862,7 +862,10 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         # ... nhưng vẫn ĐO, để báo vai nào bản nhân bản lệch tone hẳn so với người thật.
         pitch_from=ref_source if ref_source != Path(state["video_path"]) else None,
         pitch_shift=bool(dcfg.get("match_pitch", False)),
+        script=dcfg.get("script") or None,
     )
+    # Kịch bản lồng tiếng (đúng các câu vừa đọc, có dấu câu) xuất kèm, đọc được bằng Notepad
+    _export_script(cues, workdir, stem, files, cfg, has_translation, dcfg.get("script"))
     detail = f"{stats['count']} câu"
     if stats["sped_up"]:
         detail += f" · {stats['sped_up']} câu tăng tốc (tối đa {stats['max_factor']:.2f}×)"
@@ -1008,6 +1011,26 @@ def _fill_voices_by_gender(job, cfg: dict, voice: str, voice_map: dict, present:
     missing = [s for s in sorted(present) if s not in voice_map]
     if not missing or voice == dubbing.CLONE_VOICE:
         return
+    _pick_missing_voices(missing, voice_map, cfg)
+
+
+def _export_script(cues, workdir, stem, files, cfg, use_translation, script) -> None:
+    """Ghi `<tên>.kichban.txt`: mỗi câu đọc một dòng, mốc giờ, tên nhân vật, lời thoại."""
+    try:
+        units = dubbing.speech_units(cues, use_translation)
+        dubbing.apply_script(units, script)
+        try:
+            names = {c["label"]: c.get("name") or "" for c in characters.list_for(cfg.get("source_job"))}
+        except Exception:
+            names = {}
+        p = workdir / f"{stem}.kichban.txt"
+        p.write_text(dubbing.script_text(units, names), encoding="utf-8")
+        files.append({"name": p.name, "size": p.stat().st_size, "kind": "txt"})
+    except Exception:
+        pass
+
+
+def _pick_missing_voices(missing, voice_map, cfg) -> None:
     try:
         known = {c["label"]: c for c in characters.list_for(cfg.get("source_job"))}
         voices = dubbing.list_voices()

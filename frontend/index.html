@@ -615,6 +615,22 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
                 <div id="spkList"></div>
               </div>
 
+              <div id="scriptBox" class="subbox" style="margin-bottom:14px">
+                <div class="spk-head">
+                  <b><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg> Kịch bản lồng tiếng</b>
+                  <span class="muted" id="scriptCount"></span>
+                </div>
+                <p class="hint">Bản dịch được ghép thành từng câu đọc, có dấu chấm, phẩy, hỏi đúng chỗ — giọng đọc
+                  ngắt nghỉ theo dấu câu. Xem lại và sửa câu nào chưa xuôi; lúc xuất sẽ đọc đúng kịch bản này và
+                  xuất kèm file <code>.kichban.txt</code>.</p>
+                <div class="actions" style="margin:10px 0 4px">
+                  <button type="button" class="btn sm ghost" id="scriptBtn"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg> Dựng kịch bản</button>
+                  <button type="button" class="btn sm ghost hide" id="scriptDl"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg> Tải .txt</button>
+                  <span class="muted" id="scriptMsg"></span>
+                </div>
+                <div id="scriptList" class="script-list hide" aria-live="polite"></div>
+              </div>
+
               <label class="field" id="origModeWrap">
                 <span>Tiếng gốc của video</span>
                 <select id="dubOrigMode">
