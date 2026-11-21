@@ -52,6 +52,22 @@ def _db_cach_ly():
         shutil.rmtree(path, ignore_errors=True)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _hanviet_cach_ly():
+    """Bộ thuật ngữ Hán Việt tự học ghi ra chỗ tạm: test dịch Trung → Việt có bộ thuật ngữ
+    không được trộn thuật ngữ giả vào `data/hanviet_learned.json` thật của người dùng."""
+    from backend.core import hanviet
+
+    path = Path(tempfile.mkdtemp(prefix="vsub-test-hv-"))
+    mp = pytest.MonkeyPatch()
+    mp.setattr(hanviet, "LEARNED_PATH", path / "hanviet_learned.json")
+    try:
+        yield
+    finally:
+        mp.undo()
+        shutil.rmtree(path, ignore_errors=True)
+
+
 @pytest.fixture
 def tmp_db(workdir, monkeypatch):
     """SQLite tạm cho mỗi test — không đụng DB thật."""

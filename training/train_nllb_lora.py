@@ -1,7 +1,11 @@
-"""HP-4 — huấn luyện LoRA cho NLLB-200 distilled 600M dịch zh→vi có token ngân sách `<len:n>`.
+"""HP-4 — huấn luyện LoRA cho NLLB-200 distilled 600M dịch X→vi có token ngân sách `<len:n>`.
 
-    python training/train_nllb_lora.py                 # chạy / chạy tiếp từ checkpoint gần nhất
+    python training/train_nllb_lora.py                 # Trung → Việt; chạy / chạy tiếp từ checkpoint gần nhất
     python training/train_nllb_lora.py --max-minutes 100
+    python training/train_nllb_lora.py --src ko        # Hàn → Việt, đọc data/corpus/opus_ko_vi.jsonl (cũng: ja, en)
+
+Mỗi ngôn ngữ nguồn một adapter riêng (`isochron.adapter_dir(MODEL_DIR, lang)`): Trung → Việt
+ở `nllb_lora_dangthoi`, các thứ tiếng khác thêm hậu tố `_ko`, `_ja`, `_en`.
 
 Chạy bằng môi trường huấn luyện riêng (torch CUDA + transformers + peft + datasets),
 KHÔNG phải `.venv` của app — xem training/README.md.
@@ -38,7 +42,7 @@ LORA = dict(r=16, lora_alpha=32, lora_dropout=0.05, target_modules=["q_proj", "v
 _HAN = re.compile(r"[一-鿿]")
 
 
-def load_pairs(path: Path, origins: set[str] | None, limit: int, seed: int) -> list[dict]:
+def load_pairs(path: Path, origins: set[str] | None, limit: int, seed: int, lang: str = "zh") -> list[dict]:
     rows = []
     for ln in path.read_text(encoding="utf-8").splitlines():
         if not ln.strip():
@@ -46,7 +50,9 @@ def load_pairs(path: Path, origins: set[str] | None, limit: int, seed: int) -> l
         r = json.loads(ln)
         if origins and r.get("origin", "extra") not in origins:
             continue
-        if (r.get("tgt_lang") or "vi") != "vi" or not _HAN.search(r["src"]):
+        if (r.get("tgt_lang") or "vi") != "vi" or (r.get("src_lang") or "zh") != lang:
+            continue
+        if lang == "zh" and not _HAN.search(r["src"]):
             continue
         rows.append({"src": r["src"], "tgt": r["tgt"]})
     random.Random(seed).shuffle(rows)
@@ -73,6 +79,12 @@ def load_base(model_dir: Path, tok):
     return model
 
 
+def default_corpus(data_dir: Path, lang: str) -> Path:
+    """Trung → Việt dùng corpus đã gộp và loại câu trùng bộ gold (build_corpus.py); thứ tiếng khác
+    chưa có tập kiểm thử riêng nên đọc thẳng tệp đã lọc của prepare_opus.py."""
+    return data_dir / "corpus" / ("vidub_train.jsonl" if lang == "zh" else f"opus_{lang}_vi.jsonl")
+
+
 def load_tokenizer(model_dir: Path, src_lang: str = "zho_Hans", tgt_lang: str = "vie_Latn"):
     from transformers import AutoTokenizer
 
@@ -85,8 +97,9 @@ def main() -> None:
     from backend.config import DATA_DIR, MODEL_DIR
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--corpus", type=Path, default=DATA_DIR / "corpus" / "vidub_train.jsonl")
-    ap.add_argument("--out", type=Path, default=isochron.adapter_dir(MODEL_DIR))
+    ap.add_argument("--src", choices=isochron.LANGS, default="zh", help="ngôn ngữ nguồn (đích luôn là tiếng Việt)")
+    ap.add_argument("--corpus", type=Path, help="mặc định: Trung = vidub_train.jsonl, khác = opus_<src>_vi.jsonl")
+    ap.add_argument("--out", type=Path, help="mặc định isochron.adapter_dir(MODEL_DIR, src)")
     ap.add_argument("--origins", default="extra,user",
                     help="nguồn được dùng (mặc định bỏ 'ai': dự án cũ có thể cùng phim với tập kiểm thử)")
     ap.add_argument("--limit", type=int, default=0, help="chỉ lấy N cặp đầu sau khi xáo (0 = tất cả)")
@@ -103,6 +116,8 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--fresh", action="store_true", help="bỏ qua checkpoint cũ, huấn luyện lại từ đầu")
     args = ap.parse_args()
+    args.corpus = args.corpus or default_corpus(DATA_DIR, args.src)
+    args.out = args.out or isochron.adapter_dir(MODEL_DIR, args.src)
 
     import torch
     from datasets import Dataset
@@ -116,13 +131,13 @@ def main() -> None:
         print("GPU:", torch.cuda.get_device_name(0))
 
     origins = {o.strip() for o in args.origins.split(",") if o.strip()}
-    pairs = load_pairs(args.corpus, origins, args.limit, args.seed)
+    pairs = load_pairs(args.corpus, origins, args.limit, args.seed, args.src)
     if len(pairs) <= args.dev * 2:
         sys.exit(f"Corpus chỉ có {len(pairs)} cặp — không đủ để huấn luyện.")
     dev_pairs, train_pairs = pairs[: args.dev], pairs[args.dev:]
-    print(f"{len(train_pairs):,} cặp huấn luyện, {len(dev_pairs):,} cặp dev từ {args.corpus}")
+    print(f"{args.src} → vi: {len(train_pairs):,} cặp huấn luyện, {len(dev_pairs):,} cặp dev từ {args.corpus}")
 
-    tok = load_tokenizer(MODEL_DIR)
+    tok = load_tokenizer(MODEL_DIR, src_lang=isochron.NLLB_SRC[args.src])
     new_ids = tok.convert_tokens_to_ids(isochron.all_budget_tokens())
     base = load_base(MODEL_DIR, tok)
     if torch.cuda.is_available():
@@ -179,7 +194,8 @@ def main() -> None:
     tok.save_pretrained(args.out)
     evals = [h for h in trainer.state.log_history if "eval_loss" in h]
     meta = {
-        "base_model": BASE_MODEL, "lora": {k: v for k, v in LORA.items()}, "budget_tokens": isochron.BUDGET_MAX,
+        "base_model": BASE_MODEL, "src_lang": args.src, "lora": {k: v for k, v in LORA.items()},
+        "budget_tokens": isochron.BUDGET_MAX,
         "corpus": str(args.corpus.name), "origins": sorted(origins), "train_pairs": len(train_pairs),
         "dev_pairs": len(dev_pairs), "epochs": args.epochs, "batch": args.batch * args.accum, "lr": args.lr,
         "no_budget_rate": args.no_budget_rate, "global_step": trainer.state.global_step,

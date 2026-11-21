@@ -41,11 +41,48 @@ def test_chi_coi_la_co_adapter_khi_co_file_cau_hinh(tmp_path):
     assert isochron.has_adapter(tmp_path)
 
 
-def test_adapter_chi_ap_cho_trung_sang_viet():
-    assert translate.lora_applies("zh", "vi")
-    assert not translate.lora_applies("en", "vi")
-    assert not translate.lora_applies("zh", "en")
-    assert not translate.lora_applies(None, "vi")
+def _adapter_gia(model_dir, lang):
+    d = isochron.adapter_dir(model_dir, lang)
+    d.mkdir(parents=True)
+    (d / "adapter_config.json").write_text("{}", encoding="utf-8")
+    return d
+
+
+@pytest.fixture
+def model_dir(monkeypatch, tmp_path):
+    from backend import config
+
+    monkeypatch.setattr(config, "MODEL_DIR", tmp_path)
+    return tmp_path
+
+
+def test_moi_ngon_ngu_nguon_mot_thu_muc_adapter(tmp_path):
+    assert isochron.adapter_dir(tmp_path, "zh").name == "nllb_lora_dangthoi"  # adapter Trung → Việt có từ trước
+    assert isochron.adapter_dir(tmp_path, "ko").name == "nllb_lora_dangthoi_ko"
+    _adapter_gia(tmp_path, "en")
+    _adapter_gia(tmp_path, "ko")
+    assert isochron.adapter_langs(tmp_path) == ["ko", "en"]
+    assert isochron.lang_key("kor_Hang") == "ko" and isochron.lang_key("fra_Latn") is None
+
+
+def test_adapter_theo_ngon_ngu_nguon(model_dir):
+    _adapter_gia(model_dir, "zh")
+    _adapter_gia(model_dir, "ko")
+    assert translate.lora_for("zh", "vi") == "zh"
+    assert translate.lora_for("ko", "vi") == "ko"
+    assert translate.lora_for("ja", "vi") is None, "chưa huấn luyện adapter Nhật thì dùng NLLB gốc"
+    assert translate.lora_for("zh", "en") is None, "adapter chỉ dịch sang tiếng Việt"
+    assert translate.lora_for(None, "vi") is None, "không rõ ngôn ngữ nguồn thì không đoán"
+    assert translate.lora_applies("ko", "vi") and not translate.lora_applies("en", "vi")
+
+
+def test_moi_luot_dich_bat_dung_adapter_hoac_tat_het(model_dir):
+    _adapter_gia(model_dir, "zh")
+    _adapter_gia(model_dir, "ko")
+    assert translate._adapter_plan(("zh", "ko"), "ko", "vi") == ("ko", False)
+    assert translate._adapter_plan(("zh", "ko"), "en", "vi") == (None, True)
+    assert translate._adapter_plan(("zh",), "ko", "vi") == (None, True), "có trên đĩa nhưng chưa nạp"
+    assert translate._adapter_plan((), "zh", "vi") == (None, False), "không nạp LoRA: chạy thẳng mô hình gốc"
 
 
 def test_tat_adapter_bang_bien_moi_truong(monkeypatch, tmp_path):
@@ -74,7 +111,10 @@ def test_dau_vao_nllb_gan_token_va_thay_cau_rong():
 
 
 @pytest.fixture
-def co_adapter(monkeypatch):
+def co_adapter(monkeypatch, model_dir):
+    """Có adapter Trung và Hàn trên đĩa; coi như môi trường có peft."""
+    _adapter_gia(model_dir, "zh")
+    _adapter_gia(model_dir, "ko")
     monkeypatch.setattr(translate, "lora_available", lambda: True)
 
 
@@ -96,7 +136,21 @@ def test_bo_siet_nllb_dich_lai_voi_token_ngan_sach(monkeypatch, co_adapter):
     assert "dài hơn" not in str(out[1]), "bản dịch lại dài hơn bản cũ thì không được nhận"
 
 
-def test_bo_siet_nllb_chi_dung_cho_trung_viet(monkeypatch, co_adapter):
+def test_bo_siet_nllb_dung_adapter_cua_ngon_ngu_nguon(monkeypatch, co_adapter):
+    calls = []
+
+    def fake(texts, source, target, on_progress=None, on_log=None, budgets=None):
+        calls.append((source, list(budgets)))
+        return ["Đi thôi"]
+
+    monkeypatch.setattr(translate, "_translate_nllb", fake)
+    tighten = translate.make_tightener("nllb", target="vi", source="ko")
+    assert tighten([{"text": "Chúng ta hãy cùng nhau đi thôi nào", "source": "가자", "target_syllables": 2,
+                     "pieces": ["Chúng ta hãy cùng nhau đi thôi nào"]}]) == ["Đi thôi"]
+    assert calls == [("ko", [2])]
+
+
+def test_bo_siet_nllb_chi_dung_khi_ngon_ngu_nguon_co_adapter(monkeypatch, co_adapter):
     monkeypatch.setattr(translate, "_translate_nllb", lambda *a, **k: pytest.fail("không được gọi NLLB"))
     tighten = translate.make_tightener("nllb", target="vi", source="en")
     assert callable(tighten)

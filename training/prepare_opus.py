@@ -80,18 +80,34 @@ def keep(zh: str, vi: str) -> bool:
 # ------------------------------------------------ ngôn ngữ nguồn khác (20/11/2026)
 # Cùng ý như bộ lọc tiếng Trung ở trên (giữ nguyên để kết quả Trung → Việt dựng lại được):
 # câu nguồn đúng chữ viết, độ dài vừa phải, tỉ lệ "âm tiết Việt / đơn vị nguồn" hợp lý.
-# Đơn vị nguồn: Hàn = khối chữ Hangul (≈ một âm tiết), Nhật = ký tự kana + kanji, Anh = từ.
+# Đơn vị nguồn: Hàn = khối chữ Hangul (≈ một âm tiết), Nhật = ký tự kana + kanji,
+# Thái = ký tự Thái (không có dấu cách giữa các từ), Anh / Pháp / Nga = từ.
+# Nhóm A (zh, ko, ja, en) để huấn luyện; nhóm B (fr, ru, th) chỉ để kiểm thử giả thuyết H1.
 _HANGUL = re.compile(r"[가-힯]")
 _KANA = re.compile(r"[぀-ヿ]")
 _JA_CHAR = re.compile(r"[぀-ヿ一-鿿]")
 _EN_WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+_FR_WORD = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿœŒ]+(?:['’][A-Za-zÀ-ÖØ-öø-ÿœŒ]+)?")
+_RU_WORD = re.compile(r"[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)?")
+_THAI = re.compile(r"[฀-๿]")
+# dấu chỉ tiếng Việt mới có (tiếng Pháp cũng có â ê ô à é è… nên không dùng _VI_MARK để loại)
+_VI_ONLY = re.compile(r"[ăđơưạảãằẳẵắặầẩẫấậẻẽẹềểễếệỉĩịỏõọồổỗốộờởỡớợủũụừửữứựỳỷỹỵ]", re.I)
 _CREDIT_SRC = {
     "ko": re.compile(r"자막|번역|싱크|제작|감독"),
     "ja": re.compile(r"字幕|翻訳|製作|監督|制作"),
     "en": re.compile(r"subtitle|translat|synced|corrected by|opensubtitles|captioning", re.I),
+    "fr": re.compile(r"sous-titr|traduction|traduit|synchro|opensubtitles", re.I),
+    "ru": re.compile(r"субтитр|перевод|синхрон|opensubtitles", re.I),
+    "th": re.compile(r"คำบรรยาย|แปลไทย|ซับไทย|opensubtitles", re.I),
 }
 # (đơn vị tối thiểu, tối đa, tỉ lệ âm tiết Việt / đơn vị: thấp, cao, tỉ lệ đơn vị trong phần chữ tối thiểu)
-_LIMITS = {"ko": (2, 40, 0.45, 2.6, 0.7), "ja": (2, 60, 0.25, 1.6, 0.75), "en": (1, 30, 0.6, 2.8, 0.0)}
+# Ngưỡng tỉ lệ đặt ở hai đầu phân bố (khoảng phân vị 2–5 % và 98–99 %), đo trên 200.000 –
+# 300.000 cặp đầu của từng tệp: Hàn p5 = 0,35, p99 = 2,20; Nhật p5 = 0,30, p98 = 2,00;
+# Anh p2 = 0,60, p98 = 2,67; Pháp p2 = 0,50, p98 = 4,00; Nga p2 = 0,57, p98 = 4,50; Thái p2 = 0,12, p98 = 0,80.
+_LIMITS = {
+    "ko": (2, 40, 0.35, 2.2, 0.7), "ja": (2, 60, 0.30, 2.0, 0.75), "en": (1, 30, 0.6, 2.8, 0.0),
+    "fr": (1, 30, 0.5, 4.0, 0.0), "ru": (1, 30, 0.6, 4.5, 0.75), "th": (2, 120, 0.12, 0.8, 0.75),
+}
 
 
 def units(src: str, lang: str) -> int:
@@ -99,11 +115,17 @@ def units(src: str, lang: str) -> int:
         return len(_HANGUL.findall(src))
     if lang == "ja":
         return len(_JA_CHAR.findall(src))
+    if lang == "th":
+        return len(_THAI.findall(src))
+    if lang == "fr":
+        return len(_FR_WORD.findall(src))
+    if lang == "ru":
+        return len(_RU_WORD.findall(src))
     return len(_EN_WORD.findall(src))
 
 
 def keep_lang(src: str, vi: str, lang: str) -> bool:
-    """Bộ lọc cho Hàn / Nhật / Anh → Việt."""
+    """Bộ lọc cho Hàn / Nhật / Anh (và Pháp / Nga / Thái để kiểm thử) → Việt."""
     if lang == "zh":
         return keep(src, vi)
     if not src or not vi or _JUNK.search(src) or _JUNK.search(vi):
@@ -123,9 +145,15 @@ def keep_lang(src: str, vi: str, lang: str) -> bool:
         return False  # không có kana thì dễ là câu tiếng Trung lẫn vào
     if lang == "en" and (not body.isascii() or _VI_MARK.search(src)):
         return False
-    if _HANGUL.search(vi) or _JA_CHAR.search(vi) or not _VI_MARK.search(vi):
+    if lang == "fr" and (_VI_ONLY.search(src) or not all("A" <= ch <= "z" or "À" <= ch <= "ÿ" or ch in "œŒ" for ch in body)):
+        return False
+    if lang == "ru" and len("".join(_RU_WORD.findall(src)).replace("-", "")) / len(body) < share:
+        return False
+    if lang == "th" and u / len(body) < share:
+        return False
+    if _HANGUL.search(vi) or _JA_CHAR.search(vi) or _THAI.search(vi) or _RU_WORD.search(vi) or not _VI_MARK.search(vi):
         return False  # bên Việt chưa dịch, hoặc là tiếng Anh
-    if lang == "en" and vi.lower() == src.lower():
+    if lang in ("en", "fr") and vi.lower() == src.lower():
         return False
     n = syllables(vi)
     if n < 1 or n > 40 or len(vi) > 220:
@@ -141,7 +169,7 @@ def keep_lang(src: str, vi: str, lang: str) -> bool:
 
 def detect_lang(zip_path: Path) -> str:
     name = zip_path.name.lower()
-    for lang in ("ko", "ja", "en", "zh"):
+    for lang in ("ko", "ja", "en", "zh", "fr", "ru", "th"):
         if f"{lang}-" in name or f"-{lang}" in name:
             return lang
     raise SystemExit(f"Không đoán được ngôn ngữ nguồn từ tên tệp {zip_path.name}; dùng --src")
@@ -163,7 +191,8 @@ def read_pairs(zip_path: Path, lang: str = "zh"):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("zip", type=Path, help="file .txt.zip tải từ OPUS (Moses)")
-    ap.add_argument("--src", choices=["zh", "ko", "ja", "en"], help="ngôn ngữ nguồn (mặc định đoán từ tên tệp)")
+    ap.add_argument("--src", choices=["zh", "ko", "ja", "en", "fr", "ru", "th"],
+                    help="ngôn ngữ nguồn (mặc định đoán từ tên tệp)")
     ap.add_argument("--out", type=Path, help="mặc định data/corpus/opus_<src>_vi.jsonl")
     ap.add_argument("--max", type=int, default=300_000, help="số cặp tối đa giữ lại (lấy mẫu ngẫu nhiên)")
     ap.add_argument("--seed", type=int, default=0)

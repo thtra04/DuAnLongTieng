@@ -162,14 +162,28 @@ def learn_from_edit(old_cues: list[dict], new_cues: list[dict], source_lang: str
     new = [Cue.from_dict(c) for c in new_cues]
     if any(a.text != b.text for a, b in zip(old, new)):
         return 0
-    pairs = []
+    pairs, edits = [], []
     for g in group_cues(new, split_cjk_lines=True):
         source = _join_fragments([new[i].text for i in g])
         before = _join_fragments([old[i].text2 for i in g])
         after = _join_fragments([new[i].text2 for i in g])
         if source.strip() and after.strip() and after != before:
             pairs.append((source, after))
+            edits.append((source, before, after))
+    _learn_hanviet(edits, source_lang, target_lang)
     return learn(pairs, source_lang, target_lang, job_id) if pairs else 0
+
+
+def _learn_hanviet(edits: list[tuple[str, str, str]], source_lang: str, target_lang: str) -> None:
+    """Chỗ người dùng sửa sang âm Hán Việt (霍 "Huo" → "Hoắc") được nhớ thành thuật ngữ cho lần dịch sau."""
+    from ..core import hanviet
+
+    if not edits or not hanviet.enabled(source_lang, target_lang):
+        return
+    try:
+        hanviet.learn([p for s, b, a in edits for p in hanviet.corrections(s, b, a)], "sửa tay")
+    except Exception:  # noqa: BLE001 — học thuật ngữ hỏng không được làm hỏng việc xuất
+        pass
 
 
 def stats() -> dict:

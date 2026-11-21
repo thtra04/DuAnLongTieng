@@ -384,10 +384,25 @@ def translate_cues(
             if on_progress:
                 on_progress(1.0)
 
+    from . import hanviet
+
+    use_hv = hanviet.enabled(source, target)
+    manual = parse_glossary(glossary)
+    if use_hv and manual:
+        # bộ thuật ngữ người dùng gõ cũng là thứ đáng nhớ: tập sau, dự án sau tự áp
+        hanviet.learn([p for p in manual if hanviet.is_han(p[0])], "thuật ngữ")
+
     if engine in ("google", "mymemory", "nllb"):
         # Engine miễn phí không nhận chỉ dẫn, nên bộ thuật ngữ được cài thẳng vào câu
         # gốc trước khi gửi đi: tên riêng và xưng hô ra đúng như người dùng đã ghi.
-        pairs = parse_glossary(glossary)
+        pairs = list(manual)
+        if use_hv:
+            # + cụm Hán Việt đã học ở các lần trước (người sửa tay, bộ thuật ngữ cũ, tên trong bản AI)
+            auto = hanviet.learned_pairs(texts, exclude={p[0] for p in manual})
+            if auto and on_log:
+                shown = ", ".join(f"{z} → {v}" for z, v in auto[:6]) + (" …" if len(auto) > 6 else "")
+                on_log(f"Cài {len(auto)} cụm Hán Việt đã học vào câu gốc: {shown}")
+            pairs = sorted(pairs + auto, key=lambda p: -len(p[0]))
         sent, used = apply_glossary(texts, pairs)
         if used and on_log:
             on_log(f"Áp bộ thuật ngữ vào {used} câu trước khi dịch ({len(pairs)} mục).")
@@ -406,6 +421,21 @@ def translate_cues(
 
     if cache_key is not None and out is not None:
         _write_cached(cache_key, out)
+
+    if use_hv and out is not None:
+        # Phiên âm pinyin engine để sót ("Lang Jun", "Huo") → âm Hán Việt của đúng chữ trong câu gốc
+        known = {z: t["vi"] for z, t in hanviet.load().items()} | dict(manual)
+        fixed = []
+        for i, (src, tr) in enumerate(zip(texts, out)):
+            new, changes = hanviet.fix_pinyin(src, tr or "", known)
+            if changes:
+                out[i] = new
+                fixed += changes
+        if fixed and on_log:
+            shown = ", ".join(f"{a} → {b}" for a, b in fixed[:6]) + (" …" if len(fixed) > 6 else "")
+            on_log(f"Đổi {len(fixed)} chỗ phiên âm pinyin sang âm Hán Việt: {shown}")
+        if is_ai:
+            hanviet.learn_names(texts, out)  # tên riêng AI dịch ổn định → Google/NLLB lần sau dùng theo
 
     # Câu người dùng từng sửa tay thắng mọi engine: họ đã quyết định câu đó rồi.
     for i, tr in remembered.items():
@@ -650,34 +680,55 @@ def _translate_one(tr, text: str, on_log=None) -> str:
 # ---------------------------------------------------------------- NLLB-200
 
 _nllb_lock = threading.Lock()
+_nllb_run_lock = threading.RLock()  # đổi adapter + sinh câu là một bước: hai job khác thứ tiếng không giẫm nhau
 _nllb_cache: dict[str, tuple] = {}
 NLLB_MODEL = os.environ.get("VSUB_NLLB_MODEL", "facebook/nllb-200-distilled-600M")
 NLLB_NO_REPEAT = 4  # một cụm 4 từ lặp lại trong cùng câu thoại gần như luôn là mô hình chạy loạn
 
 
+def lora_langs() -> list[str]:
+    """Ngôn ngữ nguồn đã có adapter đẳng thời (HP-4): mỗi thứ tiếng một adapter riêng."""
+    from . import isochron
+    from ..config import MODEL_DIR
+
+    return isochron.adapter_langs(MODEL_DIR)
+
+
 def lora_available() -> bool:
-    """Có adapter đẳng thời (HP-4) đã huấn luyện và đủ thư viện để nạp hay không.
+    """Có ít nhất một adapter đẳng thời (HP-4) đã huấn luyện và đủ thư viện để nạp hay không.
 
     Không import torch/peft ở đây — hàm này được gọi cả lúc chỉ dựng bộ siết.
     Tắt hẳn bằng biến môi trường VSUB_NLLB_LORA=0.
     """
     import importlib.util
 
-    from . import isochron
-    from ..config import MODEL_DIR
-
-    if os.environ.get("VSUB_NLLB_LORA", "1") == "0" or not isochron.has_adapter(MODEL_DIR):
+    if os.environ.get("VSUB_NLLB_LORA", "1") == "0" or not lora_langs():
         return False
     return importlib.util.find_spec("peft") is not None
 
 
+def lora_for(source: str | None, target: str | None) -> str | None:
+    """Adapter dùng cho cặp này ('zh', 'ko', 'ja', 'en'), hoặc None = NLLB gốc.
+
+    Đích phải là tiếng Việt và ngôn ngữ nguồn phải có adapter riêng đã huấn luyện;
+    nguồn không rõ thì không dùng (không đoán là tiếng Anh như lúc gọi NLLB).
+    """
+    from . import isochron
+
+    if not source or nllb_code(target or "vi") != "vie_Latn":
+        return None
+    key = isochron.lang_key(nllb_code(source))
+    return key if key and key in lora_langs() else None
+
+
 def lora_applies(source: str | None, target: str | None) -> bool:
-    """Adapter chỉ được huấn luyện và đo cho Trung → Việt; cặp khác dùng NLLB gốc."""
-    return nllb_code(source or "en") == "zho_Hans" and nllb_code(target or "vi") == "vie_Latn"
+    """Cặp ngôn ngữ này có adapter đẳng thời không; cặp khác dùng NLLB gốc."""
+    return lora_for(source, target) is not None
 
 
-def _attach_lora(tok, mdl):
-    """Gắn adapter LoRA + 60 token ngân sách `<len:n>` lên NLLB gốc. Trả về (tok, mdl)."""
+def _attach_lora(tok, mdl, langs: list[str]):
+    """Gắn các adapter LoRA (mỗi ngôn ngữ nguồn một bộ, cùng 60 token ngân sách `<len:n>`)
+    lên NLLB gốc. Trả về (tok, mdl, tên các adapter đã nạp)."""
     import torch
     from peft import PeftModel
     from transformers import AutoTokenizer
@@ -685,8 +736,8 @@ def _attach_lora(tok, mdl):
     from . import isochron
     from ..config import MODEL_DIR
 
-    path = str(isochron.adapter_dir(MODEL_DIR))
-    lora_tok = AutoTokenizer.from_pretrained(path)
+    first = isochron.adapter_dir(MODEL_DIR, langs[0])
+    lora_tok = AutoTokenizer.from_pretrained(str(first))
     old = mdl.get_input_embeddings().weight.shape[0]
     if len(lora_tok) > old:
         # đúng như lúc huấn luyện (training/train_nllb_lora.py::load_base): hàng mới
@@ -695,11 +746,38 @@ def _attach_lora(tok, mdl):
         with torch.no_grad():
             w = mdl.get_input_embeddings().weight
             w[old:] = w[:old].mean(dim=0, keepdim=True)
-    return lora_tok, PeftModel.from_pretrained(mdl, path)
+    mdl = PeftModel.from_pretrained(mdl, str(first), adapter_name=langs[0])
+    loaded = [langs[0]]
+    tokens = (first / "added_tokens.json").read_text(encoding="utf-8")
+    for lang in langs[1:]:
+        path = isochron.adapter_dir(MODEL_DIR, lang)
+        try:
+            # mọi adapter phải thêm đúng 60 token như nhau thì mới dùng chung một tokenizer
+            if (path / "added_tokens.json").read_text(encoding="utf-8") != tokens:
+                continue
+            mdl.load_adapter(str(path), adapter_name=lang)
+            loaded.append(lang)
+        except Exception:
+            continue  # một adapter hỏng không làm mất các adapter còn lại
+    return lora_tok, mdl, tuple(loaded)
+
+
+def _adapter_plan(loaded: tuple, source: str | None, target: str | None) -> tuple[str | None, bool]:
+    """(adapter cần bật, có phải tắt adapter không) cho một lượt dịch.
+
+    Không có adapter nào được nạp → chạy thẳng mô hình; có nạp nhưng cặp này không có
+    adapter của nó → tắt hết adapter để ra đúng NLLB gốc.
+    """
+    if not loaded:
+        return None, False
+    name = lora_for(source, target)
+    if name in loaded:
+        return name, False
+    return None, True
 
 
 def _load_nllb():
-    """Trả về (tokenizer, model, device, có_lora)."""
+    """Trả về (tokenizer, model, device, các_adapter_đã_nạp) — tuple rỗng khi không có LoRA."""
     import torch
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
@@ -715,12 +793,12 @@ def _load_nllb():
             pass
         tok = AutoTokenizer.from_pretrained(NLLB_MODEL, cache_dir=str(MODEL_DIR))
         mdl = AutoModelForSeq2SeqLM.from_pretrained(NLLB_MODEL, cache_dir=str(MODEL_DIR))
-        lora = False
+        lora: tuple = ()
         if lora_available() and "nllb-200-distilled-600M" in NLLB_MODEL:
             try:
-                tok, mdl = _attach_lora(tok, mdl)
-                lora = True
+                tok, mdl, lora = _attach_lora(tok, mdl, lora_langs())
             except Exception:
+                lora = ()
                 # adapter hỏng / lệch phiên bản: nạp lại bản gốc sạch, app vẫn dịch được
                 tok = AutoTokenizer.from_pretrained(NLLB_MODEL, cache_dir=str(MODEL_DIR))
                 mdl = AutoModelForSeq2SeqLM.from_pretrained(NLLB_MODEL, cache_dir=str(MODEL_DIR))
@@ -741,19 +819,22 @@ def _nllb_inputs(texts: list[str], budgets: list | None = None) -> list[str]:
 
 def _translate_nllb(texts, source, target, on_progress=None, on_log=None, budgets=None) -> list[str]:
     """Dịch bằng NLLB-200. `budgets[i]` (số âm tiết) chỉ có tác dụng khi adapter đẳng thời
-    đang dùng cho cặp ngôn ngữ này; không thì bị bỏ qua."""
+    của ngôn ngữ nguồn này đang được dùng; không thì bị bỏ qua."""
     import contextlib
 
     import torch
 
+    from . import isochron
+
     tok, mdl, device, lora = _load_nllb()
-    use_lora = lora and lora_applies(source, target)
+    name, disable = _adapter_plan(lora, source, target)
+    use_lora = name is not None
     if on_log:
-        on_log(f"NLLB-200 chạy trên {device.upper()}" + (" · adapter đẳng thời HP-4 (LoRA)" if use_lora else ""))
+        on_log(f"NLLB-200 chạy trên {device.upper()}"
+               + (f" · adapter đẳng thời HP-4 (LoRA {name} → vi)" if use_lora else ""))
 
     src = nllb_code(source or "en")
     tgt = nllb_code(target)
-    tok.src_lang = src
 
     try:
         bos = tok.convert_tokens_to_ids(tgt)
@@ -765,21 +846,28 @@ def _translate_nllb(texts, source, target, on_progress=None, on_log=None, budget
         raise TranslateError(f"NLLB không hỗ trợ ngôn ngữ đích: {target}")
 
     inputs = _nllb_inputs(texts, budgets if use_lora else None)
-    # có adapter nhưng cặp ngôn ngữ khác Trung → Việt: tắt adapter, chạy đúng NLLB gốc
-    scope = mdl.disable_adapter() if (lora and not use_lora) else contextlib.nullcontext()
+    extra = {}
+    if lora:
+        # 60 token ngân sách chỉ dùng ở câu nguồn; không bao giờ được sinh ra ở bản dịch
+        extra["suppress_tokens"] = tok.convert_tokens_to_ids(isochron.all_budget_tokens())
     results: list[str] = []
     BATCH = 8
-    with scope:
-        for i in range(0, len(inputs), BATCH):
-            enc = tok(inputs[i : i + BATCH], return_tensors="pt", padding=True, truncation=True, max_length=400)
-            enc = {k: v.to(device) for k, v in enc.items()}
-            with torch.inference_mode():
-                # no_repeat_ngram_size: chặn kiểu chạy loạn "Ồ, Ồ, Ồ, …" (gặp thật khi đo bộ gold)
-                gen = mdl.generate(**enc, forced_bos_token_id=bos, max_new_tokens=400, num_beams=4,
-                                   no_repeat_ngram_size=NLLB_NO_REPEAT)
-            results.extend(tok.batch_decode(gen, skip_special_tokens=True))
-            if on_progress:
-                on_progress(min(1.0, (i + BATCH) / max(1, len(inputs))))
+    with _nllb_run_lock:
+        tok.src_lang = src  # tokenizer dùng chung: đặt ngôn ngữ nguồn trong khoá
+        if use_lora:
+            mdl.set_adapter(name)
+        # có adapter nhưng không có adapter cho cặp này: tắt adapter, chạy đúng NLLB gốc
+        with (mdl.disable_adapter() if disable else contextlib.nullcontext()):
+            for i in range(0, len(inputs), BATCH):
+                enc = tok(inputs[i : i + BATCH], return_tensors="pt", padding=True, truncation=True, max_length=400)
+                enc = {k: v.to(device) for k, v in enc.items()}
+                with torch.inference_mode():
+                    # no_repeat_ngram_size: chặn kiểu chạy loạn "Ồ, Ồ, Ồ, …" (gặp thật khi đo bộ gold)
+                    gen = mdl.generate(**enc, forced_bos_token_id=bos, max_new_tokens=400, num_beams=4,
+                                       no_repeat_ngram_size=NLLB_NO_REPEAT, **extra)
+                results.extend(tok.batch_decode(gen, skip_special_tokens=True))
+                if on_progress:
+                    on_progress(min(1.0, (i + BATCH) / max(1, len(inputs))))
     return [r.strip() for r in results]
 
 
