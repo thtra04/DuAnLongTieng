@@ -7,7 +7,7 @@ import re
 import time
 from pathlib import Path
 
-from . import (align, asr, budget, diarize, dubbing, gender, hardsub, media, metrics, separate, subtitles,
+from . import (align, asr, budget, diarize, dubbing, gender, hardsub, media, metrics, separate, subocr, subtitles,
                translate, voiceprint)
 from .jobs import Job, Step
 from .subtitles import Cue
@@ -51,6 +51,8 @@ def analyze_steps(cfg: dict) -> list[Step]:
     mode = cfg.get("sub_mode", "auto")
     if mode == "srt":
         steps.append(Step("subs", "Nạp file phụ đề", weight=0.3))
+    elif mode == "hardsub":
+        steps.append(Step("ocr", "Đọc phụ đề có sẵn trong hình", weight=3.0))
     else:
         steps.append(Step("audio", "Tách âm thanh", weight=0.6))
         steps.append(Step("asr", "Nghe & nhận dạng lời thoại", weight=6.0))
@@ -63,7 +65,8 @@ def analyze_steps(cfg: dict) -> list[Step]:
         steps.append(Step("diarize", "Nhận diện người nói", weight=4.0))
     if cfg.get("gender_split"):
         steps.append(Step("gender", "Tách giọng nam / nữ", weight=0.4))
-    steps.append(Step("hardsub", "Dò phụ đề có sẵn trong hình", weight=0.4))
+    if mode != "hardsub":       # chế độ đọc chữ trên hình đã tìm dải phụ đề ở bước "ocr"
+        steps.append(Step("hardsub", "Dò phụ đề có sẵn trong hình", weight=0.4))
     if cfg.get("translate"):
         steps.append(Step("translate", "Dịch phụ đề", weight=3.0))
         if cfg.get("budget_loop"):
@@ -199,6 +202,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
     mode = cfg.get("sub_mode", "auto")
     coverage_note = ""
     asr_result: dict = {}
+    ocr_band: dict = {}
 
     # 3. Lấy phụ đề
     if mode == "srt":
@@ -208,6 +212,27 @@ def run_analyze(job: Job, cfg: dict) -> None:
             raise RuntimeError("File phụ đề rỗng hoặc sai định dạng (cần .srt/.vtt).")
         job.finish_step("subs", f"{len(cues)} dòng")
         job.log(f"Đã nạp {len(cues)} dòng phụ đề.")
+    elif mode == "hardsub":
+        # Chữ người làm phim đã gõ sẵn trên hình đúng hơn chữ máy nghe được (giọng địa phương,
+        # nhạc nền lớn) — đọc chữ đó, mốc giờ lấy theo lúc chữ hiện / tắt.
+        job.start_step("ocr", "Đang tìm dải phụ đề…")
+        ok, why = subocr.available()
+        if not ok:
+            raise RuntimeError(why)
+        read = subocr.read_subtitles(
+            video_path, info, on_progress=lambda p: job.set_step_progress("ocr", p),
+            on_log=job.log, cancel=job.check_cancel,
+        )
+        ocr_band = read["band"]
+        if not ocr_band.get("found"):
+            raise RuntimeError(
+                "Không thấy phụ đề in sẵn trong hình (" + ocr_band.get("reason", "không rõ lý do")
+                + ') Hãy chọn "Tự nghe từ video".'
+            )
+        cues = read["cues"]
+        detected_lang = detected_lang or read["language"]
+        job.finish_step("ocr", f"{len(cues)} dòng · chữ {detected_lang or '?'}")
+        job.log(f"Đọc được {len(cues)} dòng phụ đề từ hình (chữ: {detected_lang or 'không rõ'}).")
     else:
         if not info.get("has_audio"):
             raise RuntimeError("Video không có âm thanh nên không thể nhận dạng lời thoại.")
@@ -278,7 +303,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
     job.check_cancel()
 
     # 3.7. Phụ đề nung sẵn trong hình -> bước 4 đề nghị che đi trước khi nung chữ mới
-    hard = _run_hardsub(job, video_path, cues, info)
+    hard = ocr_band if mode == "hardsub" else _run_hardsub(job, video_path, cues, info)
     job.check_cancel()
 
     # 4. Dịch

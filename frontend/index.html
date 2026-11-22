@@ -181,6 +181,10 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
           <b><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg> Tự nghe từ video</b>
           <small>Whisper AI nghe lời thoại và tự viết ra phụ đề, kèm mốc giờ chính xác.</small>
         </div>
+        <div class="choice" data-mode="hardsub" role="button" tabindex="0">
+          <b><svg class="i" aria-hidden="true"><use href="#i-captions"/></svg> Đọc phụ đề có sẵn trên hình</b>
+          <small>Video đã in sẵn phụ đề chữ Trung hoặc chữ Anh — đọc chữ đó thay cho nghe, đúng hơn khi nhân vật nói giọng địa phương hoặc nhạc nền lớn.</small>
+        </div>
         <div class="choice" data-mode="text" role="button" tabindex="0">
           <b><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg> Theo văn bản của tôi</b>
           <small>Bạn dán sẵn lời thoại/kịch bản — tool nghe video rồi canh giờ khớp từng câu.</small>
