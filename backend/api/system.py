@@ -31,16 +31,9 @@ def system_info() -> dict:
         engines.append({**e, "available": ok, "reason": why})
 
     tts_ok, tts_reason = dubbing.available()
-    dia_ok, dia_reason = diarize.available()
 
     return {
-        "diarize": {
-            "available": dia_ok,
-            "reason": dia_reason,
-            # Có token sẵn trong biến môi trường thì giao diện khỏi hỏi lại
-            "has_token": bool(diarize.hf_token()),
-            "model": diarize.MODEL_ID,
-        },
+        "diarize": diarize.setup_status(),
         "ffmpeg": {
             "ok": ff_ok,
             "path": ff_path,
@@ -65,6 +58,12 @@ def system_info() -> dict:
         "has_openai_key": bool(os.environ.get("OPENAI_API_KEY")),
         "max_upload_mb": MAX_UPLOAD_BYTES // (1024 * 1024),
     }
+
+
+@router.post("/diarize/check")
+def diarize_check(payload: dict) -> dict:
+    ok, message = diarize.check_access(payload.get("hf_token", ""))
+    return {"ok": ok, "message": message}
 
 
 @router.get("/translation-cache")

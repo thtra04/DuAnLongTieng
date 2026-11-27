@@ -17,6 +17,7 @@ const TL = {
   tolerance: 0.05,
   budgetTimer: 0,
   budgetSeq: 0,
+  speakerJobs: new Set(),
   drawRaf: 0,
   bound: false,
 };
@@ -31,7 +32,9 @@ function setupTimeline() {
   if (!tlEl('tlInner')) return;
   const player = $('#player');
   const last = S.cues.length ? S.cues[S.cues.length - 1].end : 0;
-  TL.dur = Math.max(last + 1, (S.analyzed?.info?.duration) || 0, player.duration || 0, 5);
+  TL.dur = Math.max(last, knownDuration() || player.duration || 0, 0.2);
+  TL.budget = [];
+  TL.budgetSeq++;
   tlBind();
   tlFit();
   renderTimeline();
@@ -44,7 +47,7 @@ function tlLanes() {
   const ids = knownSpeakerIds();
   const lanes = ids.map(id => ({ id, name: spkName(id), slot: spkSlot(id) }));
   if (!ids.length || S.cues.some(c => !c.speaker)) {
-    lanes.push({ id: '', name: ids.length ? 'Chưa gán vai' : 'Phụ đề', slot: 0 });
+    lanes.push({ id: '', name: ids.length ? 'Chưa gán vai' : 'Chưa phân giọng', slot: 0 });
   }
   return lanes;
 }
@@ -57,6 +60,9 @@ function renderTimeline() {
   const inner = tlEl('tlInner');
   if (!inner || !TL.dur) return;
   const lanes = tlLanes();
+  const detecting = TL.speakerJobs.has(S.jobId);
+  tlEl('tlSpeakersBtn').disabled = !S.cues.length || detecting || S.analyzed?.role === 'viewer';
+  tlEl('tlSpeakersBtn').textContent = detecting ? 'Đang phân giọng…' : 'Phân giọng';
   const px = t => (t * TL.pps).toFixed(1);
   const hasDub = !!S.analyzed?.target_lang && S.cues.some(c => c.text2);
 
@@ -155,6 +161,45 @@ function tlReveal(t) {
   }
 }
 
+async function tlIdentifySpeakers() {
+  const id = S.jobId, cues = S.cues;
+  if (!id || !cues.length || TL.speakerJobs.has(id)) return;
+  const signature = () => JSON.stringify(cues.map(c => [c.start, c.end, c.speaker || '', !!c.speaker_fixed]));
+  const before = signature();
+  if (cues.some(c => c.speaker) && !(await askConfirm(
+    'Phân lại và lưu vai từ tiếng gốc? Vai cũ có thể đổi, trừ các câu đã đánh dấu làm mẫu. Lời thoại, bản dịch và mốc giờ không đổi.',
+    { ok: 'Phân giọng', danger: false }))) return;
+  if (id !== S.jobId || cues !== S.cues || before !== signature()) return;
+  TL.speakerJobs.add(id);
+  renderTimeline();
+  try {
+    const r = await api(`/api/projects/${encodeURIComponent(id)}/speakers`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cues, revision: S.analyzed?.revision }),
+    });
+    if (id !== S.jobId || cues !== S.cues) return;
+    if (before !== signature())
+      return toast('Đã phân giọng cho bản đã lưu; không ghi đè các câu bạn vừa sửa trên màn hình.', 'warn');
+    cues.forEach((c, i) => { c.speaker = r.labels[i]; });
+    S.analyzed.speakers = r.speakers;
+    S.analyzed.revision = r.revision;
+    useDetectedProfiles(r.speakers);
+    TL.budget = [];
+    TL.budgetSeq++;
+    renderCues();
+    renderSpeakerVoices();
+    tlQueueBudget(0);
+    markScriptStale();
+    const labeled = r.labels.filter(Boolean).length;
+    const how = r.method === 'pitch' ? ' Chỉ phân theo cao độ; hai người cùng giới có thể chung một vai.' : '';
+    toast(`Đã lưu ${r.speakers.length} vai cho ${labeled}/${cues.length} câu.${how}`, 'ok', 7500);
+  } catch (e) {
+    if (id === S.jobId) toast('Chưa phân giọng được: ' + e.message, 'warn', 8500);
+  } finally {
+    TL.speakerJobs.delete(id);
+    if (id === S.jobId) renderTimeline();
+  }
+}
+
 /* ------------------------------- kéo thả ------------------------------- */
 function tlBind() {
   if (TL.bound) return;
@@ -220,7 +265,12 @@ function tlBind() {
     c.start = Math.round(c.start * 100) / 100;
     c.end = Math.round(c.end * 100) / 100;
     const changedSpeaker = d.to !== null && d.to !== d.from;
-    if (changedSpeaker) c.speaker = d.to;
+    if (changedSpeaker) { c.speaker = d.to; c.speaker_fixed = !!d.to; }
+    if (e.type !== 'pointercancel') {
+      c.pinned = true;
+      $('#minuteStatus').textContent = 'Chưa lưu';
+      markScriptStale();
+    }
     tlEl('tlReadout').textContent = '';
     renderCues();  // vẽ lại danh sách thoại (mốc giờ, nhãn vai) — tự gọi renderTimeline
     if (changedSpeaker && typeof renderSpeakerVoices === 'function') renderSpeakerVoices();
@@ -245,6 +295,9 @@ function tlBind() {
       const shift = tlClamp(e.key === 'ArrowLeft' ? -0.1 : 0.1, Math.min(0, lo - c.start), Math.max(0, hi - c.end));
       c.start = Math.round((c.start + shift) * 100) / 100;
       c.end = Math.round((c.end + shift) * 100) / 100;
+      c.pinned = true;
+      $('#minuteStatus').textContent = 'Chưa lưu';
+      markScriptStale();
       renderCues();
       tlEl('tlInner').querySelector(`.tl-lane[data-spk] .tl-blk[data-i="${i}"]`)?.focus();
       tlQueueBudget();
@@ -264,6 +317,7 @@ function tlBind() {
   tlEl('tlZoom').addEventListener('input', e => {
     tlSetZoom(TL.fit * Math.pow(TL_MAX_PPS / TL.fit, +e.target.value / 100));
   });
+  tlEl('tlSpeakersBtn').addEventListener('click', tlIdentifySpeakers);
   tlEl('tlFitBtn').addEventListener('click', () => { tlSetZoom(TL.fit); tlSyncZoom(); });
   $('#player').addEventListener('loadedmetadata', () => {
     const d = $('#player').duration;
@@ -278,16 +332,18 @@ function tlQueueBudget(delay = 700) {
 }
 
 async function tlLoadBudget() {
+  const seq = ++TL.budgetSeq;
   if (!S.analyzed?.target_lang || !S.cues.some(c => c.text2)) {
     TL.budget = [];
+    tlEl('tlOver').textContent = '';
+    if (tlEl('tlDub')) renderTimeline();
     return;
   }
-  const seq = ++TL.budgetSeq;
   try {
     const res = await api('/api/reading-budget', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cues: S.cues.map(c => ({ start: c.start, end: c.end, text: c.text, text2: c.text2 || '', speaker: c.speaker || '' })) }),
+      body: JSON.stringify({ cues: S.cues.map(c => ({ ...c, pinned: true })) }),
     });
     if (seq !== TL.budgetSeq) return;  // đã có lượt mới hơn
     TL.budget = res.items || [];

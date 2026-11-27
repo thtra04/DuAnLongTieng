@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..config import JOB_DIR, UPLOAD_DIR
 from ..core import media
+from ..core.subtitles import Cue
 
 VIDEO_EXT = {
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".m4v", ".ts", ".wmv",
@@ -28,6 +31,35 @@ def safe_id(value: str | None) -> str:
     """
     name = Path(str(value or "")).name.strip()
     return "" if name in ("", ".", "..") else name
+
+
+def remote_source(value):
+    try:
+        url = value.strip() if isinstance(value, str) else ""
+        parts = urlsplit(url)
+        if parts.scheme in ("http", "https") and parts.hostname and not parts.username and not parts.password:
+            return url
+    except ValueError:
+        pass
+    raise HTTPException(400, "Link video phải là HTTP hoặc HTTPS, không chứa thông tin đăng nhập.")
+
+
+def edited_cues(raw, *, allow_blank=False) -> list[dict]:
+    if not isinstance(raw, list) or len(raw) > 20000:
+        raise HTTPException(400, "Danh sách phụ đề không hợp lệ.")
+    rows = []
+    for i, row in enumerate(raw):
+        try:
+            if not isinstance(row, dict) or "start" not in row or "end" not in row:
+                raise ValueError
+            c = Cue.from_dict(row).to_dict()
+            if not (math.isfinite(c["end"]) and 0 <= c["start"] < c["end"]
+                    and (not rows or c["start"] >= rows[-1]["start"]) and (allow_blank or c["text"] or c["text2"])):
+                raise ValueError
+        except (AttributeError, ValueError, TypeError, OverflowError):
+            raise HTTPException(400, f"Dòng {i + 1}: cần lời thoại và mốc bắt đầu < kết thúc, theo thứ tự thời gian.") from None
+        rows.append(c)
+    return rows
 
 
 def ranged_file(path: Path, request: Request, mime: str):

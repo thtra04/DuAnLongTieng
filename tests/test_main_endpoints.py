@@ -5,17 +5,14 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi.testclient import TestClient
 
 from backend.store import films, projects
 from backend import main
-from backend.main import app
 
 
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as c:
-        yield c
+@pytest.fixture
+def client(tmp_db, studio_client):
+    return studio_client
 
 
 @pytest.fixture
@@ -42,11 +39,59 @@ def test_trang_chu_tra_html(client):
     assert "VSub" in r.text
 
 
+def test_save_reopen_export_timed_script_and_empty_draft(client, kho_tam, monkeypatch):
+    from backend.api import jobs as api_jobs
+
+    folder = kho_tam / "jobs" / "edit1"
+    folder.mkdir()
+    crossing = {"start": 59.25, "end": 60.25, "text": "Original", "text2": "Lời đầu", "speaker": "S1"}
+    tail = dict(crossing, start=129.5, end=132, text="End", text2="Kết")
+    state = {"video_path": "", "video_name": "test.mp4", "info": {"duration": 140},
+             "source_lang": "en", "target_lang": "vi", "cues": [crossing, tail], "speech_gaps": [[74, 76]]}
+    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    manual = dict(crossing, start=74, end=76, text="", text2="Đừng quên!", pinned=True)
+    rows = [crossing, manual, tail]
+    url = "/api/projects/edit1/cues"
+    assert client.put(url, json={"cues": rows}).json()["cue_count"] == 3
+    assert client.put(url, json={"cues": [dict(manual, end=73)]}).status_code == 400
+    saved = client.get("/api/projects/edit1").json()
+    assert saved["cues"] == rows and saved["speech_gaps"] == [[74, 76]]
+    assert client.post("/api/tts/script", json={"cues": rows, "target_lang": "vi"}).json()["units"][1] == {
+        "start": 74, "end": 76, "text": "Đừng quên!", "speaker": "S1", "cues": [1]}
+    monkeypatch.setattr(api_jobs, "run_in_thread", lambda job, target: target(job))
+    r = client.post("/api/jobs/edit1/render", json={"display": "second", "outputs": {"srt": True}})
+    job = api_jobs.get_job(r.json()["job_id"])
+    srt = (job.dir / "test.vi.srt").read_text(encoding="utf-8")
+    assert "00:01:14,000 --> 00:01:16,000\nĐừng quên!" in srt
+    assert client.put(url, json={"cues": [crossing, tail]}).is_success
+    assert client.get("/api/projects/edit1").json()["cues"] == [crossing, tail]
+    assert client.post("/api/jobs/edit1/render", json={"outputs": {"srt": True}, "cues": []}).status_code == 400
+    assert client.put(url, json={"cues": []}).is_success
+    assert client.get("/api/projects/edit1").json()["cues"] == []
+
+
 def test_trang_chu_gan_dau_thoi_gian_de_pha_cache(client):
     """Sửa code mà trình duyệt vẫn chạy bản cũ là lỗi rất khó lần ra."""
     r = client.get("/")
     assert "/js/core.js?v=" in r.text
     assert "/css/style.css?v=" in r.text
+
+
+def test_fill_minute_only_requests_missing_source_lines(client, monkeypatch):
+    from backend.core import translate
+
+    seen = []
+
+    def machine(texts, *args):
+        seen.extend(texts)
+        return ["Chưa đâu.", ""]
+
+    monkeypatch.setattr(translate, "_translate_deep", machine)
+    rows = [{"start": 60 + i, "end": 61 + i, "text": src, "text2": dst}
+            for i, (src, dst) in enumerate([("First", "Đã duyệt"), ("Not yet", ""), ("", "Lời thêm"), ("Next", "")])]
+    res = client.post("/api/translate-missing", json={"cues": rows, "engine": "google", "source_lang": "en"})
+    assert seen == ["Not yet", "Next"]
+    assert res.json() == {"changes": [{"i": 1, "text2": "Chưa đâu."}], "remaining": 1}
 
 
 def test_trang_chu_khong_cho_cache(client):
@@ -91,6 +136,17 @@ def test_khong_doc_duoc_thu_muc_ngoai_qua_analyze(client, doc):
 def test_khong_tai_duoc_file_ngoai_qua_project(client, doc):
     r = client.get(f"/api/projects/job1/files/{doc}")
     assert r.status_code in (307, 404)
+
+
+def test_mobile_inline_preview_remains_seekable_and_download_is_attachment(client, kho_tam):
+    folder = kho_tam / "jobs" / "archived"
+    folder.mkdir()
+    (folder / "demo.mp4").write_bytes(b"test-video-stream")
+    url = "/api/projects/archived/files/demo.mp4"
+    preview = client.get(url + "?download=0", headers={"Range": "bytes=5-9"})
+    assert preview.status_code == 206 and preview.content == b"video"
+    assert preview.headers["content-disposition"].startswith("inline;")
+    assert client.get(url).headers["content-disposition"].startswith("attachment;")
 
 
 # --------------------------------------------------------- kiểm tra link
@@ -152,7 +208,7 @@ def test_doi_ten_bo(client, kho_tam):
 
 
 def test_doi_ten_bo_khong_ton_tai(client, kho_tam):
-    assert client.patch("/api/films/khong-co", json={"name": "X"}).status_code == 400
+    assert client.patch("/api/films/khong-co", json={"name": "X"}).status_code == 404
 
 
 def test_them_va_xoa_tap(client, kho_tam):
@@ -292,8 +348,10 @@ def test_xuat_voi_ban_dich_da_sua_thi_ghi_vao_bo_nho_dich(client, kho_tam, monke
     assert r.status_code == 200
     assert memory.stats()["pairs"] == 1, "chỉ câu bị sửa mới được ghi nhớ"
     assert any("ghi nhớ 1 câu" in ln for ln in logs)
-    assert client.get("/api/translation-memory").json()["pairs"] == 1
-    assert client.delete("/api/translation-memory").json() == {"deleted": 1}
+    assert client.get("/api/translation-memory").json()["pairs"] == 0
+    headers = {"X-VSub-Project": "job9"}
+    assert client.get("/api/translation-memory", headers=headers).json()["pairs"] == 1
+    assert client.delete("/api/translation-memory", headers=headers).json() == {"deleted": 1}
 
 
 # ------------------------------------------------- dòng thời gian (bước 4)
@@ -416,7 +474,7 @@ def test_dich_lai_giu_loi_goc_moc_gio_va_vai_chi_viet_lai_ban_dich(client, kho_t
         _time.sleep(0.05)
     assert j["status"] == "done", j.get("error")
     cues = j["result"]["cues"]
-    assert "lang quân" in seen["texts"][0], "bộ thuật ngữ mới phải được áp"
+    assert cues[0]["text2"] == "Lang quân." and seen["texts"] == ["走吧。"]
     assert [c["text"] for c in cues] == ["郎君。", "走吧。"]
     assert [c["speaker"] for c in cues] == ["S1", "S2"] and cues[0]["end"] == 1.5
     assert cues[1]["text2"] == "moi:走吧。"
@@ -437,10 +495,11 @@ def test_dich_gon_chi_dong_dong_dang_dai_va_khong_ghi_gi_xuong_dia(client, monke
         {"start": 84, "end": 87, "text": "你到底是谁", "text2": "Ngươi là ai"},
     ]
     seen = {}
+    suggestion = "Lang quân chẳng phải hứa sẽ cho thiếp ăn sung mặc sướng sao"
 
     def fake_chat(engine, system, user, api_key, model, base_url, on_log=None):
         seen["system"], seen["user"] = system, user
-        return "1|Lang quân chẳng bảo cho thiếp ăn sung mặc sướng sao"
+        return "1|" + suggestion
 
     monkeypatch.setattr(translate, "_chat", fake_chat)
     # CI không cài nhóm `ai` (thư viện openai): giả lập luôn bước kiểm tra, _chat đã là bản giả
@@ -450,7 +509,8 @@ def test_dich_gon_chi_dong_dong_dang_dai_va_khong_ghi_gi_xuong_dia(client, monke
     assert r.status_code == 200, r.text
     data = r.json()
     assert data["asked"] == 1 and data["method"] == "ai", "dòng 2 không dài thì không gửi đi"
-    assert data["changes"] == [{"i": 0, "text2": "Lang quân chẳng bảo cho thiếp ăn sung mặc sướng sao",
+    assert len(data["changes"]) == 1
+    assert data["changes"] == [{"i": 0, "text2": suggestion,
                                 "target": data["changes"][0]["target"], "fits": data["changes"][0]["fits"]}]
     # model nhận cả câu gốc lẫn bản dịch cũ, kèm giới hạn âm tiết nhỏ hơn số âm tiết hiện có (14)
     so, gioi_han, goc, cu = seen["user"].split("|")

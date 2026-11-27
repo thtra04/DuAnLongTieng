@@ -110,7 +110,7 @@ def test_dich_google_cai_cum_da_hoc_va_sua_phien_am(so_tay, monkeypatch):
     logs = []
     translate.translate_cues(cues, "zh", "vi", engine="google", on_log=logs.append, use_memory=False)
     assert any("lang quân" in s for s in sent), "cụm đã học phải được cài vào câu gốc"
-    assert cues[1].text2 == "Họ của tôi là Hoắc"
+    assert cues[1].text2 == "Họ của tôi là Hoắc."
     assert any("âm Hán Việt" in ln for ln in logs)
 
 
@@ -128,3 +128,43 @@ def test_xuat_ban_sua_tay_thi_nho_cum_han_viet(so_tay, tmp_db):
     memory.learn_from_edit(old, new, "zh", "vi", "job1")
     assert hanviet.load()["郎君"]["vi"] == "lang quân"
     assert hanviet.load()["郎君"]["origin"] == "sửa tay"
+
+
+def test_generate_from_script_without_confusing_family_names_and_nouns(so_tay):
+    from backend.core.zh_terms import Lexicon
+    texts = ["我叫歐陽明。", "在下司马青", "我姓单", "这张单据", "这位单医生", "重庆", "粗茶淡飯",
+             "我叫他回来", "在下雨", "老爷车", "王朝", "在下周"]
+    lex = Lexicon(texts)
+    terms = {r["zh"]: (r["kind"], r["vi"]) for r in lex.suggest(texts)}
+    assert terms["歐陽明"] == ("person", "Âu Dương Minh")
+    assert lex.direct(texts[1]) == "Tại hạ là Tư Mã Thanh"
+    assert terms["单医生"] == ("person", "bác sĩ Thiện")
+    assert lex.prepare("这张单据") == ("这张单据", {})
+    assert terms["重庆"] == ("place", "Trùng Khánh") and terms["粗茶淡飯"][0] == "idiom"
+    assert "老爷" not in terms and not any(lex.direct(t) for t in (texts[7], texts[8], texts[-1]))
+    assert not so_tay.exists()
+
+
+def test_correlatives_keep_quantity_polarity_and_unmatched_clauses(so_tay):
+    from backend.core.zh_terms import Lexicon
+    lex = Lexicon([])
+    assert lex.direct("有些事知道的越少越安心") == "Có những chuyện, càng biết ít càng yên lòng"
+    assert lex.direct("了解得越多越不安。") == "Càng hiểu nhiều càng bất an."
+    assert lex.direct("不是知道得越少越安心") == ""
+
+
+def test_name_slots_preserve_reordering_retry_and_project_override(so_tay, monkeypatch):
+    from backend.core import translate
+    calls = []
+    def mt(batch, *args):
+        calls.append(list(batch))
+        return (["Je suis QZ7012 à QZ7011", "marque perdue"] if len(batch) == 2
+                else ["Tôi đến Trùng Khánh."])
+    monkeypatch.setattr(translate, "_translate_nllb", mt)
+    monkeypatch.setattr(translate, "engine_available", lambda e: (True, ""))
+    cues = [Cue(1, 2, "我叫欧阳青"), Cue(2, 3, "在重庆见到欧阳青"), Cue(3, 4, "我们去重庆"),
+            Cue(4, 5, "锦衣玉食？")]
+    translate.translate_cues(cues, "zh", "vi", "nllb", glossary="欧阳青 = Âu Dương Khanh", use_memory=False)
+    assert [c.text2 for c in cues] == ["Tôi tên là Âu Dương Khanh", "Je suis Âu Dương Khanh à Trùng Khánh",
+                                        "Tôi đến Trùng Khánh.", "Ăn ngon mặc đẹp?"]
+    assert len(calls) == 2 and len(calls[-1]) == 1 and "QZ" not in calls[-1][0]

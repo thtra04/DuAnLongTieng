@@ -133,7 +133,7 @@ class _Engine:
     def infer(self, text, **kw):
         self.calls += 1
         n = int((24.0 if self.calls <= self.bad_first else 0.8) * dubbing.SR)
-        return np.full(n, 0.2, dtype=np.float32)
+        return 0.2 * np.sin(np.arange(n) * 0.03)
 
 
 def test_build_dub_track_doc_lai_cau_chay_loan(tmp_path, monkeypatch):
@@ -179,8 +179,10 @@ def test_analyze_steps_co_buoc_tach_khi_bat_tuy_chon():
     assert "separate" not in [s.key for s in analyze_steps(base)]
     keys = [s.key for s in analyze_steps({**base, "separate_first": True})]
     assert keys.index("separate") < keys.index("gender")
-    # không đo giọng thì tách cũng vô ích -> không thêm bước
-    assert "separate" not in [s.key for s in analyze_steps({"source_type": "file", "sub_mode": "auto", "separate_first": True})]
+    # Whisper cũng cần nghe trên giọng sạch, kể cả khi không nhận vai.
+    ks = [s.key for s in analyze_steps({"sub_mode": "auto", "separate_first": True})]
+    assert ks.index("separate") < ks.index("audio") < ks.index("asr")
+    assert "separate" not in [s.key for s in analyze_steps({"sub_mode": "srt", "separate_first": True})]
 
 
 def test_render_steps_co_buoc_tach_theo_che_do_tieng_goc():
@@ -214,8 +216,8 @@ class _LongEngine:
 
     def infer(self, text, **kw):
         self.calls.append(text)
-        secs = 24.0 if len(text) >= 90 else 0.6
-        return np.full(int(secs * dubbing.SR), 0.2, dtype=np.float32)
+        secs = 24.0 if len(text) >= 90 else 1.2
+        return 0.2 * np.sin(np.arange(int(secs * dubbing.SR)) * 0.03)
 
 
 def test_build_dub_track_che_doi_cau_dai_thay_vi_bo(tmp_path, monkeypatch):

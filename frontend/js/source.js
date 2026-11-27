@@ -2,6 +2,7 @@
    Các file js dùng chung một phạm vi toàn cục; thứ tự nạp ghi trong index.html. */
 /* ------------------------- bước 1: nguồn video -------------------------- */
 function setSource(type) {
+  if (type === 'file' && S.sourceType === 'url') clearLinkInfo();
   S.sourceType = type;
   $$('.tab[data-src]').forEach(x => x.classList.toggle('active', x.dataset.src === type));
   $$('.tabpane[data-pane]').forEach(p => p.classList.toggle('active', p.dataset.pane === type));
@@ -64,9 +65,8 @@ $('#urlInput').addEventListener('input', () => {
   if ($('#urlInput').value.trim() && S.sourceType !== 'url') setSource('url');
   else updateSourceSummary();
 });
-// dán xong rồi rời ô (hoặc Enter) là tự kiểm tra luôn
-$('#urlInput').addEventListener('change', () => {
-  if ($('#urlInput').value.trim()) inspectLink();
+$('#urlInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); inspectLink(); }
 });
 $('#checkLink').addEventListener('click', () => inspectLink());
 fileInput.addEventListener('change', () => {
@@ -74,7 +74,34 @@ fileInput.addEventListener('change', () => {
 });
 
 /* ----------------- link nhiều phần: hỏi xử lý phần nào ------------------ */
+function videoLink(value) {
+  let url = value.trim();
+  if (!url) throw new Error('Bạn chưa dán link video.');
+  if (/^(?:file:|[a-z]:[\\/]|[\\/]|\.{1,2}[\\/])/i.test(url) ||
+      (!url.includes('/') && /\.(mp4|mkv|mov|avi|webm|flv|m4v|wmv|ts|mp3|wav|aac|m4a|flac|ogg)$/i.test(url))) {
+    throw new Error('Đây là đường dẫn hoặc tên tệp. Chọn “File từ máy” rồi chọn video.');
+  }
+  if (/^[\w-]{32}$/.test(url)) {
+    throw new Error('Ô này cần link video. Nếu đây là mã mời, hãy nhập ở “Có mã mời? Đăng ký”.');
+  }
+  // Only infer HTTPS for a domain followed by a path, not arbitrary text or a filename.
+  if (/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}(?::\d+)?\/[^\s\\]+$/i.test(url)) url = 'https://' + url;
+  if (/^https?:\/\/[^/?#\\\s]/i.test(url) && !/[\s\\]/.test(url)) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname && !parsed.username && !parsed.password) return url;
+    } catch { /* Show the same field hint for malformed links. */ }
+  }
+  throw new Error('Dán riêng địa chỉ video, ví dụ https://youtu.be/…; nếu video đã có trong thư viện, bấm “Mở ra sửa”.');
+}
+
+let linkPending = null;
 function clearLinkInfo() {
+  linkPending?.controller.abort();
+  linkPending = null;
+  $('#checkLink').disabled = false;
+  $('#urlInput').removeAttribute('aria-invalid');
+  S.url = '';
   S.linkInfo = null;
   S.linkChecked = '';
   S.part = null;
@@ -83,43 +110,46 @@ function clearLinkInfo() {
   $('#linkParts').classList.add('hide');
 }
 
-let linkPending = { url: '', promise: null };
-
 /** Đọc link để biết có bao nhiêu phần. Trả về info, hoặc null nếu lỗi. */
 async function inspectLink() {
-  const url = $('#urlInput').value.trim();
-  if (!url) return null;
+  if (S.sourceType !== 'url') return null;
+  const field = $('#urlInput'), status = $('#linkState');
+  let url;
+  try { url = videoLink(field.value); }
+  catch (e) {
+    clearLinkInfo();
+    status.textContent = e.message;
+    field.setAttribute('aria-invalid', 'true');
+    field.focus();
+    return null;
+  }
+  field.value = url;
   if (S.linkChecked === url && S.linkInfo) return S.linkInfo;
-  if (linkPending.url === url && linkPending.promise) return linkPending.promise;
-
+  if (linkPending?.url === url) return linkPending.promise;
+  clearLinkInfo();
+  const request = { url, controller: new AbortController() };
+  linkPending = request;
   $('#checkLink').disabled = true;
-  $('#linkState').textContent = 'Đang đọc link…';
-
-  linkPending = {
-    url,
-    promise: (async () => {
-      try {
-        const info = await api('/api/link/inspect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url }),
-        });
-        S.linkInfo = info;
-        S.linkChecked = url;
-        S.part = null;
-        renderLinkParts(info);
-        return info;
-      } catch (e) {
-        clearLinkInfo();
-        toast('Không đọc được link: ' + e.message, 'err', 9000);
-        return null;
-      } finally {
-        $('#checkLink').disabled = false;
-        linkPending = { url: '', promise: null };
-      }
-    })(),
-  };
-  return linkPending.promise;
+  status.textContent = 'Đang đọc link…';
+  request.promise = (async () => {
+    try {
+      const info = await api('/api/link/inspect', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }), signal: request.controller.signal,
+      });
+      if (linkPending !== request) return null;
+      S.url = S.linkChecked = url;
+      S.linkInfo = info;
+      renderLinkParts(info);
+      return info;
+    } catch (e) {
+      if (linkPending === request) status.textContent = e.message;
+      return null;
+    } finally {
+      if (linkPending === request) { $('#checkLink').disabled = false; linkPending = null; }
+    }
+  })();
+  return request.promise;
 }
 
 function renderLinkParts(info) {
@@ -164,7 +194,7 @@ function renderLinkParts(info) {
 async function uploadFile(file) {
   $('#fileCard').innerHTML = `
     <div class="filecard"><span class="ic">${icon('loader', 'spin')}</span>
-      <div class="meta"><b>${file.name}</b><span>Đang tải lên… ${fmtBytes(file.size)}</span></div></div>`;
+      <div class="meta"><b>${esc(file.name)}</b><span>Đang tải lên… ${fmtBytes(file.size)}</span></div></div>`;
   const fd = new FormData();
   fd.append('file', file);
   try {
@@ -177,7 +207,7 @@ async function uploadFile(file) {
     const i = r.info;
     $('#fileCard').innerHTML = `
       <div class="filecard"><span class="ic">${icon('film')}</span>
-        <div class="meta"><b>${r.name}</b>
+        <div class="meta"><b>${esc(r.name)}</b>
           <span>${fmtBytes(r.size)} · ${i.width}×${i.height} · ${fmtTime(i.duration)}
           ${i.has_audio ? '' : ' · <b style="color:#ffb648">không có tiếng!</b>'}</span></div></div>`;
     if (!i.has_audio && S.subMode !== 'srt') {
@@ -224,7 +254,7 @@ async function loadSrt(f) {
   const lines = (S.subtitleText.match(/-->/g) || []).length;
   $('#srtCard').innerHTML = `
     <div class="filecard"><span class="ic">${icon('captions')}</span>
-      <div class="meta"><b>${f.name}</b><span>${lines} dòng phụ đề · ${fmtBytes(f.size)}</span></div></div>`;
+      <div class="meta"><b>${esc(f.name)}</b><span>${lines} dòng phụ đề · ${fmtBytes(f.size)}</span></div></div>`;
   toast(`Đã nạp ${lines} dòng phụ đề.`, 'ok', 2500);
 }
 
@@ -235,9 +265,6 @@ $('#toStep2').addEventListener('click', async () => {
     S.url = '';
     S.part = null;
   } else {
-    S.url = $('#urlInput').value.trim();
-    if (!S.url) return toast('Bạn chưa dán link video.', 'warn');
-
     // Chưa kiểm tra link thì kiểm tra ngay — link nhiều phần phải chọn phần
     btn.disabled = true;
     let info;
@@ -245,7 +272,7 @@ $('#toStep2').addEventListener('click', async () => {
     if (!info) return;
     if (info.multi && !S.part) {
       updateSourceSummary();
-      $('#linkParts').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      $('#linkParts').scrollIntoView({ behavior: uiScrollBehavior(), block: 'center' });
       return toast(`Link này có ${info.count} phần — hãy chọn phần bạn muốn xử lý.`, 'warn', 7000);
     }
   }
@@ -262,4 +289,3 @@ $('#toStep2').addEventListener('click', async () => {
   unlock(2);
   goStep(2);
 });
-

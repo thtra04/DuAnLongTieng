@@ -7,6 +7,44 @@ const AI_ENGINES = ['claude', 'openai'];
 const isAiEngine = () => AI_ENGINES.includes(S.engine);
 const aiProvider = () => (S.engine === 'claude' ? 'anthropic' : 'openai');
 
+$('#suggestTerms').addEventListener('click', async () => {
+  const box = $('#termResults'), btn = $('#suggestTerms'), field = $('#glossary');
+  const texts = S.cues.length ? S.cues.map(c => c.text) :
+    (S.subMode === 'srt' ? S.subtitleText : $('#scriptText').value).split(/\r?\n/).filter(Boolean);
+  if (!texts.length) return toast('Mở dự án đã nghe lời thoại, hoặc dán lời gốc ở bước 1.', 'warn');
+  const job = S.jobId, original = field.value;
+  btn.disabled = true;
+  box.textContent = 'Đang đối chiếu lời gốc…';
+  try {
+    const { terms } = await api('/api/ai/terms', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ texts, glossary: original, source_lang: $('#srcLang').value || S.analyzed?.source_lang,
+        target_lang: $('#tgtLang').value }) });
+    if (job !== S.jobId) { box.replaceChildren(); return; }
+    const kinds = {person:'Tên người', place:'Địa danh', title:'Xưng hô', noun:'Danh từ', idiom:'Thành ngữ', term:'Thuật ngữ'};
+    box.replaceChildren();
+    if (!terms.length) { box.textContent = 'Không có mục mới ngoài bộ thuật ngữ đã nhập.'; return; }
+    const list = document.createElement('div');
+    list.className = 'term-list';
+    const checks = terms.map(t => {
+      const label = document.createElement('label'), check = document.createElement('input');
+      check.type = 'checkbox';
+      label.append(check, document.createTextNode(` ${t.zh} → ${t.vi} · ${kinds[t.kind]} (${t.count})`));
+      list.append(label);
+      return check;
+    });
+    const add = document.createElement('button');
+    add.type = 'button'; add.className = 'btn sm'; add.textContent = 'Thêm mục đã chọn';
+    add.onclick = () => {
+      if (job !== S.jobId || field.value !== original) { box.textContent = 'Kịch bản hoặc bộ thuật ngữ đã đổi. Hãy tra lại.'; return; }
+      const picked = terms.filter((_, i) => checks[i].checked).map(t => `${t.zh} = ${t.vi}`);
+      if (!picked.length) return toast('Chọn ít nhất một mục để thêm.', 'warn');
+      field.value = [original.trimEnd(), ...picked].filter(Boolean).join('\n');
+      field.dispatchEvent(new Event('input')); box.textContent = `Đã thêm ${picked.length} mục. Có thể sửa ngay trong ô thuật ngữ.`;
+    };
+    box.append(list, add);
+  } catch (e) { box.textContent = e.message; } finally { btn.disabled = false; }
+});
+
 // Máy chủ đã có sẵn biến môi trường chứa key cho engine đang chọn chưa?
 function aiEnvKey() {
   return aiProvider() === 'anthropic' ? !!S.sys?.has_anthropic_key : !!S.sys?.has_openai_key;
@@ -105,7 +143,6 @@ async function refreshMemoryInfo() {
       : 'Bộ nhớ dịch: chưa có câu nào. Mỗi lần bạn sửa bản dịch ở bước 4 rồi xuất, tool ghi nhớ để lần sau dịch theo.';
   } catch { el.textContent = ''; }
 }
-refreshMemoryInfo();
 
 /* ----------------------------- cache dịch AI ----------------------------- */
 async function refreshCacheInfo() {

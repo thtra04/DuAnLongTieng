@@ -39,7 +39,7 @@ def cat_ngan(requests):
 
 def test_ngan_sach_gom_khung_va_khoang_lang_sau():
     cues = [c(0, 2, "a", "a"), c(5, 6, "b", "b")]
-    # khung 2s + (5 - 2 - 0.02) khoảng lặng sau + vào sớm tối đa 0.15 (đầu video: gap_before = 0)
+    # khung 2s + (5 - 2 - 0.02) khoảng lặng sau
     assert window_seconds(cues, [0]) == pytest.approx(2 + 2.98 + 0.0, abs=1e-6)
 
 
@@ -48,16 +48,16 @@ def test_cue_cuoi_duoc_cong_hai_giay():
     assert window_seconds(cues, [0]) == pytest.approx(2 + (2.0 - 0.02), abs=1e-6)
 
 
-def test_vao_som_khong_qua_khoang_trong_phia_truoc():
+def test_hai_cau_khong_muon_cung_khoang_lang():
     cues = [c(0, 1, "a", "a"), c(1.05, 2, "b", "b")]
-    # gap_before = 0.05 -> lead_in = 0.03
-    assert window_seconds(cues, [1]) == pytest.approx((2 - 1.05) + 1.98 + 0.03, abs=1e-6)
+    assert window_seconds(cues, [0]) == pytest.approx(1.03)
+    assert window_seconds(cues, [1]) == pytest.approx((2 - 1.05) + 1.98)
 
 
-def test_ngan_sach_dong_bo_voi_luc_long_tieng():
-    """Vòng lặp và TTS phải cùng một cách tính, nếu không 'vừa' bên này 'tràn' bên kia."""
-    from backend.core import dubbing
-    assert budget.LEAD_IN == dubbing.MAX_LEAD_IN
+def test_khung_doc_dung_o_moc_sau_hoac_cuoi_video_ke_ca_phu_de_chong_nhau():
+    cues = [c(0, 2, "a", "a"), c(1, 3, "b", "b")]
+    assert window_seconds(cues, [0]) == 1
+    assert window_seconds(cues, [1], video_duration=1.25) == .25
 
 
 # ------------------------------------------------------------ đánh giá

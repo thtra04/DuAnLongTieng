@@ -26,11 +26,21 @@ $('#dubOn').addEventListener('change', async e => {
   const outDub = $('#outDub');
   outDub.checked = on;
   outDub.closest('.check').classList.toggle('on', on);
+  if (on) $('#draftVoices').open = true;
   if (on && !S.voicesLoaded) await loadVoices();
   if (on) renderSpeakerVoices();
 });
 
-async function loadVoices() {
+let loadingVoices;
+function loadVoices() {
+  loadingVoices ||= fetchVoices().finally(() => { loadingVoices = null; });
+  return loadingVoices;
+}
+$('#draftVoices').addEventListener('toggle', () => {
+  if ($('#draftVoices').open && !S.voicesLoaded) loadVoices();
+});
+
+async function fetchVoices() {
   const sel = $('#dubVoice');
   sel.innerHTML = '<option value="">Đang tải model giọng… (lần đầu ~1 phút)</option>';
   try {
@@ -49,6 +59,8 @@ async function loadVoices() {
         : 'Nhân bản giọng — chưa dùng được (cần uv sync --extra clone)') +
       '</option>';
     S.voicesLoaded = true;
+    const savedVoice = S.analyzed?.dub_review?.playback?.voice;
+    if (savedVoice && [...sel.options].some(o => o.value === savedVoice)) sel.value = savedVoice;
     renderSpeakerVoices();
     toast(`Đã nạp ${r.voices.length} giọng đọc.`, 'ok', 2600);
     if (!cloneOk && r.clone_reason) {
@@ -74,37 +86,7 @@ $('#dubOrigMode').addEventListener('change', e => {
 });
 $('#dubOrigMode').dispatchEvent(new Event('change'));
 
-$('#dubTest').addEventListener('click', async () => {
-  const btn = $('#dubTest'), msg = $('#dubTestMsg');
-  const voice = $('#dubVoice').value;
-  if (!voice) return toast('Chưa chọn giọng.', 'warn');
-  if (voice === (S.sys.tts?.clone_id || '__clone__'))
-    return toast('Giọng nhân bản chỉ tạo được lúc xuất video.', 'warn', 6000);
-
-  // đọc thử chính dòng đang chọn, không có thì dùng câu mẫu
-  const c = S.cues[S.activeCue] || S.cues[0];
-  const text = (c && (c.text2 || c.text)) || 'Xin chào, đây là giọng đọc thử.';
-
-  btn.disabled = true; msg.textContent = 'đang tạo…';
-  try {
-    const res = await fetch(apiUrl('/api/tts/preview'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text.slice(0, 300), voice, style: $('#dubStyle').value }),
-    });
-    if (!res.ok) throw new Error((await res.json()).error || 'lỗi');
-    const url = URL.createObjectURL(await res.blob());
-    const a = $('#dubAudio');
-    a.src = url; a.classList.remove('hide'); a.controls = true;
-    $('#player').pause();
-    await a.play();
-    msg.textContent = '';
-  } catch (e) {
-    msg.textContent = '';
-    toast('Nghe thử lỗi: ' + e.message, 'err', 8000);
-  } finally {
-    btn.disabled = false;
-  }
-});
+$('#dubTest').addEventListener('click', () => auditionCue(Math.max(0, S.activeCue)));
 
 /* --------------------------- nhân vật & giọng --------------------------- */
 
@@ -125,6 +107,14 @@ function applyCharacters(list) {
     if (c.gender) S.speakerGenders[c.label] = c.gender;
     if (c.age) S.speakerAges[c.label] = c.age;
   });
+}
+
+function useDetectedProfiles(speakers) {
+  for (const s of speakers || []) {
+    if (s.gender && !S.speakerGenders[s.id]) S.speakerGenders[s.id] = s.gender;
+    if (s.age && !S.speakerAges[s.id]) S.speakerAges[s.id] = s.age;
+    if (s.name && !S.speakerNames[s.id]) S.speakerNames[s.id] = s.name;
+  }
 }
 
 async function loadCharacters(id) {
@@ -163,26 +153,84 @@ function spkName(id) {
 
 function initDiarize() {
   const d = S.sys.diarize || {};
-  const box = $('#diarizeOpts');
-  const hint = $('#diarizeHint');
-
-  // Có token trong biến môi trường rồi thì khỏi bắt nhập lại
-  if (d.has_token) $('#hfTokenWrap').classList.add('hide');
-
-  $('#diarizeOn').addEventListener('change', e => {
-    box.classList.toggle('hide', !e.target.checked);
-  });
-
-  if (!d.available && !d.has_token) {
-    hint.innerHTML =
-      `${esc(d.reason || 'Chưa dùng được.')}<br>` +
-      `Model: <code>${esc(d.model || '')}</code> — mở trang model trên Hugging Face, ` +
-      `bấm chấp nhận điều khoản, rồi tạo token ở mục Access Tokens.`;
-  } else {
-    hint.textContent =
-      'Chạy trên chính đường tiếng của video nên không phụ thuộc ngôn ngữ — '
-      + 'phim Trung, Hàn, Nhật, Anh đều dùng được.';
+  const toggle = $('#diarizeOn'), token = $('#hfToken'), hint = $('#diarizeHint'), check = $('#diarizeCheck');
+  const state = d.state || (d.available ? 'configured' : 'needs_token');
+  const needsHub = ['needs_token', 'configured'].includes(state);
+  const links = $('#diarizeModels');
+  links.replaceChildren();
+  for (const repo of d.model_pages || [d.model]) {
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo || '')) continue;
+    const a = document.createElement('a');
+    a.href = 'https://huggingface.co/' + repo;
+    a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = repo;
+    if (links.childNodes.length) links.append(' và ');
+    links.append(a);
   }
+  if (!links.childNodes.length) links.textContent = 'trang model (bỏ qua nếu dùng bản cục bộ)';
+  token.placeholder = d.has_token ? 'Để trống để dùng token máy chủ' : 'hf_...';
+  const notes = {
+    configured: 'Đã cấu hình token trên máy chủ. Có thể kiểm tra quyền trước khi chạy.',
+    cached: 'Đã có các tệp model trong cache. Không cần nhập token.',
+    loaded: 'Model đã nạp trên máy chủ. Không cần nhập token.',
+    local_config: 'Đang dùng cấu hình model cục bộ. Các trọng số sẽ được kiểm tra khi nạp.',
+    missing_dependency: `${d.reason} Chủ máy có thể dùng: uv sync --inexact --extra diarize`,
+    needs_token: d.reason || 'Cần token đọc cho lần tải đầu tiên.',
+    offline: d.reason,
+  };
+  let revision = 0;
+  function refresh() {
+    revision++;
+    const on = toggle.checked;
+    $('#diarizeOpts').classList.toggle('hide', !on);
+    $('#numSpeakers').disabled = !on;
+    $('#hfTokenWrap').classList.toggle('hide', !needsHub);
+    token.disabled = !on || !needsHub;
+    if (token.disabled) token.value = '';
+    check.classList.toggle('hide', !needsHub);
+    check.disabled = !on || !needsHub || (!d.has_token && !token.value.trim());
+    hint.textContent = token.value.trim() ? 'Token không được lưu vào dự án. Bấm kiểm tra để xác minh quyền đọc model.'
+      : notes[state] || d.reason;
+  }
+  toggle.onchange = token.oninput = refresh;
+  $('#diarizeBasic').onclick = () => {
+    toggle.checked = false;
+    $('#genderOn').checked = true;
+    refresh();
+    $('#genderOn').focus();
+    toast('Đã bật tách vai theo từng câu, không cần token. Nếu không dùng được WeSpeaker, tool chỉ ước lượng theo cao độ.', 'ok', 6500);
+  };
+  check.onclick = async () => {
+    const request = ++revision;
+    check.disabled = true;
+    hint.textContent = 'Đang kiểm tra quyền đọc trên Hugging Face…';
+    try {
+      const r = await api('/api/diarize/check', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hf_token: token.value.trim() }) });
+      if (request === revision) hint.textContent = (r.ok ? 'Đã kiểm tra: ' : 'Chưa dùng được: ') + r.message;
+    } catch (e) {
+      if (request === revision) hint.textContent = 'Không kiểm tra được: ' + e.message;
+    } finally {
+      if (request === revision) check.disabled = false;
+    }
+  };
+  refresh();
+}
+
+function diarizeOptions() {
+  if (!$('#diarizeOn').checked) return { diarize: false };
+  const d = S.sys.diarize || {}, count = $('#numSpeakers'), field = $('#hfToken');
+  if (['missing_dependency', 'offline'].includes(d.state)) {
+    toast(d.reason, 'warn');
+    return null;
+  }
+  if (!count.reportValidity()) return null;
+  const token = field.disabled ? '' : field.value.trim();
+  if ((!d.available && !token) || (token && !/^hf_\S+$/.test(token))) {
+    field.focus();
+    toast('Dùng token đọc Hugging Face hoặc chọn “Dùng cách không cần token”.', 'warn');
+    return null;
+  }
+  return { diarize: true, num_speakers: count.value ? count.valueAsNumber : null, ...(token ? { hf_token: token } : {}) };
 }
 
 /** Bảng chọn giọng cho từng nhân vật, dựng lại mỗi khi có phụ đề mới. */
@@ -285,7 +333,8 @@ function renderSpeakerVoices() {
     renderCues();
   }));
   $$('.spktest', list).forEach(btn => btn.addEventListener('click', () => {
-    previewSpeaker(btn.dataset.spk, btn);
+    const i = S.cues.findIndex(c => c.speaker === btn.dataset.spk);
+    if (i >= 0) auditionCue(i);
   }));
 }
 
@@ -332,102 +381,153 @@ function collectSpeakerVoices() {
   return out;
 }
 
-async function previewSpeaker(id, btn) {
-  const voice = (S.speakerVoices || {})[id];
-  const cloneId = S.sys.tts?.clone_id || '__clone__';
-  if (!voice) return toast('Chưa chọn giọng cho nhân vật này.', 'warn');
-  if (voice === cloneId) {
-    return toast('Giọng nhân bản chỉ tạo được lúc xuất video — nó cần cắt mẫu từ chính video.', 'warn', 7000);
-  }
-  const line = S.cues.find(c => (c.speaker || '') === id && (c.text2 || c.text || '').trim());
-  const text = line ? (line.text2 || line.text) : 'Xin chào, đây là giọng đọc thử.';
-
-  btn.disabled = true;
-  try {
-    const res = await fetch(apiUrl('/api/tts/preview'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text.slice(0, 300), voice, style: $('#dubStyle').value }),
-    });
-    if (!res.ok) throw new Error((await res.json()).error || 'lỗi');
-    const a = $('#dubAudio');
-    a.src = URL.createObjectURL(await res.blob());
-    a.classList.remove('hide'); a.controls = true;
-    $('#player').pause();
-    await a.play();
-  } catch (e) {
-    toast(`Nghe thử ${spkName(id)} lỗi: ${e.message}`, 'err', 8000);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-
 /* ------------------------- kịch bản lồng tiếng -------------------------- */
-// Máy chủ ghép bản dịch thành từng câu đọc có dấu câu (/api/tts/script). Người dùng
-// sửa ở đây; lúc xuất chỉ gửi những câu đã sửa, kèm chữ gốc (`base`) để máy chủ bỏ
-// qua bản sửa đã cũ nếu sau đó phụ đề bị đổi.
+// The server binds the approved reading lines to this project's cue revision.
 S.dubScript = null;
 
 function scriptSig() {
   return JSON.stringify([
-    S.cues.map(c => [c.text, c.text2 || '', c.speaker || '']),
-    $('#dubShorten').checked,
+    S.jobId, S.analyzed?.source_lang, S.analyzed?.target_lang, S.cues, $('#dubShorten').checked,
   ]);
+}
+
+const unitKey = u => JSON.stringify([u.cues, u.start, u.end, u.speaker, u.base ?? u.text]);
+let scriptRequest = 0;
+
+function readingMix() {
+  return { voice: $('#dubVoice').value, voices: collectSpeakerVoices(), style: $('#dubStyle').value || 'tu_nhien',
+    max_speed: +$('#dubSpeed').value / 100, offset: +$('#stOffset').value || 0 };
+}
+
+function mixKey(m) {
+  return JSON.stringify([m.voice, m.style, m.max_speed, m.offset, Object.entries(m.voices).sort()]);
+}
+
+function restoreReadingMix(m) {
+  if (!m) return;
+  Object.assign(S.speakerVoices, m.voices);
+  if (S.voicesLoaded) $('#dubVoice').value = m.voice;
+  $('#dubStyle').value = m.style;
+  $('#dubSpeed').value = Math.round(m.max_speed * 100);
+  $('#dubSpeed').dispatchEvent(new Event('input'));
+  $('#stOffset').value = m.offset;
+  $('#stOffset').dispatchEvent(new Event('input'));
+}
+
+function auditionSettings(u) {
+  return { voice: S.speakerVoices?.[u.speaker] || $('#dubVoice').value, style: $('#dubStyle').value || 'tu_nhien',
+    max_speed: +$('#dubSpeed').value / 100, offset: +$('#stOffset').value || 0 };
+}
+
+function auditionKey(u) { return JSON.stringify([u.text, auditionSettings(u)]); }
+function takeIdentity(u, settings = auditionSettings(u)) { return JSON.stringify([u.text.trim(), settings.voice, settings.style]); }
+function selectedVariant(u) { return u.variant && u.variant.for === takeIdentity(u) ? u.variant.id : undefined; }
+function checkedTake(u) { return u.monitor && u.monitor.key === auditionKey(u) ? u.monitor : null; }
+
+function takeMessage(u) {
+  const check = checkedTake(u);
+  return !check ? '' : check.over ? `Dòng #${u.cues[0] + 1} vượt khung ${check.over.toFixed(3)}s. `
+    + 'Rút gọn lời đọc, nới mốc hoặc tăng tốc tối đa rồi nghe lại.' : 'Bản nghe thử này sẽ dùng khi xuất.';
+}
+
+function paintTake(u, row) {
+  row?.querySelector('.retake')?.classList.toggle('hide', !u.monitor && !u.variant);
+  const note = row?.querySelector('.script-check');
+  if (note) {
+    note.textContent = takeMessage(u);
+    note.classList.toggle('over', !!checkedTake(u)?.over);
+  }
+}
+
+function scriptCounts(sc) {
+  const count = sc.units.filter(u => u.text.trim()).length, edited = sc.units.filter(u => u.text !== u.base).length;
+  return `${count} câu đọc · ${S.cues.length} dòng phụ đề` + (edited ? ` · ${edited} câu đã sửa` : '');
 }
 
 async function buildScript() {
   const btn = $('#scriptBtn');
   if (!S.cues?.length) return toast('Chưa có phụ đề để dựng kịch bản.', 'warn');
   btn.disabled = true;
+  const request = ++scriptRequest;
+  const sig = scriptSig(), project = S.jobId;
   $('#scriptMsg').textContent = 'Đang dựng…';
   try {
     const r = await api('/api/tts/script', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        cues: S.cues,
-        target_lang: S.analyzed?.target_lang || 'vi',
+        cues: S.cues, project, source_lang: S.analyzed?.source_lang || '',
+        target_lang: S.analyzed?.target_lang || '',
         shorten: $('#dubShorten').checked,
       }),
     });
     // giữ lại câu đã sửa nếu câu đó vẫn y như cũ
-    const old = new Map((S.dubScript?.units || [])
-      .filter(u => u.text !== u.base).map(u => [u.cues.join(','), u]));
+    if (request !== scriptRequest) return;
+    if (sig !== scriptSig()) {
+      $('#scriptMsg').textContent = 'Kịch bản đã đổi trong lúc dựng. Hãy dựng lại.';
+      return;
+    }
+    const old = new Map((S.dubScript?.project === project ? S.dubScript.units : []).map(u => [unitKey(u), u]));
     const units = r.units.map(u => {
-      const prev = old.get(u.cues.join(','));
-      return { ...u, base: u.text, text: prev && prev.base === u.text ? prev.text : u.text };
+      const prev = old.get(unitKey(u));
+      return { ...u, base: u.text, text: prev ? prev.text : u.text, variant: prev?.variant,
+        monitor: S.dubScript?.sig === sig ? prev?.monitor : null };
     });
-    S.dubScript = { units, sig: scriptSig() };
+    const saved = !S.dubScript && S.analyzed?.dub_review;
+    const restore = saved && saved.revision === r.revision && saved.units.length === units.length;
+    if (restore) units.forEach((u, i) => {
+      u.text = saved.units[i].text;
+      if (saved.units[i].variant && saved.playback) {
+        const m = saved.playback;
+        u.variant = { id: saved.units[i].variant, for: takeIdentity(u, { voice: m.voices[u.speaker] || m.voice, style: m.style }) };
+      }
+    });
+    S.dubScript = { units, sig, project, revision: r.revision, issues: r.issues || [], translated: r.use_translation,
+      approved: restore && saved.token, playback: restore && saved.playback };
     renderScript();
-    $('#scriptMsg').textContent = '';
+    return S.dubScript;
   } catch (e) {
+    if (request !== scriptRequest || project !== S.jobId) return;
     $('#scriptMsg').textContent = '';
     toast('Không dựng được kịch bản: ' + e.message, 'err', 7000);
   } finally {
-    btn.disabled = false;
+    if (request === scriptRequest) btn.disabled = false;
   }
 }
 
 function renderScript() {
   const sc = S.dubScript, box = $('#scriptList');
   if (!sc) { box.classList.add('hide'); return; }
-  const edited = sc.units.filter(u => u.text !== u.base).length;
-  $('#scriptCount').textContent = `${sc.units.length} câu đọc · ${S.cues.length} dòng phụ đề`
-    + (edited ? ` · ${edited} câu đã sửa` : '');
+  $('#scriptCount').textContent = scriptCounts(sc);
   $('#scriptBtn').innerHTML = `${icon('refresh')} Dựng lại`;
   $('#scriptDl').classList.remove('hide');
   box.classList.remove('hide');
-  box.innerHTML = sc.units.map((u, k) => `
+  box.classList.remove('stale');
+  box.inert = false;
+  $('#scriptIssues').innerHTML = sc.issues.length ? `<b>Cần sửa ${sc.issues.length} dòng trước khi duyệt:</b> ` +
+    sc.issues.map(x => `<button type="button" class="btn sm ghost" data-fix-cue="${x.cue}">#${x.cue + 1} · ${fmtTime(S.cues[x.cue].start)} · ${esc(x.reason)}</button>`).join(' ') : '';
+  box.innerHTML = sc.units.map((u, k) => `${scriptMinuteHeading(sc.units, k) ? `<b>${scriptMinuteHeading(sc.units, k)}</b>` : ''}
     <div class="script-row${u.text !== u.base ? ' edited' : ''}" data-k="${k}">
       <div class="script-meta">
         <span class="t">${fmtTime(u.start)}</span>
         ${u.speaker ? `<span class="spk s${spkSlot(u.speaker)}">${esc(spkName(u.speaker))}</span>` : ''}
-        <span class="n muted">${u.cues.length} dòng</span>
+        <span class="n muted">#${u.cues.map(i => i + 1).join(', #')}</span>
+        <button type="button" class="btn sm ghost" data-audition="${u.cues[0]}">${icon('volume')} Xem &amp; nghe</button>
+        <button type="button" class="btn sm ghost retake${u.monitor || u.variant ? '' : ' hide'}" data-retake="${u.cues[0]}">Tạo lượt đọc khác</button>
       </div>
+      <small class="script-sub muted">Phụ đề: ${esc(u.cues.map(i => sc.translated ? S.cues[i].text2 || 'Chưa có bản dịch' : S.cues[i].text).join(' '))}</small>
       <textarea rows="1" spellcheck="false" aria-label="Câu đọc ${k + 1}">${esc(u.text)}</textarea>
+      <small class="script-check muted${checkedTake(u)?.over ? ' over' : ''}">${esc(takeMessage(u))}</small>
       <button type="button" class="btn sm ghost reset" title="Trả về câu tự dựng" aria-label="Trả về câu tự dựng">${icon("rotate")} Trả về</button>
     </div>`).join('');
-  box.querySelectorAll('textarea').forEach(fitArea);
+  const fields = [...box.querySelectorAll('textarea')], heights = fields.map(t => t.scrollHeight);
+  fields.forEach((t, i) => { if (heights[i]) t.style.height = heights[i] + 2 + 'px'; });
+  syncScriptApproval();
+}
+
+function scriptMinuteHeading(units, k) {
+  const m = Math.floor(units[k].start / 60);
+  return k === 0 || m !== Math.floor(units[k - 1].start / 60) ? `Phút ${m} · ${fmtDur(m * 60)}` : '';
 }
 
 function fitArea(t) {
@@ -439,22 +539,104 @@ function scriptStale() {
   return S.dubScript && S.dubScript.sig !== scriptSig();
 }
 
-/** Câu đã sửa để gửi kèm lúc xuất (rỗng nếu chưa sửa câu nào). */
-function collectScript() {
-  if (!S.dubScript) return [];
-  return S.dubScript.units
-    .filter(u => u.text.trim() && u.text !== u.base)
-    .map(u => ({ cues: u.cues, base: u.base, text: u.text.trim() }));
+function approvedScript() {
+  const sc = S.dubScript;
+  if (!sc?.approved || scriptStale()) return null;
+  if (sc.playback && S.voicesLoaded && mixKey(sc.playback) !== mixKey(readingMix())) return null;
+  return sc.approved;
 }
 
+function syncScriptApproval() {
+  const sc = S.dubScript, stale = scriptStale();
+  const empty = sc?.units.find(u => !u.text.trim());
+  const over = sc?.units.find(u => u.monitor?.over && checkedTake(u));
+  const ready = sc && !stale && !sc.issues.length && sc.units.length && !empty && !over;
+  if (sc && !ready) sc.approved = false;
+  const approved = approvedScript();
+  $('#scriptApprove').disabled = !ready || !!approved || sc.saving;
+  $('#scriptApprove').textContent = approved ? 'Đã duyệt' : 'Duyệt kịch bản này';
+  $('#scriptMsg').textContent = stale ? 'Phụ đề đã đổi — bấm Dựng lại để đối chiếu.' :
+    over ? takeMessage(over) : approved ? 'Có thể bật lồng tiếng.' :
+    sc?.approved ? 'Giọng, tốc độ hoặc độ lệch mốc đã đổi. Hãy nghe và duyệt lại.' :
+    empty ? `Dòng #${empty.cues[0] + 1} đang trống lời đọc.` :
+    sc && !ready ? 'Chưa đủ lời đọc để duyệt.' :
+    sc ? 'Chưa duyệt — kiểm tra lời đọc trước khi lồng tiếng.' : '';
+  const toggle = $('#dubOn');
+  toggle.disabled = (!!S.projectId && !S.videoSrc) || (!toggle.checked && !approved);
+}
+
+$('#scriptApprove').addEventListener('click', async () => {
+  if ($('#scriptApprove').disabled || scriptStale()) return;
+  const sc = S.dubScript, project = S.jobId;
+  if (!$('#cueForm').classList.contains('hide'))
+    return toast('Áp dụng hoặc hủy câu đang sửa trước khi duyệt.', 'warn');
+  const rows = () => sc.units.map(u => ({ cues: u.cues, text: u.text.trim(), variant: selectedVariant(u) }));
+  const edits = () => JSON.stringify(sc.units.map(u => [u.text, u.variant?.id]));
+  const atClick = edits();
+  sc.saving = true;
+  $('#scriptApprove').disabled = true;
+  try {
+    if (S.sys?.tts?.available && !S.voicesLoaded) {
+      await loadVoices();
+      if (!S.voicesLoaded) throw new Error('Chưa nạp được giọng đọc.');
+    }
+    if (project !== S.jobId || sc !== S.dubScript || scriptStale()) return;
+    if (atClick !== edits()) throw new Error('Lời đọc đã đổi trong khi nạp giọng. Hãy kiểm tra và duyệt lại.');
+    const review = { revision: sc.revision, units: rows() };
+    const playback = S.voicesLoaded ? readingMix() : null, shorten = $('#dubShorten').checked;
+    const r = await api(`/api/projects/${encodeURIComponent(project)}/dub-review`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        cues: S.cues, source_lang: S.analyzed.source_lang, target_lang: S.analyzed.target_lang,
+        shorten, playback, revision: S.analyzed.revision,
+        previous: S.analyzed.dub_review?.token, review }),
+    });
+    if (project !== S.jobId) return;
+    S.analyzed.dub_review = { ...review, token: r.token, playback: r.playback, shorten };
+    S.analyzed.revision = r.revision;
+    if (sc === S.dubScript && !scriptStale() && JSON.stringify(rows()) === JSON.stringify(review.units)) {
+      sc.approved = r.token;
+      sc.playback = r.playback;
+      $('#minuteStatus').textContent = 'Đã lưu phụ đề và kịch bản đọc';
+    }
+  } catch (e) {
+    if (project === S.jobId) toast('Chưa duyệt: ' + e.message, 'warn', 8000);
+  } finally {
+    sc.saving = false;
+    if (project === S.jobId) syncScriptApproval();
+  }
+});
+$('#scriptIssues').addEventListener('click', e => {
+  const b = e.target.closest('[data-fix-cue]');
+  if (b && !scriptStale()) {
+    showCueForm(S.cues[+b.dataset.fixCue]);
+    const issue = S.dubScript.issues.find(x => x.cue === +b.dataset.fixCue);
+    $(issue?.field === 'start' ? '#cueStart' : S.dubScript.translated ? '#cueTranslation' : '#cueOriginal').focus();
+  }
+});
+$('#dubOn').addEventListener('change', syncScriptApproval);
+
+function readingSettingsChanged() {
+  stopAudition();
+  S.dubScript?.units.forEach((u, k) => {
+    if (u.monitor) paintTake(u, $(`#scriptList [data-k="${k}"]`));
+  });
+  syncScriptApproval();
+}
+$('#draftVoices').addEventListener('change', readingSettingsChanged);
+$('#spkList').addEventListener('click', e => { if (e.target.closest('.spkgender')) readingSettingsChanged(); });
+$('#stOffset').addEventListener('input', readingSettingsChanged);
+
 function scriptText() {
-  return S.dubScript.units.map(u =>
-    `[${fmtTime(u.start)}] ${u.speaker ? spkName(u.speaker) + ': ' : ''}${u.text}`).join('\n') + '\n';
+  return S.dubScript.units.map((u, k, units) => {
+    const title = scriptMinuteHeading(units, k);
+    return (title ? title + '\n' : '') + `[${fmtTime(u.start)} → ${fmtTime(u.end)}] ${u.speaker ? spkName(u.speaker) + ': ' : ''}${u.text}`;
+  }).join('\n') + '\n';
 }
 
 $('#scriptBtn').addEventListener('click', buildScript);
 $('#scriptDl').addEventListener('click', () => {
   if (!S.dubScript) return;
+  if (scriptStale()) return toast('Dựng lại kịch bản trước khi tải để lấy đúng mốc mới.', 'warn');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([scriptText()], { type: 'text/plain;charset=utf-8' }));
   a.download = (S.mediaName || 'video').replace(/\.[^.]+$/, '') + '.kichban.txt';
@@ -466,11 +648,12 @@ $('#scriptList').addEventListener('input', e => {
   if (!row || e.target.tagName !== 'TEXTAREA') return;
   const u = S.dubScript.units[+row.dataset.k];
   u.text = e.target.value;
+  S.dubScript.approved = false;
+  syncScriptApproval();
   row.classList.toggle('edited', u.text !== u.base);
   fitArea(e.target);
-  const edited = S.dubScript.units.filter(x => x.text !== x.base).length;
-  $('#scriptCount').textContent = `${S.dubScript.units.length} câu đọc · ${S.cues.length} dòng phụ đề`
-    + (edited ? ` · ${edited} câu đã sửa` : '');
+  paintTake(u, row);
+  $('#scriptCount').textContent = scriptCounts(S.dubScript);
 });
 $('#scriptList').addEventListener('click', e => {
   const b = e.target.closest('.reset');
@@ -478,23 +661,32 @@ $('#scriptList').addEventListener('click', e => {
   const row = b.closest('.script-row');
   const u = S.dubScript.units[+row.dataset.k];
   u.text = u.base;
+  S.dubScript.approved = false;
+  stopAudition();
   renderScript();
 });
 
 /** Phụ đề đổi sau khi dựng kịch bản: báo để dựng lại; đổi hẳn dự án thì bỏ kịch bản cũ. */
 function markScriptStale() {
+  stopAudition();
   const sc = S.dubScript;
-  if (!sc) return;
-  const maxIdx = Math.max(-1, ...sc.units.flatMap(u => u.cues));
-  if (maxIdx >= S.cues.length) {
+  if (!sc || sc.project !== S.jobId) {
     S.dubScript = null;
     $('#scriptList').classList.add('hide');
     $('#scriptDl').classList.add('hide');
     $('#scriptCount').textContent = '';
+    $('#scriptMsg').textContent = '';
+    $('#scriptIssues').textContent = '';
     $('#scriptBtn').innerHTML = `${icon('file-text')} Dựng kịch bản`;
-    return;
+    if ($('#dubOn').checked) {
+      $('#dubOn').checked = false;
+      $('#dubOn').dispatchEvent(new Event('change'));
+    }
+    return syncScriptApproval();
   }
   const stale = scriptStale();
   $('#scriptList').classList.toggle('stale', stale);
-  $('#scriptMsg').textContent = stale ? 'Phụ đề đã đổi — bấm Dựng lại để cập nhật kịch bản.' : '';
+  $('#scriptList').inert = !!stale;
+  syncScriptApproval();
 }
+$('#dubShorten').addEventListener('change', markScriptStale);

@@ -116,6 +116,21 @@ def test_init_db_tao_bang_khi_chua_co(kho_json):
         assert db.query(Film).count() == 0
 
 
+def test_upgrade_adds_display_name_without_changing_existing_account(kho_json):
+    with db_mod._get_engine().begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE studio_members (id INTEGER PRIMARY KEY, "
+                             "username VARCHAR(48) UNIQUE NOT NULL, password_hash VARCHAR(200) NOT NULL, "
+                             "created FLOAT NOT NULL)")
+        conn.exec_driver_sql("INSERT INTO studio_members VALUES (7, 'editor', 'original-hash', 123)")
+    db_mod.init_db()
+    db_mod.init_db()
+    with get_db() as db:
+        member = db.get(db_mod.Member, 7)
+        assert (member.username, member.password_hash, member.created, member.display_name) == (
+            "editor", "original-hash", 123, "")
+        assert (member.contact_email, member.crew_role, member.bio) == ("", "", "")
+
+
 def test_migrate_films_json_sang_db(kho_json):
     (kho_json / "films.json").write_text(
         json.dumps(

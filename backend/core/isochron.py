@@ -11,6 +11,8 @@ luyện n lấy từ chính câu đích; lúc chạy thật n lấy từ khung t
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
 from . import duration
@@ -21,6 +23,27 @@ ADAPTER_DIRNAME = "nllb_lora_dangthoi"
 # `nllb_lora_dangthoi` (huấn luyện 11/11/2026); các thứ tiếng sau thêm hậu tố `_ko`, `_ja`, `_en`.
 LANGS = ("zh", "ko", "ja", "en")
 NLLB_SRC = {"zh": "zho_Hans", "ko": "kor_Hang", "ja": "jpn_Jpan", "en": "eng_Latn"}
+
+
+def dialogue_adapters() -> dict[str, Path]:
+    """Only load completed candidates explicitly selected by the studio host."""
+    selected = {}
+    for task in ("meaning", "spoken"):
+        directory = os.environ.get(f"VSUB_{task.upper()}_ADAPTER")
+        if not directory:
+            continue
+        path = Path(directory)
+        try:
+            meta = json.loads((path / "train_meta.json").read_text(encoding="utf-8"))
+            src = meta["src_lang"]
+            if (meta["finished"] is True and meta["task"] == task
+                    and meta["base_model"] == "facebook/nllb-200-distilled-600M"
+                    and src in (LANGS if task == "meaning" else ("vi",))
+                    and (path / "adapter_model.safetensors").is_file() and (path / "adapter_config.json").is_file()):
+                selected[f"{task}_{src}"] = path
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return selected
 
 
 def budget_token(n: int) -> str:

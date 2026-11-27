@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-
-from backend.main import app
 
 
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as c:
-        yield c
+@pytest.fixture
+def client(studio_client):
+    return studio_client
 
 
 # ------------------------------------------------------------ /api/system
@@ -47,7 +43,7 @@ def test_analyze_chan_som_khi_chua_du_dieu_kien_diarize(client, monkeypatch):
     """Thiếu điều kiện thì phải báo NGAY, đừng để chạy xong ASR mới lỗi."""
     from backend.core import diarize
 
-    monkeypatch.setattr(diarize, "available", lambda token="": (False, "Thiếu token thử nghiệm."))
+    monkeypatch.setattr(diarize, "check_access", lambda token="": (False, "Thiếu token thử nghiệm."))
     r = client.post(
         "/api/analyze",
         json={"source_type": "url", "url": "https://example.com/v", "diarize": True},
@@ -56,17 +52,18 @@ def test_analyze_chan_som_khi_chua_du_dieu_kien_diarize(client, monkeypatch):
     assert r.json()["error"] == "Thiếu token thử nghiệm."
 
 
-def test_analyze_tu_choi_so_nhan_vat_sai_kieu(client, monkeypatch):
+@pytest.mark.parametrize("invalid", ["ba người", 0, -1, 21, 2.5, True])
+def test_analyze_tu_choi_so_nhan_vat_sai_kieu(client, monkeypatch, invalid):
     from backend.core import diarize
 
-    monkeypatch.setattr(diarize, "available", lambda token="": (True, ""))
+    monkeypatch.setattr(diarize, "check_access", lambda *_: pytest.fail("invalid count must not contact Hub"))
     r = client.post(
         "/api/analyze",
         json={
             "source_type": "url",
             "url": "https://example.com/v",
             "diarize": True,
-            "num_speakers": "ba người",
+            "num_speakers": invalid,
         },
     )
     assert r.status_code == 400

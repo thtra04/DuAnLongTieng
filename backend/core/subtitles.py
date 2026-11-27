@@ -33,14 +33,23 @@ class Cue:
     text2: str = ""  # dòng thứ hai khi xuất phụ đề song ngữ
     speaker: str = ""
     words: list = field(default_factory=list, repr=False)
+    pinned: bool = False
+    segment: int | None = None
+    speaker_fixed: bool = False
+    # Only during this translation pass: an exact editorial choice outranks the time budget.
+    translation_reviewed: bool = field(default=False, repr=False, compare=False)
 
     def to_dict(self) -> dict:
+        seg = self.words[0].get("seg") if self.words else self.segment
         return {
             "start": round(self.start, 3),
             "end": round(self.end, 3),
             "text": self.text,
             "text2": self.text2,
             "speaker": self.speaker,
+            **({"speaker_fixed": True} if self.speaker_fixed else {}),
+            **({"pinned": True} if self.pinned else {}),
+            **({"segment": seg} if seg is not None else {}),
         }
 
     @staticmethod
@@ -51,6 +60,9 @@ class Cue:
             text=(d.get("text") or "").strip(),
             text2=(d.get("text2") or "").strip(),
             speaker=(d.get("speaker") or "").strip(),
+            speaker_fixed=d.get("speaker_fixed") is True,
+            pinned=d.get("pinned") is True,
+            segment=d.get("segment") if type(d.get("segment")) is int else None,
         )
 
 
@@ -235,7 +247,7 @@ def to_vtt(cues: list[Cue], mode: str = "main", lang=None, lang2=None, max_chars
 
 
 DEFAULT_STYLE = {
-    "font": "Arial",
+    "font": "Times New Roman",
     "size": 46,
     "primary": "#FFFFFF",
     "outline_color": "#000000",
@@ -332,7 +344,7 @@ def parse_subtitle(raw: str) -> list[Cue]:
         if not text:
             continue
         cues.append(Cue(parse_time(m.group(1)), parse_time(m.group(2)), text))
-    return cues
+    return sorted(cues, key=lambda c: c.start)
 
 
 def split_plain_text(raw: str) -> list[str]:
@@ -375,25 +387,29 @@ def cues_from_words(
     cues: list[Cue] = []
     buf: list[dict] = []
 
-    def flush() -> None:
+    def flush(count: int | None = None) -> None:
         nonlocal buf
         if not buf:
             return
-        text = "".join(w["word"] for w in buf).strip()
+        part, buf = buf[:count], buf[count:] if count is not None else []
+        text = "".join(w["word"] for w in part).strip()
         text = re.sub(r"\s+", " ", text)
         if text:
-            start = buf[0]["start"]
-            end = max(buf[-1]["end"], start + min_dur)
-            cues.append(Cue(start, end, text, words=list(buf)))
-        buf = []
+            start = part[0]["start"]
+            end = max(part[-1]["end"], start + min_dur)
+            cues.append(Cue(start, end, text, words=part))
 
     for i, w in enumerate(words):
         if not (w.get("word") or "").strip():
             continue
+        stripped = w["word"].strip()
+        stop = stripped.rstrip("\"'”’»)]」』")[-1:] in tuple(SENTENCE_END)
+        if stripped.lower() in ("mr.", "mrs.", "ms.", "dr.", "prof.", "e.g.", "i.e."):
+            stop = False
         if buf:
             gap = w["start"] - buf[-1]["end"]
             cur_len = len("".join(x["word"] for x in buf).strip())
-            cur_dur = buf[-1]["end"] - buf[0]["start"]
+            span = w["end"] - buf[0]["start"]
             # Sang đoạn Whisper khác cũng là một ranh giới: đoạn thường là câu/vế
             # trọn, và với chữ Hán (không dấu câu, không dấu cách) đó là mốc duy nhất.
             new_seg = (
@@ -401,12 +417,20 @@ def cues_from_words(
                 and buf[-1].get("seg") is not None
                 and w["seg"] != buf[-1]["seg"]
             )
-            if new_seg or gap >= gap_split or cur_len >= max_chars or cur_dur >= max_dur:
+            if new_seg or gap >= gap_split:
                 flush()
+            elif (cur_len + len(stripped) > max_chars or span > max_dur) and not (
+                stop and cur_len + len(stripped) <= max_chars * 1.15 and span <= max_dur + 0.4
+            ):
+                # Prefer a clause or audible pause over splitting at the character limit.
+                cuts = [(buf[j - 1]["word"].rstrip()[-1] in CLAUSE_BREAK,
+                         buf[j]["start"] - buf[j - 1]["end"], j)
+                        for j in range(max(1, len(buf) // 2), len(buf))]
+                natural = [c for c in cuts if c[0] or c[1] >= 0.18]
+                flush(max(natural)[2] if natural else None)
         buf.append(w)
 
-        stripped = w["word"].strip()
-        if stripped and stripped[-1] in SENTENCE_END:
+        if stop:
             flush()
         elif stripped and stripped[-1] in CLAUSE_BREAK:
             cur_len = len("".join(x["word"] for x in buf).strip())
@@ -414,7 +438,7 @@ def cues_from_words(
                 flush()
 
     flush()
-    return _tidy(cues)
+    return _tidy(cues, min_dur=min_dur)
 
 
 def _tidy(cues: list[Cue], min_dur: float = 0.7, min_gap: float = 0.04) -> list[Cue]:
@@ -428,9 +452,9 @@ def _tidy(cues: list[Cue], min_dur: float = 0.7, min_gap: float = 0.04) -> list[
         if out:
             prev = out[-1]
             if cue.start < prev.end + min_gap:
-                mid = max(prev.start + 0.2, (prev.end + cue.start) / 2)
-                prev.end = min(prev.end, mid)
-                cue.start = max(cue.start, prev.end + min_gap)
+                # Padding a short reply must not push the next speaker later.
+                prev.end = min(prev.end, max(prev.start + 0.001, cue.start - min_gap))
+                cue.start = max(cue.start, prev.end)
                 if cue.end <= cue.start:
                     cue.end = cue.start + min_dur
         out.append(cue)
@@ -442,3 +466,21 @@ def shift_cues(cues: list[Cue], seconds: float) -> list[Cue]:
         cue.start = max(0.0, cue.start + seconds)
         cue.end = max(cue.start + 0.1, cue.end + seconds)
     return cues
+
+
+def join_continuations(cues: list[Cue], max_chars: int, max_dur: float) -> list[Cue]:
+    """Join ASR fragments before MT only where a single timed clause is plausible."""
+    out = []
+    for cue in cues:
+        if out:
+            prev = out[-1]
+            link = re.search(r"(?:[,;:]|\b(?:if|because|although|that|the|to|of|and|but))$", prev.text, re.I)
+            if (prev.words and cue.words and prev.speaker == cue.speaker and link
+                    and cue.text[:1].islower() and 0 <= cue.start - prev.end <= 0.35
+                    and cue.end - prev.start <= max_dur and len(prev.text) + len(cue.text) + 1 <= max_chars):
+                prev.text += " " + cue.text
+                prev.end = cue.end
+                prev.words.extend(cue.words)
+                continue
+        out.append(cue)
+    return out

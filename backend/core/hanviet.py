@@ -29,6 +29,8 @@ import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
+from . import workspaces
+
 DATA = Path(__file__).with_name("hanviet_data.tsv")
 LEARNED_FILE = "hanviet_learned.json"
 _HAN = re.compile(r"[㐀-䶿一-鿿豈-﫿]+")
@@ -204,7 +206,7 @@ LEARNED_PATH: Path | None = None  # test đặt sang chỗ tạm; None = data/ha
 def _path() -> Path:
     from ..config import DATA_DIR
 
-    return LEARNED_PATH or Path(DATA_DIR) / LEARNED_FILE
+    return workspaces.file_for(LEARNED_PATH or Path(DATA_DIR) / LEARNED_FILE)
 
 
 def load() -> dict[str, dict]:

@@ -9,10 +9,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi.testclient import TestClient
 
 from backend.db import Voice, get_db
-from backend.main import app
 from backend.store import characters, projects
 from backend.store.characters import CharacterError
 
@@ -209,10 +207,9 @@ def test_xoa_du_an_thi_xoa_nhan_vat(kho):
 # ------------------------------------------------------------------ API
 
 
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as c:
-        yield c
+@pytest.fixture
+def client(tmp_db, studio_client):
+    return studio_client
 
 
 def test_api_lay_bang_nhan_vat(kho, client):

@@ -229,3 +229,193 @@ def test_giu_lai_diem_tin_cay_de_loc_khi_quet_bu():
     out = _collect([SegGia(0, 1, "x", no_speech_prob=0.9, avg_logprob=-2.0)])
     assert out[0]["no_speech_prob"] == 0.9
     assert out[0]["avg_logprob"] == -2.0
+
+
+# --------------------------------- dò ngôn ngữ / câu bịa ở lượt chính (phim Thái)
+
+from backend.core import asr  # noqa: E402
+
+
+@pytest.mark.parametrize("text", ["โปรดติดตามตอนต่อไป", "โปรดติดตามต่อไป", "Thank you for watching.",
+                                  "See you in the next video."])
+def test_bo_cau_bia_tieng_thai_va_tieng_anh(text):
+    """Đo thật (phim Thái The Rules EP5): Whisper bịa mấy câu này trên nhạc."""
+    assert not looks_like_speech(rescan_seg(text=text))
+
+
+def test_thoai_thai_that_khong_bi_chan():
+    for text in ("วันนี้ครบสิบวันตามสัญญาแล้วนะครับ", "แม่ เป็นยังไงบ้าง"):
+        assert looks_like_speech(rescan_seg(text=text)), text
+
+
+def test_luot_chinh_cung_bo_cau_bia():
+    notes = []
+    kept = asr._drop_boilerplate([seg(0, 1, "โปรดติดตามตอนต่อไป"), seg(2, 3, "แม่")], notes)
+    assert [s["text"] for s in kept] == ["แม่"]
+    assert notes and "1" in notes[0]
+
+
+def _wav(path, seconds):
+    import wave
+
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * int(seconds * 16000))
+    return str(path)
+
+
+class ModelDoGia:
+    """Model giả: mỗi khúc trả một bảng xác suất ngôn ngữ cho sẵn."""
+
+    def __init__(self, tables):
+        self.tables, self.calls = list(tables), []
+
+    def detect_language(self, audio=None):
+        self.calls.append(len(audio))
+        probs = self.tables.pop(0)
+        return probs[0][0], probs[0][1], probs
+
+
+def test_do_ngon_ngu_tren_khuc_co_tieng_nguoi_va_cong_xac_suat(tmp_path, monkeypatch):
+    import faster_whisper.vad as vad
+
+    # 40 s tiếng người -> 2 khúc (30 s + 10 s)
+    monkeypatch.setattr(vad, "get_speech_timestamps", lambda audio, opts=None: [{"start": 0, "end": 40 * 16000}])
+    model = ModelDoGia([[("th", 0.9), ("lo", 0.1)], [("th", 0.8), ("nn", 0.2)]])
+    lang, prob = asr.detect_language(model, _wav(tmp_path / "a.wav", 60))
+    assert lang == "th" and prob == pytest.approx(0.85)
+    assert model.calls == [30 * 16000, 10 * 16000]
+
+
+def test_qua_it_tieng_nguoi_thi_de_whisper_tu_do(tmp_path, monkeypatch):
+    import faster_whisper.vad as vad
+
+    monkeypatch.setattr(vad, "get_speech_timestamps", lambda audio, opts=None: [{"start": 0, "end": 16000}])
+    model = ModelDoGia([])
+    assert asr.detect_language(model, _wav(tmp_path / "a.wav", 10)) == (None, 0.0)
+    assert model.calls == []
+
+
+class InfoGia:
+    def __init__(self, language="nn", duration=60.0):
+        self.language, self.language_probability, self.duration = language, 0.2, duration
+
+
+class WhisperGia:
+    """Ghi lại ngôn ngữ mỗi lượt được giao; lượt chính có một khoảng trống dài để bị quét bù."""
+
+    def __init__(self):
+        self.langs = []
+
+    def transcribe(self, path, **kw):
+        self.langs.append(kw.get("language"))
+        if kw.get("clip_timestamps"):
+            return iter([SegGia(30, 31, "ขอบคุณครับ")]), InfoGia()
+        segs = [SegGia(0, 2, "โปรดติดตามตอนต่อไป"), SegGia(2, 4, "แม่ เป็นยังไงบ้าง"), SegGia(50, 52, "อันนี้อากาศดีนะ")]
+        return iter(segs), InfoGia()
+
+
+def test_moi_luot_dung_chung_ngon_ngu_da_do(monkeypatch):
+    """Trước đây lượt quét bù truyền language=None nên mỗi khúc tự dò lại trên nhạc."""
+    fake = WhisperGia()
+    monkeypatch.setattr(asr, "load_model", lambda *a, **k: (fake, "cpu"))
+    monkeypatch.setattr(asr, "detect_language", lambda model, path: ("th", 0.98))
+    logs = []
+    res = asr.transcribe("khong-can-file.wav", duration=60.0, on_log=logs.append)
+    assert len(fake.langs) >= 2 and set(fake.langs) == {"th"}
+    assert res["language"] == "th" and res["language_probability"] == pytest.approx(0.98)
+    assert "โปรดติดตามตอนต่อไป" not in [s["text"] for s in res["segments"]]
+    assert any("large-v3" in m for m in logs)  # medium + tiếng Thái -> gợi ý model lớn
+
+
+def test_nguoi_dung_chon_ngon_ngu_thi_khong_do_lai(monkeypatch):
+    fake = WhisperGia()
+    monkeypatch.setattr(asr, "load_model", lambda *a, **k: (fake, "cpu"))
+
+    def cam_goi(*a, **k):
+        raise AssertionError("không được dò khi người dùng đã chọn ngôn ngữ")
+
+    monkeypatch.setattr(asr, "detect_language", cam_goi)
+    res = asr.transcribe("x.wav", language="zh", duration=60.0)
+    assert set(fake.langs) == {"zh"} and res["language"] == "zh"
+
+
+def test_do_hong_thi_quay_ve_cach_cu(monkeypatch):
+    fake = WhisperGia()
+    monkeypatch.setattr(asr, "load_model", lambda *a, **k: (fake, "cpu"))
+
+    def hong(*a, **k):
+        raise RuntimeError("không đọc được file")
+
+    monkeypatch.setattr(asr, "detect_language", hong)
+    res = asr.transcribe("x.wav", duration=60.0)
+    # lượt 1 để faster-whisper tự dò; các lượt sau dùng đúng ngôn ngữ lượt 1 báo về
+    assert fake.langs[0] is None and set(fake.langs[1:]) == {"nn"}
+    assert res["language"] == "nn"
+
+
+class NapGia:
+    """load_model giả: mỗi cỡ model một WhisperGia riêng, ghi lại lần nạp."""
+
+    def __init__(self, device="cuda", hong=()):
+        self.device, self.hong, self.models, self.calls = device, set(hong), {}, []
+
+    def __call__(self, size="medium", device="auto", on_log=None, cpu_fallback=True):
+        self.calls.append((size, device, cpu_fallback))
+        if size in self.hong:
+            raise RuntimeError("CUDA out of memory")
+        return self.models.setdefault(size, WhisperGia()), self.device
+
+
+def _tu_doi(monkeypatch, lang="th", device="cuda", co_san=True, hong=()):
+    nap = NapGia(device, hong)
+    monkeypatch.setattr(asr, "load_model", nap)
+    monkeypatch.setattr(asr, "detect_language", lambda model, path: (lang, 0.98))
+    monkeypatch.setattr(asr, "_model_on_disk", lambda size: co_san)
+    logs = []
+    res = asr.transcribe("x.wav", duration=60.0, on_log=logs.append)
+    return nap, res, logs
+
+
+def test_tieng_thai_tren_gpu_tu_doi_sang_large_v3(monkeypatch):
+    monkeypatch.setitem(asr._cache, ("medium", "cuda", "float16"), object())
+    nap, res, logs = _tu_doi(monkeypatch)
+    assert ("large-v3", "cuda", False) in nap.calls  # không lặng lẽ rơi về CPU
+    # dò ngôn ngữ bằng medium, mọi lượt nghe bằng large-v3
+    assert nap.models["medium"].langs == [] and set(nap.models["large-v3"].langs) == {"th"}
+    assert res["model"] == "large-v3"
+    assert any("tự chuyển sang Whisper `large-v3`" in m for m in logs)
+    assert not any(m.startswith("Gợi ý") for m in logs)
+    assert ("medium", "cuda", "float16") not in asr._cache  # nhả VRAM của medium
+
+
+def test_tieng_trung_giu_medium(monkeypatch):
+    nap, res, logs = _tu_doi(monkeypatch, lang="zh")
+    assert [c[0] for c in nap.calls] == ["medium"] and res["model"] == "medium"
+    assert not any("large-v3" in m for m in logs)
+
+
+@pytest.mark.parametrize("kw, ly_do", [
+    ({"device": "cpu"}, "CPU"),
+    ({"co_san": False}, "chưa có model"),
+    ({"hong": ("large-v3",)}, "Không nạp được"),
+])
+def test_khong_doi_duoc_thi_giu_medium_va_noi_vi_sao(monkeypatch, kw, ly_do):
+    nap, res, logs = _tu_doi(monkeypatch, **kw)
+    assert res["model"] == "medium" and set(nap.models["medium"].langs) == {"th"}
+    goi_y = [m for m in logs if m.startswith("Gợi ý")]
+    assert len(goi_y) == 1 and ly_do in goi_y[0]
+
+
+def test_tat_tu_doi_hoac_tu_chon_model_khac(monkeypatch):
+    monkeypatch.setattr(asr, "AUTO_UPGRADE", False)
+    nap, res, _ = _tu_doi(monkeypatch)
+    assert res["model"] == "medium" and [c[0] for c in nap.calls] == ["medium"]
+
+    monkeypatch.setattr(asr, "AUTO_UPGRADE", True)
+    nap = NapGia()
+    monkeypatch.setattr(asr, "load_model", nap)
+    res = asr.transcribe("x.wav", model_size="small", duration=60.0)
+    assert res["model"] == "small" and [c[0] for c in nap.calls] == ["small"]

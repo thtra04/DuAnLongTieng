@@ -23,6 +23,7 @@ import time
 import unicodedata
 from pathlib import Path
 
+from ..core import workspaces
 from ..db import Base, TranslationMemory, _get_engine, get_db
 
 # Chỉ tra ngần này cặp mới nhất: đủ cho vài trăm tập phim mà vẫn tức thì
@@ -77,12 +78,13 @@ def learn(pairs: list[tuple[str, str]], source_lang: str = "", target_lang: str 
                 continue
             row = (
                 db.query(TranslationMemory)
-                .filter(TranslationMemory.source_key == key, TranslationMemory.target_lang == tgt)
+                .filter(TranslationMemory.source_key == key, TranslationMemory.target_lang == tgt,
+                        TranslationMemory.source_lang == _lang(source_lang), TranslationMemory.scope == workspaces.current.get())
                 .first()
             )
             if row is None:
                 db.add(TranslationMemory(
-                    source_key=key, source=source, target=target, source_lang=_lang(source_lang),
+                    source_key=key, source=source, target=target, source_lang=_lang(source_lang), scope=workspaces.current.get(),
                     target_lang=tgt, job_id=str(job_id or "")[:32], hits=0, updated=now,
                 ))
             elif row.target != target:
@@ -103,7 +105,8 @@ def lookup(texts: list[str], source_lang: str | None, target_lang: str) -> tuple
     with get_db() as db:
         rows = (
             db.query(TranslationMemory)
-            .filter(TranslationMemory.target_lang == tgt)
+            .filter(TranslationMemory.target_lang == tgt, TranslationMemory.source_lang == _lang(source_lang),
+                    TranslationMemory.scope == workspaces.current.get())
             .order_by(TranslationMemory.updated.desc())
             .limit(MAX_ROWS)
             .all()
@@ -148,26 +151,19 @@ def learn_from_edit(old_cues: list[dict], new_cues: list[dict], source_lang: str
                     target_lang: str = "", job_id: str = "") -> int:
     """So bản dịch người dùng gửi lên với bản máy dịch đã lưu; câu nào khác thì ghi nhớ.
 
-    So theo **câu** (nhóm cue như lúc dịch) chứ không theo dòng: lúc dịch, một câu
-    vắt qua nhiều cue được dịch trọn rồi chia lại, nên phải nối lại mới ra đúng
-    đơn vị mà lần dịch sau sẽ tra. Người dùng tách/gộp/sửa chữ gốc thì dòng không
-    còn đối chiếu được — bỏ qua, không đoán.
+    Khớp theo lời gốc và mốc, không theo vị trí trong danh sách: thêm/xóa một
+    dòng không được làm bộ nhớ học nhầm bản dịch của dòng kế bên.
     """
-    if not old_cues or len(old_cues) != len(new_cues):
+    if not old_cues:
         return 0
     from ..core.subtitles import Cue
-    from ..core.translate import _join_fragments, group_cues
 
-    old = [Cue.from_dict(c) for c in old_cues]
-    new = [Cue.from_dict(c) for c in new_cues]
-    if any(a.text != b.text for a, b in zip(old, new)):
-        return 0
+    old = {(c.start, c.end, c.text): c.text2 for c in map(Cue.from_dict, old_cues)}
     pairs, edits = [], []
-    for g in group_cues(new, split_cjk_lines=True):
-        source = _join_fragments([new[i].text for i in g])
-        before = _join_fragments([old[i].text2 for i in g])
-        after = _join_fragments([new[i].text2 for i in g])
-        if source.strip() and after.strip() and after != before:
+    for c in map(Cue.from_dict, new_cues):
+        source, after = c.text, c.text2
+        before = old.get((c.start, c.end, source))
+        if before is not None and source and after and after != before:
             pairs.append((source, after))
             edits.append((source, before, after))
     _learn_hanviet(edits, source_lang, target_lang)
@@ -190,13 +186,18 @@ def stats() -> dict:
     _ensure_table()
     with get_db() as db:
         q = db.query(TranslationMemory)
+        if workspaces.current.get():
+            q = q.filter_by(scope=workspaces.current.get())
         return {"pairs": q.count(), "reused": sum(r.hits or 0 for r in q.all())}
 
 
 def clear() -> int:
     _ensure_table()
     with get_db() as db:
-        return db.query(TranslationMemory).delete()
+        q = db.query(TranslationMemory)
+        if workspaces.current.get():
+            q = q.filter_by(scope=workspaces.current.get())
+        return q.delete()
 
 
 def export_jsonl(path: Path, target_lang: str = "") -> int:

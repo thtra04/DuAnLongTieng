@@ -21,10 +21,14 @@ from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
     Column,
     Float,
     ForeignKey,
+    Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     create_engine,
@@ -35,6 +39,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import (
     DeclarativeBase,
     Session,
+    column_property,
+    declared_attr,
+    mapped_column,
     relationship,
     sessionmaker,
 )
@@ -56,13 +63,24 @@ class Base(DeclarativeBase):
 # ------------------------------------------------------------------ models
 
 
-class Film(Base):
+class CoverFields:
+    # Listing a library should read a boolean, never all its JPEGs.
+    cover_jpeg = mapped_column(LargeBinary, nullable=True, deferred=True)
+
+    @declared_attr
+    def has_cover(cls):
+        return column_property(cls.cover_jpeg.is_not(None))
+
+
+class Film(CoverFields, Base):
     __tablename__ = "films"
 
     id = Column(String(8), primary_key=True)
     name = Column(String(160), nullable=False)
     url = Column(Text, default="")
     created = Column(Float, nullable=False)
+    owner_id = Column(Integer, ForeignKey("studio_members.id"))
+    team_id = Column(String(16), ForeignKey("teams.id"))
 
     episodes = relationship(
         "Episode",
@@ -76,13 +94,17 @@ class Film(Base):
             "id": self.id,
             "name": self.name,
             "url": self.url or "",
+            "team_id": self.team_id,
+            "legacy": self.owner_id is None,
             "created": self.created,
+            **({"has_cover": True} if self.has_cover else {}),
             "episodes": [ep.to_dict() for ep in self.episodes],
         }
 
 
-class Episode(Base):
+class Episode(CoverFields, Base):
     __tablename__ = "episodes"
+    __table_args__ = (Index("uq_episode_number", "film_id", "no", unique=True),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     film_id = Column(String(8), ForeignKey("films.id", ondelete="CASCADE"), nullable=False)
@@ -99,12 +121,14 @@ class Episode(Base):
             "title": self.title or "",
             "duration": self.duration or 0.0,
             "job": self.job,
+            **({"has_cover": True} if self.has_cover else {}),
         }
 
 
 class Character(Base):
     """Nhân vật được phân đoạn người nói gán cho một dự án (HP-1)."""
     __tablename__ = "characters"
+    __table_args__ = (Index("uq_character_label", "job_id", "speaker_label", unique=True),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     job_id = Column(String(32), nullable=False, index=True)
@@ -129,6 +153,7 @@ class Character(Base):
 class Voice(Base):
     """Ánh xạ nhân vật → giọng TTS (HP-2)."""
     __tablename__ = "voices"
+    __table_args__ = (Index("uq_character_voice", "character_id", unique=True),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     character_id = Column(Integer, ForeignKey("characters.id", ondelete="CASCADE"), nullable=False)
@@ -151,8 +176,84 @@ class TranslationMemory(Base):
     source_lang = Column(String(12), default="")
     target_lang = Column(String(12), default="", index=True)
     job_id = Column(String(32), default="")
+    scope = Column(String(96), nullable=False, server_default="")
     hits = Column(Integer, default=0)
     updated = Column(Float, default=0.0)
+
+
+class Member(Base):
+    __tablename__ = "studio_members"
+    id = Column(Integer, primary_key=True)
+    username = Column(String(48), nullable=False, unique=True)
+    display_name = Column(String(80), nullable=False, server_default="")
+    contact_email = Column(String(254), nullable=False, server_default="")
+    crew_role = Column(String(80), nullable=False, server_default="")
+    bio = Column(Text, nullable=False, server_default="")
+    role = Column(String(12), nullable=False, server_default="member")
+    active = Column(Boolean, nullable=False, server_default="1")
+    password_hash = Column(String(200), nullable=False)
+    created = Column(Float, nullable=False)
+
+
+class LoginSession(Base):
+    __tablename__ = "login_sessions"
+    digest = Column(String(64), primary_key=True)
+    member_id = Column(Integer, ForeignKey("studio_members.id", ondelete="CASCADE"), nullable=False, index=True)
+    expires = Column(Float, nullable=False, index=True)
+
+
+class StudioInvite(Base):
+    __tablename__ = "studio_invites"
+    digest = Column(String(64), primary_key=True)
+    expires = Column(Float, nullable=False, index=True)
+
+
+class Team(Base):
+    __tablename__ = "teams"
+    id = Column(String(16), primary_key=True)
+    name = Column(String(100), nullable=False)
+    owner_id = Column(Integer, ForeignKey("studio_members.id"), nullable=False)
+
+
+class TeamSeat(Base):
+    __tablename__ = "team_members"
+    team_id = Column(String(16), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True)
+    member_id = Column(Integer, ForeignKey("studio_members.id", ondelete="CASCADE"), primary_key=True)
+
+
+class FilmSeat(Base):
+    __tablename__ = "film_members"
+    __table_args__ = (CheckConstraint("role IN ('viewer','editor')"),)
+    film_id = Column(String(8), ForeignKey("films.id", ondelete="CASCADE"), primary_key=True)
+    member_id = Column(Integer, ForeignKey("studio_members.id", ondelete="CASCADE"), primary_key=True)
+    role = Column(String(12), nullable=False)
+
+
+class CollaborationInvite(Base):
+    __tablename__ = "collaboration_invites"
+    __table_args__ = (CheckConstraint("(film_id IS NULL) <> (team_id IS NULL)"),)
+    id = Column(String(16), primary_key=True)
+    digest = Column(String(64), nullable=False, unique=True)
+    team_id = Column(String(16), ForeignKey("teams.id", ondelete="CASCADE"))
+    film_id = Column(String(8), ForeignKey("films.id", ondelete="CASCADE"))
+    role = Column(String(12), nullable=False)
+    expires = Column(Float, nullable=False)
+    issuer_id = Column(Integer, ForeignKey("studio_members.id"), nullable=False)
+
+
+class JobScope(CoverFields, Base):
+    """Children (render/retranslate) follow the current rights of the root analysis."""
+    __tablename__ = "job_scopes"
+    id = Column(String(64), primary_key=True)
+    owner_id = Column(Integer, ForeignKey("studio_members.id"))
+    film_id = Column(String(8), ForeignKey("films.id", ondelete="SET NULL"), index=True)
+    parent_id = Column(String(64), index=True)
+
+
+class UploadOwner(Base):
+    __tablename__ = "upload_owners"
+    id = Column(String(64), primary_key=True)
+    member_id = Column(Integer, ForeignKey("studio_members.id"), nullable=False)
 
 
 # ------------------------------------------------------------------ engine
@@ -204,12 +305,29 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     _add_missing_columns(engine)
     _migrate_json(engine)
+    with engine.begin() as conn:
+        # create_all skips indexes on existing tables. Never delete old duplicate rows to migrate.
+        for model in (Episode, Character, Voice):
+            for index in model.__table__.indexes:
+                if index.unique:
+                    index.create(conn, checkfirst=True)
 
 
 def _add_missing_columns(engine) -> None:
     """Thêm cột mới vào bảng đã có từ bản trước (create_all không tự thêm cột)."""
-    wanted = {"characters": {"gender": "VARCHAR(1) DEFAULT ''", "f0": "FLOAT DEFAULT 0",
-                           "age": "VARCHAR(1) DEFAULT ''"}}
+    wanted = {
+        "characters": {"gender": "VARCHAR(1) DEFAULT ''", "f0": "FLOAT DEFAULT 0",
+                       "age": "VARCHAR(1) DEFAULT ''"},
+        "studio_members": {"display_name": "VARCHAR(80) NOT NULL DEFAULT ''",
+                           "contact_email": "VARCHAR(254) NOT NULL DEFAULT ''",
+                           "crew_role": "VARCHAR(80) NOT NULL DEFAULT ''", "bio": "TEXT NOT NULL DEFAULT ''",
+                           "role": "VARCHAR(12) NOT NULL DEFAULT 'member'", "active": "BOOLEAN NOT NULL DEFAULT 1"},
+        "films": {"owner_id": "INTEGER REFERENCES studio_members(id)", "team_id": "VARCHAR(16) REFERENCES teams(id)",
+                  "cover_jpeg": "BLOB"},
+        "episodes": {"cover_jpeg": "BLOB"},
+        "job_scopes": {"cover_jpeg": "BLOB"},
+        "translation_memory": {"scope": "VARCHAR(96) NOT NULL DEFAULT ''"},
+    }
     with engine.begin() as conn:
         for table, cols in wanted.items():
             have = {c["name"] for c in inspect(conn).get_columns(table)}

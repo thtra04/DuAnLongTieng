@@ -13,13 +13,11 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-from fastapi.testclient import TestClient
 
 pytest.importorskip("openai")
 
 from backend.core import budget, translate  # noqa: E402
 from backend.core.subtitles import Cue  # noqa: E402
-from backend.main import app  # noqa: E402
 
 GOOD_KEY = "fake-key"
 
@@ -166,14 +164,13 @@ def test_endpoint_cham_bi_cat_theo_timeout(fake_openai):
     assert time.monotonic() - t0 < 3.5
 
 
-def test_api_check_tra_loi_qua_http(fake_openai):
-    with TestClient(app) as client:
-        r = client.post("/api/ai/check", json={"engine": "openai", "api_key": GOOD_KEY,
-                                                "ai_model": "m", "ai_base_url": fake_openai})
-        assert r.status_code == 200 and r.json()["ok"] is True
-        assert GOOD_KEY not in r.text, "không được trả key ngược lại"
-        bad = client.post("/api/ai/check", json={"engine": "google"})
-        assert bad.status_code == 400
+def test_api_check_tra_loi_qua_http(fake_openai, studio_client):
+    r = studio_client.post("/api/ai/check", json={"engine": "openai", "api_key": GOOD_KEY,
+                                                  "ai_model": "m", "ai_base_url": fake_openai})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert GOOD_KEY not in r.text, "không được trả key ngược lại"
+    bad = studio_client.post("/api/ai/check", json={"engine": "google"})
+    assert bad.status_code == 400
 
 
 def test_timeout_doc_tu_bien_moi_truong(monkeypatch):

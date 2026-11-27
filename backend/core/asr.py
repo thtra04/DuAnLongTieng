@@ -9,13 +9,16 @@ trống lớn còn sót.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
+import wave
 from pathlib import Path
 from typing import Callable
 
 from . import hf_cache
 from ..config import MODEL_DIR
+from .languages import name_vi
 
 _lock = threading.Lock()
 _cache: dict[tuple, object] = {}
@@ -34,6 +37,7 @@ GAP_RESCAN = 3.5
 # Quét bù tối đa ngần này khoảng trống một lần, để video im lặng dài không kéo
 # thời gian nhận dạng lên vô tận.
 GAP_RESCAN_MAX = 40
+SPEECH_GAP_MIN = 0.65
 # Ngưỡng lọc kết quả quét bù, tránh Whisper bịa lời trên đoạn nhạc/im lặng.
 # no_speech nới tới 0,85: lời HÁT hoặc thoại đè nhạc to bị Whisper chấm
 # no_speech rất cao (đo thật: "我愛你" hát trên nhạc = 0,84) tuy vẫn là tiếng
@@ -56,12 +60,100 @@ _HALLUCINATION_MARKERS = (
     "明镜", "明鏡", "点点栏目", "點點欄目", "字幕组", "字幕組", "志愿者", "志願者",
     "谢谢观看", "謝謝觀看", "感谢观看", "感謝觀看", "关注", "關注",
     "amara", "subscribe", "subtitles by", "thanks for watching",
+    # Đo thật (phim Thái The Rules EP5): Whisper bịa "โปรดติดตามตอนต่อไป" ("mời đón
+    # xem tập sau") 7 lần trên đoạn nhạc, và "Thank you for watching. See you in the
+    # next video." trên nhạc mở đầu khi dò nhầm ngôn ngữ.
+    "โปรดติดตามตอนต่อไป", "โปรดติดตามต่อไป", "ติดตามชม", "ขอบคุณที่รับชม", "กดติดตาม",
+    "thank you for watching", "see you in the next video",
 )
+
+# Dò ngôn ngữ trên các khúc có tiếng người trong ngần này giây đầu video...
+LANG_PROBE_SPAN = 600.0
+# ...cộng xác suất của tối đa ngần này khúc 30 s.
+LANG_PROBE_WINDOWS = 3
+# Ít tiếng người hơn ngần này (giây) thì không dò được — để faster-whisper tự dò như cũ.
+LANG_PROBE_MIN_SPEECH = 3.0
+# Ngôn ngữ medium nhận dạng đã tốt (đo trên bench tiếng Trung: medium 92,3 % dòng đúng,
+# large-v3 93,1 %). Ngôn ngữ khác mà đang để medium thì tự đổi sang large-v3 khi chạy GPU
+# và model đã có trên máy. Đo thật cả tập phim Thái 40 phút, cùng code: phụ đề đúng ý
+# 56 % → 72 % / 108 câu gold, dòng lẫn rác 41 → 25, khâu nghe lâu hơn ~30 % (RTX 4060).
+STRONG_MEDIUM_LANGS = ("zh", "en")
+_SMALL_MODELS = ("tiny", "base", "small", "medium")
+UPGRADE_FROM = "medium"
+UPGRADE_TO = "large-v3"
+# Đặt VSUB_ASR_AUTO_UPGRADE=0 để luôn chạy đúng model đã chọn.
+AUTO_UPGRADE = os.environ.get("VSUB_ASR_AUTO_UPGRADE", "1") != "0"
 
 
 def _is_boilerplate(text: str) -> bool:
-    low = text.lower()
-    return any(m in low for m in _HALLUCINATION_MARKERS)
+    low = text.strip().lower().strip(".!?…。！？ ")
+    # A word like "关注" (pay attention) or the name Amara can be real dialogue.
+    return (low in _HALLUCINATION_MARKERS
+            or re.fullmatch(r"x+d{2,}", low) is not None
+            or low.startswith(("字幕by", "字幕组:", "字幕組：", "subtitles by "))
+            or sum(m in low for m in ("點贊", "訂閱", "轉發", "打賞", "点赞", "订阅", "转发", "打赏")) >= 3
+            or low == "thank you for watching. see you in the next video")
+
+
+def _drop_boilerplate(segs: list[dict], notes: list[str], on_log=None) -> list[dict]:
+    """Bỏ các câu Whisper hay bịa (ghi công, "đón xem tập sau"…) ngay ở lượt chính.
+
+    Trước đây chỉ lượt quét bù mới lọc, nên câu bịa ở lượt 1 lọt thẳng ra phụ đề
+    (đo thật: 7 dòng "โปรดติดตามตอนต่อไป" trong 8 phút đầu phim Thái).
+    """
+    kept = [s for s in segs if not _is_boilerplate(s.get("text") or "")]
+    dropped = len(segs) - len(kept)
+    if dropped:
+        notes.append(f"bỏ {dropped} câu Whisper bịa")
+        if on_log:
+            on_log(f"Bỏ {dropped} câu Whisper hay bịa trên nhạc/đoạn lặng "
+                   "(kiểu “đón xem tập sau”, “cảm ơn đã xem”).")
+    return kept
+
+
+def _suggest_model(model_size: str, lang: str | None, on_log=None, why: str = "") -> None:
+    """Ngôn ngữ ngoài Trung/Anh mà vẫn chạy model nhỏ thì gợi ý large-v3 (chỉ ghi log)."""
+    if not on_log or not lang or lang in STRONG_MEDIUM_LANGS or model_size not in _SMALL_MODELS:
+        return
+    on_log(f"Gợi ý: {name_vi(lang)} nhận dạng đúng hơn rõ với model large-v3 (phim Thái đo thật: "
+           f"phụ đề đúng ý 56 % → 72 % / 108 câu so với medium)." + (f" {why}" if why else "")
+           + " Đổi ở “Cấu hình nhận dạng” nếu chữ gốc sai nhiều.")
+
+
+def _model_on_disk(size: str) -> bool:
+    """Model đã tải về máy chưa (không tải, không cần mạng)."""
+    try:
+        from faster_whisper.utils import download_model
+
+        download_model(size, local_files_only=True, cache_dir=str(MODEL_DIR))
+        return True
+    except Exception:
+        return False
+
+
+def _upgrade_model(model_size: str, lang: str | None, device: str, on_log=None):
+    """medium + ngôn ngữ ngoài Trung/Anh -> nạp large-v3. Trả `(model, "")` hoặc `(None, lý do không đổi)`.
+
+    Chỉ đổi khi chạy GPU (trên CPU large-v3 chậm gấp mấy lần) và model đã có trên máy —
+    không tự tải 3,1 GB giữa chừng một job. Nạp hỏng (hết VRAM…) thì giữ medium.
+    """
+    if not AUTO_UPGRADE or model_size != UPGRADE_FROM or not lang or lang in STRONG_MEDIUM_LANGS:
+        return None, ""
+    if device != "cuda":
+        return None, f"Đang chạy CPU nên app giữ {UPGRADE_FROM} (large-v3 trên CPU chậm hơn nhiều)."
+    if not _model_on_disk(UPGRADE_TO):
+        return None, f"Máy chưa có model {UPGRADE_TO} (~3,1 GB) — chọn nó ở “Cấu hình nhận dạng” để tải về."
+    try:
+        model, used = load_model(UPGRADE_TO, "cuda", on_log=on_log, cpu_fallback=False)
+    except Exception as exc:
+        return None, f"Không nạp được {UPGRADE_TO} trên GPU ({str(exc)[:80]}) nên giữ {UPGRADE_FROM}."
+    with _lock:  # nhả VRAM của medium: job này không dùng tới nữa
+        for key in [k for k in _cache if k[0] == model_size and k[1] == "cuda"]:
+            _cache.pop(key, None)
+    if on_log:
+        on_log(f"{name_vi(lang)}: tự chuyển sang Whisper `{UPGRADE_TO}` thay cho `{UPGRADE_FROM}` "
+               "(phim Thái đo thật: phụ đề đúng ý 56 % → 72 %, khâu nghe lâu hơn ~30 %).")
+    return model, ""
 
 
 def looks_like_speech(seg: dict) -> bool:
@@ -157,8 +249,11 @@ def _forget_cuda_model(size: str) -> None:
             _cache.pop(key, None)
 
 
-def load_model(size: str = "medium", device: str = "auto", on_log=None):
-    """Nạp (và cache) model Whisper. device: auto | cuda | cpu"""
+def load_model(size: str = "medium", device: str = "auto", on_log=None, cpu_fallback: bool = True):
+    """Nạp (và cache) model Whisper. device: auto | cuda | cpu
+
+    `cpu_fallback=False`: GPU nạp hỏng thì báo lỗi thay vì lặng lẽ nạp bản CPU.
+    """
     from faster_whisper import WhisperModel
 
     _prepare_cuda_dlls()
@@ -178,7 +273,7 @@ def load_model(size: str = "medium", device: str = "auto", on_log=None):
                 size, device=device, compute_type=compute, download_root=str(MODEL_DIR)
             )
         except Exception:
-            if device != "cpu":
+            if device != "cpu" and cpu_fallback:
                 # GPU hỏng (thiếu cuDNN, hết VRAM...) -> rơi về CPU
                 device, compute = "cpu", "int8"
                 key = (size, device, compute)
@@ -252,6 +347,118 @@ def find_gaps(segs: list[dict], duration: float, min_gap: float = GAP_RESCAN) ->
     return gaps
 
 
+def _word_gaps(segs: list[dict], total: float) -> list[tuple]:
+    timed = [w for s in segs for w in (s.get("words") or [s]) if w["end"] > w["start"]]
+    return find_gaps(timed, total, min_gap=SPEECH_GAP_MIN)
+
+
+def _pcm(wav, start: float, end: float):
+    import numpy as np
+
+    if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) != (1, 2, 16000):
+        raise ValueError("Cần WAV mono PCM 16 kHz.")
+    pos = min(round(start * 16000), wav.getnframes())
+    wav.setpos(pos)
+    raw = wav.readframes(max(0, round(end * 16000) - pos))
+    return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+
+
+def _speech_in_gaps(path: str, gaps: list[tuple]) -> list[tuple]:
+    """Only examine untranscribed audio, in bounded windows even for feature films."""
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    opts = VadOptions(min_speech_duration_ms=180, min_silence_duration_ms=450,
+                      speech_pad_ms=140, max_speech_duration_s=25)
+    found = []
+    with wave.open(str(path), "rb") as wav:
+        for a, b in gaps:
+            while a < b:
+                end = min(a + 60, b)
+                audio = _pcm(wav, a, end)
+                if len(audio):
+                    for s in get_speech_timestamps(audio, opts):
+                        found.append((a + s["start"] / 16000, min(end, a + s["end"] / 16000)))
+                a = end
+    return found
+
+
+def _remaining_speech(speech: list[tuple], gaps: list[tuple]) -> list[tuple]:
+    remaining = []
+    j = 0
+    for a, b in speech:
+        while j < len(gaps) and gaps[j][1] <= a:
+            j += 1
+        k = j
+        while k < len(gaps) and gaps[k][0] < b:
+            lo, hi = max(a, gaps[k][0]), min(b, gaps[k][1])
+            if hi - lo >= 0.3:
+                remaining.append((round(lo, 3), round(hi, 3)))
+            k += 1
+    return remaining
+
+
+# ------------------------------------------------------------------ dò ngôn ngữ
+
+
+def _read_head(audio_path: str, seconds: float):
+    """Mẫu âm thanh 16 kHz mono (float32) của `seconds` giây đầu file.
+
+    File audio.wav của app là PCM 16 bit, 16 kHz, mono (media.extract_audio) nên đọc
+    thẳng phần đầu, khỏi giải mã cả phim dài vào RAM; file khác thì nhờ faster-whisper.
+    """
+    import numpy as np
+
+    sr = 16000
+    try:
+        with wave.open(audio_path, "rb") as w:
+            if w.getframerate() == sr and w.getnchannels() == 1 and w.getsampwidth() == 2:
+                raw = w.readframes(int(seconds * sr))
+                return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    except (wave.Error, OSError, EOFError):
+        pass
+    from faster_whisper.audio import decode_audio
+
+    return decode_audio(audio_path, sampling_rate=sr)[: int(seconds * sr)]
+
+
+def detect_language(model, audio_path: str) -> tuple[str | None, float]:
+    """Dò ngôn ngữ trên các khúc CÓ TIẾNG NGƯỜI thay vì 30 s đầu file.
+
+    Để faster-whisper tự dò thì nó chỉ nghe 30 s đầu (khi tắt VAD); phim mở đầu bằng
+    nhạc là đoán bừa, rồi CẢ BÀI bị giải mã bằng ngôn ngữ sai. Đo thật (phim Thái The
+    Rules EP5, 30 s đầu là nhạc): tự dò ra "nn" (Na Uy, xác suất 0,20) → câu bịa tiếng
+    Anh, chữ Thái lẫn rác La-tinh/Ả Rập, 27/108 câu bị sót. Ở đây: lọc VAD trên 10 phút
+    đầu, cộng xác suất ngôn ngữ của tối đa 3 khúc 30 s tiếng người → "th" 0,98, tốn ~3 s;
+    bench tiếng Trung vẫn "zh" 1,00.
+
+    Trả (mã, xác suất trung bình), hoặc (None, 0.0) nếu không đủ tiếng người.
+    """
+    import numpy as np
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    sr = 16000
+    head = _read_head(audio_path, LANG_PROBE_SPAN)
+    chunks = get_speech_timestamps(head, VadOptions(min_silence_duration_ms=500))
+    if sum(c["end"] - c["start"] for c in chunks) < LANG_PROBE_MIN_SPEECH * sr:
+        return None, 0.0
+    speech = np.concatenate([head[c["start"]:c["end"]] for c in chunks])
+    window = 30 * sr
+    totals: dict[str, float] = {}
+    used = 0
+    for k in range(0, min(len(speech), LANG_PROBE_WINDOWS * window), window):
+        piece = speech[k:k + window]
+        if used and len(piece) < 5 * sr:
+            break  # khúc cuối quá ngắn, chỉ làm nhiễu
+        _lang, _prob, probs = model.detect_language(audio=piece)
+        for code, p in probs:
+            totals[code] = totals.get(code, 0.0) + float(p)
+        used += 1
+    if not totals:
+        return None, 0.0
+    best = max(totals, key=totals.get)
+    return best, totals[best] / used
+
+
 # ------------------------------------------------------------------ 1 lượt
 
 
@@ -280,10 +487,17 @@ def _one_pass(
         kwargs["vad_filter"] = False
         # Không có VAD thì nới ngưỡng để không bỏ rơi đoạn hát / nhạc nền to
         kwargs["no_speech_threshold"] = 0.9
+    audio = audio_path
+    offset = 0.0
     if clip:
-        kwargs["clip_timestamps"] = [float(clip[0]), float(clip[1])]
+        try:
+            with wave.open(str(audio_path), "rb") as wav:
+                audio = _pcm(wav, *clip)
+            offset = clip[0]
+        except (OSError, EOFError, ValueError, wave.Error):
+            kwargs["clip_timestamps"] = list(clip)
 
-    segments, info = model.transcribe(audio_path, **kwargs)
+    segments, info = model.transcribe(audio, **kwargs)
 
     lo = clip[0] if clip else 0.0
     hi = clip[1] if clip else (total or 0.0)
@@ -291,9 +505,18 @@ def _one_pass(
 
     def report(item: dict) -> None:
         if on_progress:
-            on_progress(min(1.0, (item["end"] - lo) / span))
+            on_progress(min(1.0, (item["end"] + offset - lo) / span))
 
     segs = _collect(segments, report)
+    if clip:
+        for s in segs:
+            for timed in [s, *s["words"]]:
+                timed["start"] = max(lo, timed["start"] + offset)
+                timed["end"] = min(hi, timed["end"] + offset)
+            if s["words"]:
+                s["words"] = [w for w in s["words"] if w["end"] > w["start"]]
+                s["text"] = "".join(w["word"] for w in s["words"]).strip()
+        segs = [s for s in segs if s["end"] > s["start"] and s["text"].strip()]
     if on_progress:
         on_progress(1.0)
     return segs, info
@@ -326,13 +549,37 @@ def transcribe(
         on_log(f"Whisper `{model_size}` chạy trên {used_device.upper()}"
                + (" (có lọc VAD)" if vad else ""))
 
+    # ------- dò ngôn ngữ trên phần có tiếng người, rồi dùng CHUNG cho mọi lượt.
+    # Để None thì mỗi lượt quét bù khoảng trống lại tự dò trên khúc nhạc/ồn của nó
+    # (đo thật: ra "Mẹ", "Mبة", "M//" giữa phim Thái).
+    lang = language or None
+    probe_prob = 0.0
+    if not lang:
+        try:
+            lang, probe_prob = detect_language(model, audio_path)
+        except Exception as exc:  # dò hỏng thì để faster-whisper tự dò như trước
+            lang, probe_prob = None, 0.0
+            if on_log:
+                on_log(f"Không dò trước được ngôn ngữ ({exc}) — để Whisper tự dò.")
+        if lang and on_log:
+            on_log(f"Ngôn ngữ nghe được: {name_vi(lang)} ({lang}, độ tin {probe_prob:.2f}), "
+                   "dò trên các khúc có tiếng người."
+                   + (" Độ tin thấp — nếu chữ gốc sai, chọn đúng ngôn ngữ nguồn ở bước 1."
+                      if probe_prob < 0.5 else ""))
+
+    # ------- ngôn ngữ ngoài Trung/Anh: medium nghe kém hẳn -> đổi model trước lượt 1
+    asked_size = model_size
+    big, why_not = _upgrade_model(model_size, lang, used_device, on_log)
+    if big is not None:
+        model, model_size = big, UPGRADE_TO
+
     # ------- lượt 1
     def p1(x: float) -> None:
         if on_progress:
             on_progress(x * (0.65 if auto_fix else 1.0))
 
     try:
-        segs, info = _one_pass(model, audio_path, language, vad, initial_prompt, duration, None, p1)
+        segs, info = _one_pass(model, audio_path, lang, vad, initial_prompt, duration, None, p1)
     except Exception as exc:
         if used_device == "cpu" or not _is_cuda_failure(exc):
             raise
@@ -341,12 +588,18 @@ def transcribe(
             on_log(f"GPU không dùng được: {exc}")
             on_log("Chuyển sang CPU và nhận dạng lại (chậm hơn nhưng vẫn ra kết quả)…")
         _forget_cuda_model(model_size)
+        model_size = asked_size  # large-v3 tự đổi là để chạy GPU; trên CPU quay về model đã chọn
         model, used_device = load_model(model_size, "cpu", on_log=on_log)
-        segs, info = _one_pass(model, audio_path, language, vad, initial_prompt, duration, None, p1)
+        segs, info = _one_pass(model, audio_path, lang, vad, initial_prompt, duration, None, p1)
 
     total = duration or float(getattr(info, "duration", 0.0) or 0.0)
-    detected = getattr(info, "language", None) or language
+    detected = lang or getattr(info, "language", None)
+    # Từ đây mọi lượt dùng đúng ngôn ngữ của lượt 1, kể cả khi lượt 1 phải tự dò.
+    lang = detected
     notes: list[str] = []
+    segs = _drop_boilerplate(segs, notes, on_log)
+    if model_size != UPGRADE_TO:
+        _suggest_model(model_size, detected, on_log, why=why_not)
 
     cov = coverage(segs, total)
     if on_log:
@@ -364,25 +617,37 @@ def transcribe(
             if on_progress:
                 on_progress(0.65 + x * 0.2)
 
-        alt, alt_info = _one_pass(model, audio_path, language, False, initial_prompt, total, None, p2)
-        if voiced_time(alt) > voiced_time(segs) * 1.1:
-            segs, info = alt, alt_info
-            detected = getattr(alt_info, "language", None) or detected
+        alt, _ = _one_pass(model, audio_path, lang, False, initial_prompt, total, None, p2)
+        alt = _drop_boilerplate(alt, [], None)
+        holes = find_gaps(segs, total, min_gap=0.18)
+        # A longer second pass is not necessarily a superset of the first.
+        extra = [s for s in alt if looks_like_speech(s)
+                 and any(a <= s["start"] < s["end"] <= b for a, b in holes)]
+        if extra:
+            segs = sorted(segs + extra, key=lambda s: s["start"])
             cov = coverage(segs, total)
-            notes.append("đã tắt VAD vì độ phủ thấp")
+            notes.append(f"bổ sung {len(extra)} đoạn từ lượt không VAD")
             if on_log:
-                on_log(f"Dùng kết quả không VAD: {len(segs)} đoạn, phủ {cov * 100:.0f}%.")
+                on_log(f"Giữ lời lượt đầu và bổ sung {len(extra)} đoạn không VAD.")
         elif on_log:
             on_log("Chạy lại không giúp thêm — giữ kết quả ban đầu.")
     elif auto_fix and on_progress:
         on_progress(0.85)
 
     # ------- lượt 3: quét bù các khoảng trống lớn
+    speech = []
     if auto_fix and total > 0:
-        gaps = [g for g in find_gaps(segs, total) if g[1] - g[0] >= GAP_RESCAN][:GAP_RESCAN_MAX]
+        holes = _word_gaps(segs, total)
+        try:
+            speech = _speech_in_gaps(audio_path, holes) if holes else []
+            gaps = speech[:GAP_RESCAN_MAX]
+        except Exception as exc:
+            if on_log:
+                on_log(f"Không kiểm tra được tiếng nói bằng VAD ({exc}); quét bù theo khoảng trống.")
+            gaps = find_gaps(segs, total)[:GAP_RESCAN_MAX]
         if gaps:
             if on_log:
-                pretty = ", ".join(f"{int(a)}–{int(b)}s" for a, b in gaps[:5])
+                pretty = ", ".join(f"{a:.1f}–{b:.1f}s" for a, b in gaps[:5])
                 on_log(f"Còn {len(gaps)} khoảng trống ({pretty}"
                        + ("…" if len(gaps) > 5 else "") + ") — đang quét bù…")
             added = 0
@@ -393,7 +658,7 @@ def transcribe(
 
                 try:
                     extra, _ = _one_pass(
-                        model, audio_path, language, False, initial_prompt, total, (a, b), p3
+                        model, audio_path, lang, False, initial_prompt, total, (a, b), p3
                     )
                 except Exception as exc:
                     if on_log:
@@ -411,7 +676,7 @@ def transcribe(
                 if on_log:
                     on_log(f"Quét bù thêm được {added} đoạn — phủ {cov * 100:.0f}%.")
             elif on_log:
-                on_log("Các khoảng trống đó thật sự không có lời (nhạc/im lặng).")
+                on_log("Whisper chưa đọc được thêm lời; không tự điền lời cho đoạn chưa rõ.")
 
     if on_progress:
         on_progress(1.0)
@@ -438,13 +703,16 @@ def transcribe(
 
     return {
         "language": detected,
-        "language_probability": float(getattr(info, "language_probability", 0.0) or 0.0),
+        # Ngôn ngữ đưa sẵn cho faster-whisper thì nó báo xác suất 1 — số thật là của lượt dò.
+        "language_probability": probe_prob or float(getattr(info, "language_probability", 0.0) or 0.0),
         "duration": total,
         "words": words,
         "segments": [{"start": s["start"], "end": s["end"], "text": s["text"]} for s in segs],
         "device": used_device,
+        "model": model_size,
         "coverage": cov,
         "voiced": voiced,
         "notes": notes,
+        "speech_gaps": _remaining_speech(speech, _word_gaps(segs, total)),
         "gaps": [(round(a, 1), round(b, 1)) for a, b in find_gaps(segs, total)],
     }

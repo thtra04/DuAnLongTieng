@@ -7,10 +7,13 @@ Danh sách job trong RAM mất khi khởi động lại tool, nhưng `state.json
 from __future__ import annotations
 
 import json
+import wave
 
+import numpy as np
 import pytest
 
-from backend.store import films, projects
+from backend.core import voiceprint
+from backend.store import characters, films, projects
 
 
 @pytest.fixture(autouse=True)
@@ -111,6 +114,61 @@ def test_full_kem_danh_sach_nhan_vat(kho_tam):
 
 def test_du_an_khong_co_thi_tra_none(kho_tam):
     assert projects.full("khong-co") is None
+
+
+def _write_tones(path, hz):
+    t = np.arange(16000) / 16000
+    with wave.open(str(path), "wb") as wav:
+        wav.setparams((1, 2, 16000, 0, "NONE", ""))
+        for f in hz:
+            wav.writeframes((6000 * np.sin(2 * np.pi * f * t)).astype("<i2").tobytes())
+
+
+def test_split_saved_script_uses_render_vocals_and_only_saves_roles(kho_tam, studio_client, monkeypatch):
+    folder = tao_job(kho_tam, video=False, cues=3)
+    render = folder.parent / "render"
+    render.mkdir()
+    (render / "render.json").write_text('{"source_job":"job1"}', encoding="utf-8")
+    _write_tones(folder / "audio.wav", [110, 110, 110])
+    _write_tones(render / "vocals.wav", [115, 225, 0])
+    rows = projects.full("job1")["cues"]
+    rows[0].update(speaker="S7", speaker_fixed=True, pinned=True, segment=42)
+    projects.save_cues("job1", rows)
+    characters.update("job1", "S7", name="Lead", voice="my-voice")
+
+    def unavailable(*args, **kwargs):
+        raise ImportError("optional embedding model not installed")
+
+    monkeypatch.setattr(voiceprint, "embed_cues", unavailable)
+    r = studio_client.post("/api/projects/job1/speakers", json={"cues": [{**c, "text2": "unsaved"} for c in rows]})
+    assert r.status_code == 200, r.text
+    assert r.json()["method"] == "pitch" and r.json()["labels"] == ["S7", "S1", ""]
+    saved = projects.full("job1")
+    assert saved["cues"] == [{**c, "speaker": s} for c, s in zip(rows, r.json()["labels"])]
+    assert {s["id"] for s in saved["speakers"]} == {"S1", "S7"}
+    cast = {c["label"]: c for c in saved["characters"]}
+    assert (cast["S7"]["name"], cast["S7"]["voice"], cast["S1"]["gender"]) == ("Lead", "my-voice", "F")
+
+
+def test_no_audio_or_conflicting_edit_does_not_replace_saved_roles(kho_tam, studio_client, monkeypatch):
+    folder = tao_job(kho_tam, video=False)
+    rows = projects.full("job1")["cues"]
+    rows[0]["speaker"] = "S5"
+    projects.save_cues("job1", rows)
+    url = "/api/projects/job1/speakers"
+    assert studio_client.post(url, json={"cues": rows}).status_code == 410
+    _write_tones(folder / "audio.wav", [0, 0])
+    assert studio_client.post(url, json={"cues": rows}).status_code == 422
+    assert projects.full("job1")["cues"] == rows
+
+    def during_analysis(wav, cues, **kwargs):
+        projects.save_cues("job1", [{**rows[0], "start": 0.2}, rows[1]])
+        cues[0].speaker = "S1"
+        return [{"id": "S1"}], "voiceprint"
+
+    monkeypatch.setattr(voiceprint, "identify", during_analysis)
+    assert studio_client.post(url, json={"cues": rows}).status_code == 409
+    assert projects.full("job1")["cues"][0] == {**rows[0], "start": 0.2}
 
 
 # ------------------------------------------------------- danh sách

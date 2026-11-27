@@ -10,9 +10,21 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ..core import translate
+from ..core import hanviet, translate, zh_terms
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+
+@router.post("/terms")
+def suggest_terms(payload: dict) -> dict:
+    texts = payload.get("texts")
+    if (not isinstance(texts, list) or len(texts) > 20000 or
+        not all(isinstance(t, str) for t in texts) or sum(map(len, texts)) > 300000):
+        raise HTTPException(400, "Kịch bản quá dài hoặc không hợp lệ.")
+    if not hanviet.enabled(str(payload.get("source_lang")), str(payload.get("target_lang"))):
+        raise HTTPException(400, "Gợi ý Hán Việt cần chọn tiếng Trung → tiếng Việt.")
+    existing = dict(translate.parse_glossary(str(payload.get("glossary") or "")))
+    return {"terms": [r for r in zh_terms.Lexicon(texts, existing.items()).suggest(texts) if r["zh"] not in existing]}
 
 
 @router.post("/check")

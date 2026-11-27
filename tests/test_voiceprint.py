@@ -135,3 +135,41 @@ def test_cum_nho_so_voi_tong_thoai_bi_don():
     st = voiceprint.split_speakers(cues, embeds, [_pitch(120)] * (n + 1))
     assert len(st["speakers"]) == 1
     assert voiceprint.MIN_CLUSTER_FRAC * 405 > voiceprint.MIN_CLUSTER_S
+
+
+def test_repeated_short_replies_can_belong_to_a_different_same_gender_actor():
+    a, b, noise = np.eye(3)
+    cues = _cues(6)
+    for c in cues[3:]:
+        c.end = c.start + 0.7
+    stats = voiceprint.split_speakers(cues, [a, a, a, b, b, noise], [_pitch(230)] * 6)
+    assert len(stats["speakers"]) == 2  # a lone outlier is not a third actor
+    assert cues[3].speaker == cues[4].speaker != cues[0].speaker
+
+
+def test_no_long_cues_or_embeddings_does_not_lose_both_voices(monkeypatch):
+    pitches = [_pitch(f) for f in (110, 235, 110, 235)]
+    monkeypatch.setattr(voiceprint.G, "measure", lambda *a: pitches)
+    for emb, expected in (([np.eye(2)[i % 2] for i in range(4)], "voiceprint"), ([None] * 4, "pitch")):
+        cues = _cues(4, dur=0.6)
+        monkeypatch.setattr(voiceprint, "embed_cues", lambda *a, **kw: emb)
+        speakers, method = voiceprint.identify(None, cues)
+        assert method == expected and len(speakers) == 2
+        assert cues[0].speaker == cues[2].speaker != cues[1].speaker == cues[3].speaker
+
+
+def test_editor_examples_separate_similar_voices_without_renumbering(monkeypatch):
+    a, b = _unit([1, 0]), _unit([0.85, 0.53])
+    cues = _cues(5)
+    for c in cues:
+        c.speaker = "S7"
+    cues[3].speaker, cues[3].speaker_fixed = "S9", True
+    cues = [Cue.from_dict(c.to_dict()) for c in cues]  # reopen the saved example
+    monkeypatch.setattr(voiceprint.G, "measure", lambda *a: [_pitch(220)] * 5)
+    monkeypatch.setattr(voiceprint, "embed_cues", lambda *args, **kw: [a, a, a, b, b])
+    voiceprint.identify(None, cues)
+    assert [c.speaker for c in cues] == ["S7", "S7", "S7", "S9", "S9"]
+    assert cues[3].speaker_fixed
+    cues[-1].speaker = ""
+    voiceprint.identify(None, cues, use_embeddings=False)
+    assert [c.speaker for c in cues] == ["S7", "S7", "S7", "S9", ""]

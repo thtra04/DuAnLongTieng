@@ -2,7 +2,15 @@
    Các file js dùng chung một phạm vi toàn cục; thứ tự nạp ghi trong index.html. */
 /* --------------------------- bước 4: biên tập --------------------------- */
 function setupEditor() {
+  stopAudition();
   const player = $('#player');
+  if (player.dataset.project !== S.jobId) {
+    player.dataset.project = S.jobId;
+    if ($('#dubOn').checked) {
+      $('#dubOn').checked = false;
+      $('#dubOn').dispatchEvent(new Event('change'));
+    }
+  }
   const src = S.videoSrc || (S.sourceType === 'file'
     ? `${API_BASE}/api/media/${S.mediaId}/stream`
     : `${API_BASE}/api/media/${S.jobId}/stream`);
@@ -23,11 +31,10 @@ function setupEditor() {
   });
 
   // Nếu không dịch, mặc định hiển thị nguyên ngữ
-  if (!S.analyzed.target_lang) {
-    S.display = 'main';
-    $$('.tab[data-disp]').forEach(t => t.classList.toggle('active', t.dataset.disp === 'main'));
-    $$('.tab[data-disp]').forEach(t => { if (t.dataset.disp !== 'main') t.disabled = true; });
-  }
+  if (!S.analyzed.target_lang) S.display = 'main';
+  syncDisplayTabs();
+  setupMinutes();
+  markScriptStale();
 
   $('#cueCount').textContent = `${S.cues.length} dòng`;
   renderCues();
@@ -44,62 +51,93 @@ function setupEditor() {
   onTime();
   updateOverlay();
 
-  if (!S.analyzed.target_lang) $('#outSrtBoth').closest('.check').classList.add('hide');
   initMask();
   applyOverlayStyle();
   // Lồng tiếng đang bật từ dự án trước thì bảng vai phải dựng lại theo vai của bộ phụ đề mới,
   // không thì vẫn hiện vai cũ cho tới khi người dùng tắt rồi bật lại lồng tiếng.
-  if ($('#dubOn').checked && S.voicesLoaded) renderSpeakerVoices();
+  if (S.voicesLoaded) renderSpeakerVoices();
   if (typeof setupTimeline === 'function') setupTimeline();
+  if (S.cues.length && (!S.dubScript || scriptStale())) buildScript();
 }
 
-function renderCues() {
+function syncDisplayTabs() {
+  $$('.tab[data-disp]').forEach(t => {
+    t.disabled = !S.analyzed.target_lang && t.dataset.disp !== 'main';
+    t.classList.toggle('active', t.dataset.disp === S.display);
+  });
+  $('#outSrtBoth').closest('.check').classList.toggle('hide', !S.analyzed.target_lang);
+}
+
+function renderCues(redrawTimeline = true) {
   setupFitButtons();
+  minuteLabels();
+  S.analyzed.cue_count = S.cues.length;
+  $('#cueCount').textContent = `${S.cues.length} dòng`;
   const speakerIds = knownSpeakerIds();
   const list = $('#cueList');
   list.innerHTML = S.cues.map((c, i) => {
+    if (!cueVisible(c)) return '';
     const showTr = S.display !== 'main' && S.analyzed.target_lang;
     const len = Math.max(c.text.length, (c.text2 || '').length);
     const cps = (len / Math.max(0.3, c.end - c.start)).toFixed(0);
-    const sourceUnits = lengthUnits(c.text);
-    const translatedUnits = lengthUnits(c.text2 || '');
-    const tooLong = Boolean(c.text2 && translatedUnits > sourceUnits * 1.25);
+    const tooLong = longComparedToSource(c);
     return `
-    <div class="cue${tooLong ? ' too-long' : ''}" data-i="${i}">
+    <div class="cue${tooLong ? ' too-long' : ''}${i === S.activeCue ? ' active' : ''}" data-i="${i}">
       <div class="cue-top">
         <span class="idx">#${i + 1}</span>
-        <span class="tc">${fmtTime(c.start)} → ${fmtTime(c.end)}</span>
-        ${c.speaker
-          ? `<button type="button" class="spk s${spkSlot(c.speaker)}" data-i="${i}" title="Vai ${esc(c.speaker)} — bấm để chuyển dòng này sang vai khác">${esc(spkName(c.speaker))}</button>`
-          : (speakerIds.length ? `<button type="button" class="spk none" data-i="${i}" title="Dòng này chưa gán vai — bấm để gán">+ vai</button>` : '')}
+        <button type="button" class="tc fit-btn cue-edit" title="Sửa mốc giờ và lời thoại">${fmtTime(c.start)} → ${fmtTime(c.end)}</button>
+        <select class="spk cue-speaker ${c.speaker ? `s${spkSlot(c.speaker)}` : 'none'}" data-i="${i}"${S.analyzed.role === 'viewer' ? ' disabled' : ''}
+          aria-label="Vai của câu ${i + 1}" title="${c.speaker_fixed ? 'Câu mẫu: giữ vai này khi phân giọng lại' : 'Chọn vai hoặc tạo vai riêng cho giọng bị gộp'}">
+          <option value="">Chưa gán vai</option>
+          ${speakerIds.map(id => `<option value="${esc(id)}"${id === c.speaker ? ' selected' : ''}>${esc(spkName(id))}${id === c.speaker && c.speaker_fixed ? ' · mẫu' : ''}</option>`).join('')}
+          <option value=":new">+ Tạo vai mới</option>
+          ${c.speaker ? `<option value=":fix">${c.speaker_fixed ? 'Bỏ đánh dấu câu mẫu' : 'Giữ vai này làm mẫu'}</option>` : ''}
+        </select>
         <span class="len ${cps > 22 ? 'warn' : ''}" title="ký tự/giây — trên 22 là hơi nhanh">${cps} cps</span>
         ${tooLong ? '<span class="len warn" title="Bản dịch dài hơn 125% bản gốc — nên rút gọn trước khi lồng tiếng">Dài</span>' : ''}
         ${cueIsLong(c) && showTr ? `<button type="button" class="fit-btn" data-i="${i}" title="Dịch lại dòng này cho gọn, vừa khung giờ — dùng engine đang chọn ở bước 2">Dịch gọn</button>` : ''}
+        <button type="button" class="fit-btn" data-audition="${i}" title="Xem video với lời đọc đang sửa">${icon('volume')} Xem &amp; nghe</button>
+        <button type="button" class="fit-btn cue-delete" aria-label="Xóa câu ${i + 1}">Xóa</button>
       </div>
-      <textarea class="src" rows="1" data-i="${i}">${escapeHtml(c.text)}</textarea>
-      ${showTr ? `<textarea class="tr" rows="1" data-i="${i}">${escapeHtml(c.text2 || '')}</textarea>` : ''}
+      <textarea class="src" rows="1" aria-label="Lời gốc câu ${i + 1}" data-i="${i}">${escapeHtml(c.text)}</textarea>
+      ${showTr ? `<textarea class="tr" rows="1" aria-label="Bản dịch câu ${i + 1}" placeholder="Chưa dịch" data-i="${i}">${escapeHtml(c.text2 || '')}</textarea>` : ''}
+      ${S.analyzed.target_lang ? `<small class="missing-tr${(c.text2 || '').trim() ? ' hide' : ''}">Chưa dịch</small>` : ''}
     </div>`;
-  }).join('');
+  }).join('') || '<p class="hint">Khoảng này chưa có câu. Nghe video rồi chọn “Thêm câu” nếu có lời thoại.</p>';
 
-  // Bấm nhãn vai để sửa dòng bị gán nhầm: xoay vòng qua các vai đã biết rồi về "chưa gán"
-  $$('.spk[data-i]', list).forEach(b => b.addEventListener('click', e => {
-    e.stopPropagation();
-    const c = S.cues[+b.dataset.i];
-    const ring = [...speakerIds, ''];
-    c.speaker = ring[(ring.indexOf(c.speaker || '') + 1) % ring.length];
+  $$('.cue-speaker', list).forEach(sel => sel.addEventListener('change', () => {
+    const c = S.cues[+sel.dataset.i];
+    if (sel.value === ':fix') {
+      c.speaker_fixed = !c.speaker_fixed;
+    } else {
+      let id = sel.value;
+      if (id === ':new') {
+        let n = 1;
+        while (speakerIds.includes(`S${n}`)) n++;
+        id = `S${n}`;
+      }
+      c.speaker = id;
+      c.speaker_fixed = !!id;
+    }
+    $('#minuteStatus').textContent = 'Chưa lưu';
+    markScriptStale();
     renderCues();
     renderSpeakerVoices();
+    tlQueueBudget(0);
   }));
 
   $$('.cue', list).forEach(el => el.addEventListener('click', e => {
-    if (e.target.tagName === 'TEXTAREA') return;
+    if (e.target.closest('textarea,button,select')) return;
     const i = +el.dataset.i;
-    $('#player').currentTime = S.cues[i].start + 0.02;
-    if (hasTimeline) tlReveal(S.cues[i].start);
+    seekScript(S.cues[i].start);
   }));
+  $$('.cue-edit', list).forEach(b => b.onclick = () => showCueForm(S.cues[+b.closest('.cue').dataset.i]));
+  $$('.cue-delete', list).forEach(b => b.onclick = () => removeCue(S.cues[+b.closest('.cue').dataset.i]));
   // Sửa chữ thì khối trên dòng thời gian đổi theo, và thời lượng đọc được dự đoán lại
   const hasTimeline = typeof renderTimeline === 'function';
   const retitle = i => {
+    $('#minuteStatus').textContent = 'Chưa lưu';
+    markScriptStale();
     if (!hasTimeline) return;
     const b = document.querySelector(`#tlInner .tl-lane[data-spk] .tl-blk[data-i="${i}"] b`);
     if (b) b.textContent = tlBlockText(S.cues[i]);
@@ -112,22 +150,30 @@ function renderCues() {
   }));
   $$('textarea.tr', list).forEach(t => t.addEventListener('input', () => {
     S.cues[+t.dataset.i].text2 = t.value;
+    t.closest('.cue').querySelector('.missing-tr')?.classList.toggle('hide', !!t.value.trim());
     updateOverlay();
     retitle(+t.dataset.i);
   }));
-  $$('.fit-btn', list).forEach(b => b.addEventListener('click', e => {
+  $$('textarea.tr', list).forEach(t => t.addEventListener('change', minuteLabels));
+  $$('.fit-btn[data-i]', list).forEach(b => b.addEventListener('click', e => {
     e.stopPropagation();
     fitLines([+b.dataset.i], b);
   }));
   syncFitButtons();
-  if (hasTimeline && TL.dur) renderTimeline();
+  if (redrawTimeline && hasTimeline && TL.dur) renderTimeline();
 }
 
 /* ------------------------------ dịch gọn câu dài ------------------------------ */
 // Dòng bị gắn cờ: bản dịch dài quá 125 % bản gốc ("Dài") hoặc quá 22 ký tự/giây ("cps" vàng)
+function longComparedToSource(c) {
+  // A Thai clause without spaces is not one word. Use reading time instead.
+  return !!(c.text.trim() && c.text2 && !/[\u0e00-\u0eff\u1780-\u17ff\u1000-\u109f]/.test(c.text + c.text2)
+    && lengthUnits(c.text2) > lengthUnits(c.text) * 1.25);
+}
+
 function cueIsLong(c) {
   if (!c.text2) return false;
-  if (lengthUnits(c.text2) > lengthUnits(c.text) * 1.25) return true;
+  if (longComparedToSource(c)) return true;
   return c.text2.length / Math.max(0.3, c.end - c.start) > 22;
 }
 
@@ -146,6 +192,7 @@ async function fitLines(indices, btn) {
     return toast('Engine AI đang chọn ở bước 2 chưa có API key — dán key ở bước 2 rồi bấm lại.', 'warn', 7000);
   }
   S.fitBusy = true;
+  const snapshot = JSON.stringify(S.cues), job = S.jobId;
   const label = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Đang dịch…'; }
   $('#fitAllBtn').disabled = true;
@@ -160,12 +207,16 @@ async function fitLines(indices, btn) {
         ...aiPayload(),
       }),
     });
+    if (S.jobId !== job || JSON.stringify(S.cues) !== snapshot)
+      return toast('Kịch bản đã đổi; không áp kết quả dịch gọn vào mốc cũ.', 'warn');
     const how = { ai: 'engine AI dịch lại', nllb: 'NLLB + LoRA dịch lại', rules: 'bộ luật rút gọn (engine đang chọn không dịch gọn được)' }[r.method] || '';
     if (!r.changes.length) {
       toast(r.asked ? `Không câu nào gọn hơn được — ${how}.` : 'Không có câu nào đang dài.', 'warn', 7000);
     } else {
       S.fitUndo = r.changes.map(ch => ({ i: ch.i, text2: S.cues[ch.i].text2 }));
       r.changes.forEach(ch => { S.cues[ch.i].text2 = ch.text2; });
+      $('#minuteStatus').textContent = 'Chưa lưu';
+      markScriptStale();
       const tight = r.changes.filter(ch => ch.fits).length;
       toast(`Đã dịch gọn ${r.changes.length}/${r.asked} câu (${tight} câu vừa hẳn khung) — ${how}.`, 'ok', 8000);
     }
@@ -188,6 +239,8 @@ function setupFitButtons() {
   $('#fitUndoBtn').addEventListener('click', () => {
     (S.fitUndo || []).forEach(u => { if (S.cues[u.i]) S.cues[u.i].text2 = u.text2; });
     S.fitUndo = [];
+    $('#minuteStatus').textContent = 'Chưa lưu';
+    markScriptStale();
     renderCues();
     updateOverlay();
     if (typeof tlQueueBudget === 'function') tlQueueBudget();
@@ -249,6 +302,7 @@ function stopSync() {
 
 function onTime() {
   const t = $('#player').currentTime + (+$('#stOffset').value || 0) * -1;
+  if (S.analyzed && (!S.projectId || S.videoSrc)) followMinute(t);
   const idx = cueAt(t);
   if (idx !== S.activeCue) {
     S.activeCue = idx;
@@ -258,7 +312,7 @@ function onTime() {
       const box = $('#cueList');
       const top = el.offsetTop - box.offsetTop;
       if (top < box.scrollTop || top > box.scrollTop + box.clientHeight - 90) {
-        box.scrollTo({ top: top - 60, behavior: 'smooth' });
+        box.scrollTo({ top: top - 60, behavior: uiScrollBehavior() });
       }
     }
   }
@@ -272,7 +326,7 @@ function cueAt(t) {
   while (lo <= hi) {
     const mid = (lo + hi) >> 1, c = S.cues[mid];
     if (t < c.start) hi = mid - 1;
-    else if (t > c.end) lo = mid + 1;
+    else if (t >= c.end) lo = mid + 1;
     else return mid;
   }
   return -1;
@@ -310,7 +364,8 @@ function applyOverlayStyle() {
   const size = +$('#stSize').value * (pw / 1920) * 1.0;
   ov.style.fontSize = Math.max(10, size) + 'px';
   ov.style.color = $('#stColor').value;
-  ov.style.fontFamily = $('#stFont').value + ', sans-serif';
+  const font = $('#stFont').value;
+  ov.style.fontFamily = `"${font}", ${font === 'Times New Roman' ? 'serif' : 'sans-serif'}`;
   ov.style.fontWeight = $('#stBold').checked ? '800' : '500';
   const oc = $('#stOutlineColor').value, ow = Math.max(1, +$('#stOutline').value);
   ov.style.textShadow = $('#stBox').checked ? 'none'
@@ -340,7 +395,7 @@ function wrapPreview(text, max) {
       else { out.push(cur); cur = w; }
     }
     if (cur) out.push(cur);
-    return out.slice(0, 2).join('\n');
+    return out.join('\n');
   }).join('\n');
 }
 
@@ -369,4 +424,3 @@ $('#outBurn').addEventListener('change', e => {
     toast('ffmpeg hiện tại không nung được phụ đề. Chạy: uv run python -m app.setup_ffmpeg', 'err', 10000);
   }
 });
-

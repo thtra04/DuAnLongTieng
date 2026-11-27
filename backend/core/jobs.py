@@ -6,6 +6,7 @@ import threading
 import time
 import traceback
 import uuid
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -197,7 +198,7 @@ def run_in_thread(job: Job, target) -> None:
         finally:
             job.updated = time.time()
 
-    threading.Thread(target=wrapper, daemon=True, name=f"job-{job.id}").start()
+    threading.Thread(target=copy_context().run, args=(wrapper,), daemon=True, name=f"job-{job.id}").start()
 
 
 def _sync_queue(job_id: str, status: str, **extra) -> None:

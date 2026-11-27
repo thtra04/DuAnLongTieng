@@ -5,14 +5,16 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from . import (align, asr, budget, diarize, dubbing, gender, hardsub, media, metrics, separate, subocr, subtitles,
                translate, voiceprint)
 from .jobs import Job, Step
 from .subtitles import Cue
 from ..config import JOB_DIR
-from ..store import characters
+from ..store import characters, projects
 
 SAFE_NAME = re.compile(r"[^\w\-. ]+", re.UNICODE)
 
@@ -40,6 +42,11 @@ def write_utf8(path: Path, content: str) -> Path:
 # ------------------------------------------------------------ bước phân tích
 
 
+def _separate_for_analysis(cfg: dict) -> bool:
+    return bool(cfg.get("separate_first") and
+                (cfg.get("sub_mode") != "srt" or cfg.get("diarize") or cfg.get("gender_split")))
+
+
 def analyze_steps(cfg: dict) -> list[Step]:
     steps: list[Step] = []
     if cfg.get("source_type") == "url":
@@ -49,6 +56,8 @@ def analyze_steps(cfg: dict) -> list[Step]:
     steps.append(Step("probe", "Đọc thông tin video", weight=0.2))
 
     mode = cfg.get("sub_mode", "auto")
+    if _separate_for_analysis(cfg):
+        steps.append(Step("separate", "Tách giọng khỏi nhạc nền", weight=8.0))
     if mode == "srt":
         steps.append(Step("subs", "Nạp file phụ đề", weight=0.3))
     elif mode == "hardsub":
@@ -59,8 +68,6 @@ def analyze_steps(cfg: dict) -> list[Step]:
         if mode == "text":
             steps.append(Step("align", "Canh văn bản của bạn theo lời nói", weight=0.8))
 
-    if cfg.get("separate_first") and (cfg.get("diarize") or cfg.get("gender_split")):
-        steps.append(Step("separate", "Tách giọng khỏi nhạc nền", weight=8.0))
     if cfg.get("diarize"):
         steps.append(Step("diarize", "Nhận diện người nói", weight=4.0))
     if cfg.get("gender_split"):
@@ -103,11 +110,12 @@ def run_retranslate(job: Job, state: dict, state_path: Path, cfg: dict, cast: li
     phải tải video lên và chạy lại từ đầu — mất cả khâu nhận dạng lẫn tách giọng.
     Ở đây lời gốc, mốc giờ và nhãn vai giữ nguyên; chỉ `text2` được viết lại.
     """
-    cues = [Cue.from_dict(c) for c in (cfg.get("cues") or state.get("cues") or [])]
+    original_revision = projects.script_revision(state.get("cues") or []) if state_path.is_file() else None
+    cues = [Cue.from_dict(c) for c in cfg.get("cues", state.get("cues") or [])]
     if not any(c.text.strip() for c in cues):
         raise RuntimeError("Dự án không có dòng phụ đề nào để dịch.")
     target = cfg.get("target_lang") or state.get("target_lang") or ""
-    source = state.get("source_lang") or cfg.get("source_lang") or None
+    source = cfg.get("source_lang") or state.get("source_lang") or None
     engine = cfg.get("engine", "google")
 
     # Dự án làm từ trước khi có tách giọng (hoặc lúc đó tắt) thì chưa dòng nào có vai:
@@ -124,7 +132,8 @@ def run_retranslate(job: Job, state: dict, state_path: Path, cfg: dict, cast: li
     job.start_step("translate", f"{len(cues)} dòng")
     job.log(f"Dịch lại {len(cues)} dòng sang {target} bằng {engine} — giữ nguyên lời gốc, mốc giờ và vai.")
     for c in cues:  # dòng engine bỏ sót không được giữ bản dịch cũ mà tưởng là mới
-        c.text2 = ""
+        if c.text.strip():
+            c.text2 = ""
     translate.translate_cues(
         cues, source=source, target=target, engine=engine,
         api_key=cfg.get("api_key", ""), model=cfg.get("ai_model", ""), base_url=cfg.get("ai_base_url", ""),
@@ -141,7 +150,7 @@ def run_retranslate(job: Job, state: dict, state_path: Path, cfg: dict, cast: li
         tightener = translate.make_tightener(
             engine, api_key=cfg.get("api_key", ""), model=cfg.get("ai_model", ""),
             base_url=cfg.get("ai_base_url", ""), target=target, on_log=job.log,
-            source=source or "",
+            source=source or "", with_source=True,
         )
         stats = budget.run_loop(cues, tightener, on_log=job.log, on_progress=_progress_cb(job, "budget"))
         job.finish_step("budget", f"còn {stats['over_after']}/{stats['groups']} câu vượt (trước: {stats['over_before']})")
@@ -150,17 +159,19 @@ def run_retranslate(job: Job, state: dict, state_path: Path, cfg: dict, cast: li
     job.start_step("write")
     state["cues"] = [c.to_dict() for c in cues]
     state["target_lang"] = target
+    state["source_lang"] = source
     saved_cfg = dict(state.get("cfg") or {})
     # key không bao giờ được ghi xuống đĩa
     saved_cfg.update({k: cfg.get(k) for k in ("engine", "ai_model", "context_note", "translation_mode", "glossary")
                       if cfg.get(k) is not None})
     saved_cfg["translate"] = True
     state["cfg"] = saved_cfg
-    write_utf8(state_path, json.dumps(state, ensure_ascii=False, indent=1))
+    projects.commit_script(state_path, state, original_revision)
     job.finish_step("write")
     job.result = {
         "cues": state["cues"], "target_lang": target, "source_lang": state.get("source_lang") or "",
         "retranslated": True, "speakers": state.get("speakers") or [],
+        "revision": projects.script_revision(state["cues"]),
     }
     job.log("Dịch lại xong.")
 
@@ -203,6 +214,9 @@ def run_analyze(job: Job, cfg: dict) -> None:
     coverage_note = ""
     asr_result: dict = {}
     ocr_band: dict = {}
+    clean_wav = None
+    if _separate_for_analysis(cfg):
+        _, clean_wav = _run_separate(job, video_path, workdir)
 
     # 3. Lấy phụ đề
     if mode == "srt":
@@ -239,7 +253,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
 
         job.start_step("audio")
         wav = media.extract_audio(
-            video_path, workdir / "audio.wav",
+            clean_wav or video_path, workdir / "audio.wav",
             on_progress=lambda p: job.set_step_progress("audio", p),
         )
         job.finish_step("audio")
@@ -283,23 +297,29 @@ def run_analyze(job: Job, cfg: dict) -> None:
                 max_chars=cfg.get("max_chars", 84),
                 max_dur=cfg.get("max_dur", 6.0),
             )
+            if duration:
+                cues = [c for c in cues if c.start < duration]
+                for c in cues:
+                    c.end = min(c.end, duration)
             job.log(f"Tạo {len(cues)} dòng phụ đề từ lời thoại.")
 
     if not cues:
-        raise RuntimeError("Không tạo được dòng phụ đề nào.")
+        if mode != "auto":
+            raise RuntimeError("Không tạo được dòng phụ đề nào.")
+        job.log("Chưa nhận ra lời nào. Có thể nghe và thêm câu theo phút ở bước 4.")
     job.check_cancel()
 
     # 3.5. Nhận diện người nói -> mỗi nhân vật một giọng lúc lồng tiếng
     speakers: list[dict] = []
-    # Tách nhạc nền trước (tuỳ chọn): đo cao độ và véc-tơ giọng trên phần thoại sạch, ít lẫn nhạc.
-    # Kết quả tách để lại trong thư mục dự án, bước xuất dùng lại nên không tốn thêm lần nữa.
-    clean_wav: Path | None = None
-    if cfg.get("separate_first") and (cfg.get("diarize") or cfg.get("gender_split")):
-        _, clean_wav = _run_separate(job, video_path, workdir)
     if cfg.get("diarize"):
-        speakers = _run_diarize(job, cfg, video_path, workdir, cues)
+        speakers = _run_diarize(job, cfg, clean_wav or video_path, workdir, cues)
     if cfg.get("gender_split"):
         speakers = _run_gender(job, cfg, video_path, workdir, cues, speakers, clean_wav)
+    if mode == "auto":
+        cues = subtitles.join_continuations(cues, cfg.get("max_chars", 84), cfg.get("max_dur", 6.0))
+        counts = {s["id"]: s for s in diarize.speakers_of(cues)}
+        for speaker in speakers:
+            speaker.update(counts.get(speaker["id"], {}))
     job.check_cancel()
 
     # 3.7. Phụ đề nung sẵn trong hình -> bước 4 đề nghị che đi trước khi nung chữ mới
@@ -343,7 +363,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
             base_url=cfg.get("ai_base_url", ""),
             target=target,
             on_log=job.log,
-            source=detected_lang or "",
+            source=detected_lang or "", with_source=True,
         )
         budget_stats = budget.run_loop(
             cues, tightener, on_log=job.log, on_progress=_progress_cb(job, "budget")
@@ -360,10 +380,6 @@ def run_analyze(job: Job, cfg: dict) -> None:
             )
         job.check_cancel()
 
-    # Nới cue hiện quá nhanh so với tốc độ đọc (áp dụng cả khi không dịch)
-    align.retime_translation(cues)
-    job.check_cancel()
-
     # 5. Ghi file
     job.start_step("write")
     state = {
@@ -374,6 +390,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
         "target_lang": target if cfg.get("translate") else "",
         "cues": [c.to_dict() for c in cues],
         "speakers": speakers,
+        "speech_gaps": asr_result.get("speech_gaps", []),
         "budget": budget_stats,
         "hardsub": hard,
         # hf_token cũng là bí mật như api_key — không được ghi xuống đĩa
@@ -387,6 +404,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
 
     job.result = {
         "video_name": video_path.name,
+        "revision": projects.script_revision(state["cues"]),
         "duration": duration,
         "width": info["width"],
         "height": info["height"],
@@ -398,6 +416,7 @@ def run_analyze(job: Job, cfg: dict) -> None:
         "has_libass": media.has_libass(),
         "coverage": asr_result.get("coverage", 1.0 if cues else 0.0),
         "coverage_note": coverage_note,
+        "speech_gaps": state["speech_gaps"],
         "gaps": [g for g in asr_result.get("gaps", []) if g[1] - g[0] >= 15][:8],
         "hardsub": hard,
         "asr_notes": asr_result.get("notes", []),
@@ -425,7 +444,7 @@ def _run_diarize(job: Job, cfg: dict, video_path: Path, workdir: Path, cues) -> 
             max_speakers=cfg.get("max_speakers") or None,
             token=cfg.get("hf_token", ""),
             on_log=job.log,
-            on_progress=lambda p: job.set_step_progress("diarize", p),
+            on_progress=_progress_cb(job, "diarize"),
         )
         stats = diarize.assign(cues, turns)
         speakers = diarize.speakers_of(cues)
@@ -452,18 +471,22 @@ def _run_diarize(job: Job, cfg: dict, video_path: Path, workdir: Path, cues) -> 
                 "trên nền nhạc) — sẽ đọc bằng giọng mặc định."
             )
         if stats["unsure"]:
+            times = ", ".join(_hms(t) for t in stats.get("review_at", ()))
             job.log(
-                f"  {stats['unsure']} dòng gán chưa chắc chắn — xem lại ở bước 4 "
-                "nếu thấy nhân vật bị lẫn giọng."
+                f"  {stats['unsure']} dòng gán chưa chắc chắn — nghe lại ở bước 4"
+                + (f", ví dụ tại {times}." if times else ".")
             )
         return speakers
 
     except Exception as exc:
+        job.check_cancel()
         job.skip_step("diarize", str(exc)[:70])
         job.log(f"Không nhận diện được người nói: {exc}")
-        job.log("  Phụ đề vẫn xong bình thường; phần lồng tiếng sẽ dùng một giọng chung.")
+        job.log("  Tiếp tục phụ đề. " + ("Bước sau sẽ thử tách vai theo từng câu."
+                if cfg.get("gender_split") else "Dòng không có vai sẽ dùng giọng chung."))
         for cue in cues:
-            cue.speaker = ""
+            if not cue.speaker_fixed:
+                cue.speaker = ""
         return []
 
 
@@ -502,10 +525,8 @@ def _run_gender(job: Job, cfg: dict, video_path: Path, workdir: Path, cues, spea
         if not wav.exists():
             job.log("Tách âm thanh để nghe cao độ giọng…")
             wav = media.extract_audio(video_path, wav)
-        pitches = gender.measure(wav, cues)
-
         if speakers:
-            found = gender.speaker_genders(cues, pitches)
+            found = gender.speaker_genders(cues, gender.measure(wav, cues))
             for s in speakers:
                 s["gender"] = found.get(s["id"], {}).get("gender", "")
                 s["f0"] = found.get(s["id"], {}).get("f0", 0.0)
@@ -515,37 +536,20 @@ def _run_gender(job: Job, cfg: dict, video_path: Path, workdir: Path, cues, spea
             )
             job.log(f"Giới tính giọng của từng nhân vật: {detail}")
         else:
-            stats = _split_by_voiceprint(job, cfg, wav, cues, pitches)
-            if stats is not None:
-                speakers = diarize.speakers_of(cues)
-                for s in speakers:
-                    info = stats["speakers"].get(s["id"], {})
-                    s["gender"], s["f0"], s["age"] = info.get("gender", ""), info.get("f0", 0.0), info.get("age", "")
-                nm = {"M": 0, "F": 0}
-                for s in speakers:
-                    if s["gender"] in nm:
-                        nm[s["gender"]] += 1
-                        s["name"] = f"{gender.NAMES[s['gender']]} {nm[s['gender']]}"
-                detail = " · ".join(f"{s['name'] or s['id']}: {s['lines']} dòng" for s in speakers) or "không nghe ra giọng nào"
-                job.log(f"Tách người nói theo véc-tơ giọng: {detail}.")
-            else:
-                stats = gender.split_cues(cues, pitches)
-                speakers = diarize.speakers_of(cues)
-                for s in speakers:
-                    s["gender"] = stats["genders"].get(s["id"], "")
-                    s["f0"] = stats["f0"].get(s["id"], 0.0)
-                    s["age"] = voiceprint.age_of(s["gender"], s["f0"])
-                    s["name"] = gender.NAMES.get(s["gender"], "")
-                detail = " · ".join(
-                    f"{s['name'] or s['id']}: {s['lines']} dòng" for s in speakers
-                ) or "không nghe ra giọng nào"
-                job.log(f"Tách giọng nam / nữ theo cao độ: {detail}.")
+            speakers, method = voiceprint.identify(
+                wav, cues, use_embeddings=cfg.get("voiceprint", True), on_log=job.log,
+                on_progress=lambda p: job.set_step_progress("gender", p),
+            )
+            detail = " · ".join(f"{s['name'] or s['id']}: {s['lines']} dòng" for s in speakers) or "không nghe ra giọng nào"
+            how = "véc-tơ giọng" if method == "voiceprint" else "cao độ"
+            job.log(f"Tách người nói theo {how}: {detail}.")
             kids = [s["id"] for s in speakers if s.get("age") == voiceprint.CHILD]
             if kids:
                 job.log(f"Giọng cao như trẻ em: {', '.join(kids)} (đổi ở bảng vai nếu sai).")
-            if stats["empty"]:
+            empty = sum(not c.speaker for c in cues)
+            if empty:
                 job.log(
-                    f"  {stats['empty']} dòng quá ngắn hoặc lẫn nhạc nên không đoán — "
+                    f"  {empty} dòng quá ngắn hoặc lẫn nhạc nên không đoán — "
                     "sẽ đọc bằng giọng chung. Bấm vào nhãn vai ở bước 4 để sửa dòng gán sai."
                 )
         try:
@@ -562,23 +566,6 @@ def _run_gender(job: Job, cfg: dict, video_path: Path, workdir: Path, cues, spea
         return speakers
 
 
-def _split_by_voiceprint(job: Job, cfg: dict, wav: Path, cues, pitches):
-    """Chia nhiều người cùng giới bằng véc-tơ giọng. `None` nếu không dùng được (rơi về chia theo cao độ)."""
-    if not cfg.get("voiceprint", True):
-        return None
-    ok, why = voiceprint.available()
-    if not ok:
-        job.log(f"Không tách được nhiều người cùng giới: {why}")
-        return None
-    try:
-        job.log("Lấy véc-tơ giọng từng câu để tách nhiều người cùng giới…")
-        emb = voiceprint.embed_cues(wav, cues, on_progress=lambda p: job.set_step_progress("gender", p))
-        return voiceprint.split_speakers(cues, emb, pitches)
-    except Exception as exc:
-        job.log(f"Tách theo véc-tơ giọng lỗi ({exc}), dùng cách chia theo cao độ.")
-        return None
-
-
 # --------------------------------------------------------------- bước xuất
 
 
@@ -591,7 +578,7 @@ def render_steps(cfg: dict) -> list[Step]:
         steps.append(Step("soft", "Gắn phụ đề dạng track", weight=1.5))
     if out.get("dub"):
         dcfg = cfg.get("dub") or {}
-        if dcfg.get("shorten", True):
+        if dcfg.get("shorten", False) and not cfg.get("reviewed_units"):
             steps.insert(0, Step("budget", "Rút gọn câu đọc không kịp khung", weight=0.3))
         wants_clone = dcfg.get("voice") == dubbing.CLONE_VOICE or any(
             v == dubbing.CLONE_VOICE for v in (dcfg.get("voices") or {}).values()
@@ -648,8 +635,10 @@ def run_render(job: Job, state: dict, cfg: dict) -> None:
         subtitles.shift_cues(cues, offset)
         job.log(f"Đã dịch chuyển toàn bộ phụ đề {offset:+.2f}s")
 
-    if outputs.get("dub") and (cfg.get("dub") or {}).get("shorten", True):
-        _shorten_for_dub(job, cues, tgt_lang)
+    spoken_cues = cues
+    if outputs.get("dub") and not cfg.get("reviewed_units") and (cfg.get("dub") or {}).get("shorten", False):
+        spoken_cues = [replace(c) for c in cues]
+        _shorten_for_dub(job, spoken_cues, tgt_lang)
 
     job.start_step("files")
 
@@ -658,7 +647,7 @@ def run_render(job: Job, state: dict, cfg: dict) -> None:
         files.append({"name": name, "size": p.stat().st_size, "kind": p.suffix.lstrip(".")})
         return p
 
-    lang_tag = tgt_lang if mode in ("second", "both_rev") else (src_lang or "sub")
+    lang_tag = safe_stem(tgt_lang if mode in ("second", "both_rev") and tgt_lang else (src_lang or "sub"), "sub")
 
     # `wrap_text` giữ đúng `max_chars` nên chữ dài sẽ tràn thành nhiều dòng hơn
     # `max_lines`. Nói cho người dùng biết thay vì lặng lẽ hiện 4-5 dòng.
@@ -741,24 +730,17 @@ def run_render(job: Job, state: dict, cfg: dict) -> None:
         job.check_cancel()
 
     if outputs.get("dub"):
-        _run_dub(job, cues, state, cfg, workdir, stem, files, duration)
+        _run_dub(job, spoken_cues, state, cfg, workdir, stem, files, duration)
 
-    job.result = {"files": files}
+    job.result["files"] = files
 
 
 def _shorten_for_dub(job, cues, tgt_lang) -> None:
-    """HP-5 lúc xuất: rút gọn bằng luật những câu dự đoán đọc không kịp, TRƯỚC khi ghi phụ đề.
-
-    Chạy ở đây chứ không chỉ ở bước phân tích vì tới lúc xuất mới biết đủ: người
-    nói đã gán (đơn vị đọc chẻ theo người nói), người dùng đã sửa tay ở bước 4.
-    Đặt trước bước ghi file để phụ đề nung và tiếng đọc cùng một câu chữ.
-    """
-    from . import budget, shorten
-
+    """Only shorten the private working copy used for voice and the reading script."""
     if not any(c.text2.strip() for c in cues) or not (tgt_lang or "vi").lower().startswith("vi"):
         return
     job.start_step("budget")
-    stats = budget.run_loop(cues, shorten.make_tightener(on_log=job.log), on_log=job.log)
+    stats = budget.run_loop(cues, translate.spoken_tightener(on_log=job.log), on_log=job.log)
     job.finish_step(
         "budget",
         f"rút gọn {stats['tightened']} câu, còn {stats['over_after']}/{stats['groups']} dự đoán vượt "
@@ -772,18 +754,13 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
     dcfg = cfg.get("dub") or {}
     voice = dcfg.get("voice", "")
     style = dcfg.get("style", "tu_nhien")
-    ref_audio = ""
-
-    ok, reason = dubbing.available()
-    if not ok:
-        raise RuntimeError(reason)
 
     has_translation = any(c.text2.strip() for c in cues)
     if not has_translation:
         # Đọc nguyên văn tiếng gốc bằng giọng Việt chỉ ra tiếng bịa. Chặn ngay
         # đây, đừng để chạy hết TTS mấy chục phút rồi mới lộ.
         src = (state.get("source_lang") or "").lower()
-        if subtitles.is_cjk("".join(c.text for c in cues[:60])) or src.startswith(
+        if state.get("target_lang") or subtitles.is_cjk("".join(c.text for c in cues[:60])) or src.startswith(
             ("zh", "ja", "ko", "th", "ru", "ar", "hi")
         ):
             raise RuntimeError(
@@ -800,10 +777,31 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
     ref_map: dict[str, str] = {}
     present = set(dubbing.speaker_ids(cues))
     _fill_voices_by_gender(job, cfg, voice, voice_map, present)
-    to_clone = [s for s, v in voice_map.items() if v == dubbing.CLONE_VOICE and s in present]
     if voice == dubbing.CLONE_VOICE:
-        # Giọng chung đặt là "nhân bản" -> nhân bản cho mọi nhân vật chưa chọn riêng
-        to_clone += [s for s in present if s not in voice_map]
+        for speaker in present:
+            voice_map.setdefault(speaker, voice)
+
+    originals = [Cue.from_dict(r) for r in state["cues"]] if cfg.get("offset") and state.get("cues") else cues
+    takes = None
+    reviewed = cfg.get("reviewed_units")
+    needed = {c.speaker for c in cues}
+    if reviewed is not None:
+        if not duration:
+            duration = media.probe(state["video_path"]).get("duration") or 0
+            if duration <= 0:
+                raise dubbing.DubError("Không đo được thời lượng video để kiểm tra đủ tiếng ở câu cuối.")
+        # Align the frozen words with shifted output cues, but fingerprint the unshifted source for cloning.
+        reviewed = [{**u, "start": cues[u["cues"][0]].start, "end": cues[u["cues"][-1]].end} for u in reviewed]
+        if cfg.get("source_job"):
+            takes = projects.audition_takes(cfg["source_job"], state["video_path"], originals)
+            takes.bind(reviewed, voice_map, voice, style)
+            needed = {u["speaker"] for u in reviewed if not u.get("take")}
+    if needed:
+        ok, reason = dubbing.available()
+        if not ok:
+            raise RuntimeError(reason)
+    to_clone = [s for s in sorted(needed) if voice_map.get(s) == dubbing.CLONE_VOICE]
+    common_clone = voice == dubbing.CLONE_VOICE and "" in needed
 
     # Bỏ giọng gốc, giữ nhạc nền: tách trước, rồi cắt mẫu nhân bản từ phần giọng đã sạch nhạc
     orig_mode = dcfg.get("original_mode", "voice_off")
@@ -816,7 +814,7 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         if vocals is not None:
             ref_source = vocals
 
-    if to_clone or voice == dubbing.CLONE_VOICE:
+    if to_clone or common_clone:
         clone_ok, clone_why = dubbing.clone_available()
         if not clone_ok:
             raise RuntimeError(clone_why)
@@ -825,12 +823,17 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         if to_clone:
             job.log(f"Cắt mẫu giọng cho {len(to_clone)} nhân vật…")
             ref_map, failed = dubbing.extract_references(
-                ref_source, cues, workdir,
+                ref_source, originals, workdir,
                 only=set(to_clone),
                 on_log=job.log,
                 on_progress=lambda p: job.set_step_progress("ref", p),
             )
             if failed:
+                heard = {u["speaker"] for u in reviewed or [] if u.get("take")}
+                for u in reviewed or []:
+                    if not u.get("take") and u["speaker"] in failed and u["speaker"] in heard:
+                        raise dubbing.DubError(f"Dòng #{u['cues'][0] + 1}: không lấy được mẫu giọng {u['speaker']}. "
+                                               "Chọn lại giọng cho vai này để không trộn hai giọng khác nhau.")
                 fallback = _fallback_voice(voice)
                 for sid in failed:
                     voice_map[sid] = fallback
@@ -840,14 +843,14 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
                 )
 
         # Không có nhãn nhân vật nào (chưa bật nhận diện) -> nhân bản một giọng chung
-        if voice == dubbing.CLONE_VOICE and not present:
-            ref_audio = str(
-                dubbing.extract_reference(ref_source, cues, workdir / "voice_ref.wav")
-            )
+        if common_clone:
+            ref_map[""] = str(dubbing.extract_reference(ref_source, originals, workdir / "voice_ref.wav"))
             job.log("Đã cắt mẫu giọng gốc để nhân bản.")
 
         job.finish_step("ref", f"{len(ref_map)} mẫu" if ref_map else "1 mẫu")
         job.check_cancel()
+    elif voice == dubbing.CLONE_VOICE or dubbing.CLONE_VOICE in voice_map.values():
+        job.skip_step("ref", "Không cần cắt thêm mẫu giọng")
 
     if voice_map:
         named = ", ".join(f"{k}→{_voice_label(v)}" for k, v in sorted(voice_map.items()))
@@ -855,22 +858,23 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
 
     # Giọng thực sự dùng cho từng vai (kể cả mẫu nhân bản đã cắt) -> CSDL, để báo
     # cáo đối chiếu và để lần xuất sau mở lại đúng lựa chọn.
+    preset = _fallback_voice(voice) if needed else (voice if voice != dubbing.CLONE_VOICE else "")
     try:
         characters.record_voices(
             cfg.get("source_job"), present, voice_map, ref_map,
-            default_voice=_fallback_voice(voice), style=style, clone_id=dubbing.CLONE_VOICE,
+            default_voice=preset, style=style, clone_id=dubbing.CLONE_VOICE,
         )
     except Exception as exc:
         job.log(f"Không ghi được giọng đã dùng vào CSDL: {exc}")
 
     job.start_step("tts", f"{len(cues)} dòng")
-    job.log("Đang nạp model VieNeu-TTS (lần đầu có thể mất vài phút)…")
+    if needed:
+        job.log("Đang đọc các câu chưa nghe thử bằng VieNeu-TTS…")
     dub_wav, stats = dubbing.build_dub_track(
         cues,
         total_duration=duration,
         workdir=workdir,
-        voice="" if ref_audio else _fallback_voice(voice),
-        ref_audio=ref_audio,
+        voice=preset,
         style=style,
         use_translation=has_translation,
         max_speed=float(dcfg.get("max_speed", 1.5)),
@@ -888,10 +892,14 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         pitch_from=ref_source if ref_source != Path(state["video_path"]) else None,
         pitch_shift=bool(dcfg.get("match_pitch", False)),
         script=dcfg.get("script") or None,
+        reviewed_units=reviewed,
+        read_take=takes.read if takes else None,
     )
     # Kịch bản lồng tiếng (đúng các câu vừa đọc, có dấu câu) xuất kèm, đọc được bằng Notepad
-    _export_script(cues, workdir, stem, files, cfg, has_translation, dcfg.get("script"))
+    _export_script(cues, workdir, stem, files, cfg, has_translation, dcfg.get("script"), reviewed)
     detail = f"{stats['count']} câu"
+    if stats.get("reused"):
+        detail += f" · {stats['reused']} câu dùng đúng bản đã nghe thử"
     if stats["sped_up"]:
         detail += f" · {stats['sped_up']} câu tăng tốc (tối đa {stats['max_factor']:.2f}×)"
     if stats["failed"]:
@@ -954,22 +962,18 @@ def _run_dub(job, cues, state, cfg, workdir, stem, files, duration) -> None:
         # Tắt tự cân nhưng vẫn né: hụp một mức vừa phải, cố định
         duck_db = dubbing.VOICE_ABOVE_BG_DB - dubbing.VOICE_ABOVE_GAP_DB
 
-    dubbing.mux_dub(
-        base_video,
-        dub_wav,
-        workdir / out_name,
-        original_volume=orig_vol,
-        dub_volume=dub_vol,
-        keep_original=keep,
-        duck=duck,
-        duck_db=duck_db,
-        voice_dbfs=voice_dbfs,
-        duration=duration,
-        on_log=job.log,
-        on_progress=lambda p: job.set_step_progress("dubmux", p),
-        bg_wav=bg_wav,
-    )
     p = workdir / out_name
+    # The library scans this directory even while ffmpeg is running.
+    with TemporaryDirectory(dir=workdir) as tmp:
+        staged = Path(tmp) / out_name
+        dubbing.mux_dub(
+            base_video, dub_wav, staged,
+            original_volume=orig_vol, dub_volume=dub_vol, keep_original=keep, duck=duck,
+            duck_db=duck_db, voice_dbfs=voice_dbfs, duration=duration, on_log=job.log,
+            on_progress=lambda progress: job.set_step_progress("dubmux", progress), bg_wav=bg_wav,
+        )
+        job.check_cancel()
+        staged.replace(p)
     files.append({"name": out_name, "size": p.stat().st_size, "kind": "mp4"})
     if dcfg.get("keep_wav"):
         files.append({"name": dub_wav.name, "size": dub_wav.stat().st_size, "kind": "wav"})
@@ -1039,11 +1043,13 @@ def _fill_voices_by_gender(job, cfg: dict, voice: str, voice_map: dict, present:
     _pick_missing_voices(missing, voice_map, cfg)
 
 
-def _export_script(cues, workdir, stem, files, cfg, use_translation, script) -> None:
+def _export_script(cues, workdir, stem, files, cfg, use_translation, script, reviewed=None) -> None:
     """Ghi `<tên>.kichban.txt`: mỗi câu đọc một dòng, mốc giờ, tên nhân vật, lời thoại."""
     try:
-        units = dubbing.speech_units(cues, use_translation)
-        dubbing.apply_script(units, script)
+        units = reviewed
+        if units is None:
+            units = dubbing.speech_units(cues, use_translation)
+            dubbing.apply_script(units, script)
         try:
             names = {c["label"]: c.get("name") or "" for c in characters.list_for(cfg.get("source_job"))}
         except Exception:
@@ -1051,8 +1057,9 @@ def _export_script(cues, workdir, stem, files, cfg, use_translation, script) -> 
         p = workdir / f"{stem}.kichban.txt"
         p.write_text(dubbing.script_text(units, names), encoding="utf-8")
         files.append({"name": p.name, "size": p.stat().st_size, "kind": "txt"})
-    except Exception:
-        pass
+    except OSError as exc:
+        if reviewed is not None:
+            raise dubbing.DubError(f"Không lưu được kịch bản đã duyệt kèm video: {exc}") from exc
 
 
 def _pick_missing_voices(missing, voice_map, cfg) -> None:
@@ -1093,8 +1100,13 @@ def _voice_label(voice_id: str) -> str:
 def _coverage_warning(job, result: dict, duration: float) -> str:
     """Ghi log rõ ràng khi phụ đề không phủ hết video, trả về câu cảnh báo."""
     cov = result.get("coverage", 0.0)
+    speech = result.get("speech_gaps") or []
+    if speech:
+        msg = (f"Có {len(speech)} khoảng có dấu hiệu tiếng nói nhưng chưa nhận ra lời. "
+               "Nghe đối chiếu ở Kịch bản theo phút (bước 4).")
+        job.log(msg)
     if not duration or cov >= 0.9:
-        return ""
+        return msg if speech else ""
 
     last = cov * duration
     msg = (

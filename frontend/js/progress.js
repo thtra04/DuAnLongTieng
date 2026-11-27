@@ -50,6 +50,11 @@ function fmtDur(t) {
 function showCoverage(res) {
   const box = $('#covWarn');
   const cov = res.coverage ?? 1;
+  if (res.speech_gaps?.length && cov >= 0.9) {
+    box.className = 'notice';
+    box.textContent = `Dù phụ đề chạy đến gần cuối video, còn ${res.speech_gaps.length} khoảng nghi có lời chưa nhận ra. Mở Kịch bản theo phút ở bước 4 để nghe kiểm tra.`;
+    return;
+  }
   if (cov >= 0.9) { box.classList.add('hide'); box.innerHTML = ''; return; }
 
   const dur = res.duration || 0;
@@ -84,8 +89,8 @@ function paintProgress(j, listSel, logSel) {
     <div class="stepline ${s.status}">
       <span class="ic">${icon(STEP_ICON[s.status] || 'circle')}</span>
       <div class="body">
-        <b>${s.label}</b>
-        ${s.detail ? `<small>${s.detail}</small>` : ''}
+        <b>${esc(s.label)}</b>
+        ${s.detail ? `<small>${esc(s.detail)}</small>` : ''}
         ${s.status === 'running' ? `<div class="bar"><i style="width:${Math.round(s.progress * 100)}%"></i></div>` : ''}
       </div>
       <span class="pct">${s.status === 'done' || s.status === 'skipped' ? icon('check') : Math.round(s.progress * 100) + '%'}</span>
@@ -111,4 +116,3 @@ $('#retryFromError').addEventListener('click', () => {
 });
 
 $('#toEditor').addEventListener('click', () => goStep(4));
-

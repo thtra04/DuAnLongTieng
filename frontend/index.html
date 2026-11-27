@@ -3,25 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0d0f14">
+<meta name="theme-color" content="#faf7ef">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="VSub Studio">
 <title>VSub Studio — Tạo phụ đề & dịch video</title>
-<script>
-// Áp chủ đề đã lưu trước khi vẽ, tránh nháy sáng/tối; màu nhấn tuỳ chọn do js/theme.js lo.
-// Chưa chọn gì thì dùng 'nga' — trùng DEFAULT_THEME trong js/theme.js.
-try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme || 'nga';
-  if (_t !== 'hong') document.documentElement.dataset.theme = _t; } catch (e) { document.documentElement.dataset.theme = 'nga'; }
-</script>
+<script src="/js/theme-state.js"></script>
 <link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/appearance.css">
+<link rel="stylesheet" href="/css/crew.css">
+<link rel="stylesheet" href="/css/admin.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23151009'/><rect x='1.5' y='1.5' width='29' height='29' rx='6.5' fill='none' stroke='%23dbb15c' stroke-width='1.5'/><path d='M13 10.5v11l9-5.5z' fill='%23e2b659'/></svg>">
 </head>
 <body>
 
 <!-- Bộ icon SVG nội tuyến (nét 24px, lấy theo kiểu Lucide — giấy phép ISC). Dùng: <svg class="i"><use href="#i-ten"/></svg> -->
-<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true" focusable="false">
   <symbol id="i-clapper" viewBox="0 0 24 24"><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"/><path d="m6.2 5.3 3.1 3.9"/><path d="m12.4 3.4 3.1 4"/><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
   <symbol id="i-film" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></symbol>
   <symbol id="i-video" viewBox="0 0 24 24"><path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></symbol>
@@ -55,6 +53,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/></symbol>
   <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6a1.4 1.4 0 0 1-1 .4H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.4 18.4a9 9 0 0 0 0-12.8"/></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v2"/></symbol>
   <symbol id="i-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/></symbol>
   <symbol id="i-flame" viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
@@ -66,12 +65,65 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
   <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
   <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <defs>
+    <linearGradient id="stillSky" x2=".28" y2="1"><stop stop-color="#1a474b"/><stop offset=".55" stop-color="#7a9c8e"/><stop offset="1" stop-color="#e4bf87"/></linearGradient>
+    <linearGradient id="stillLake" x2=".32" y2="1"><stop stop-color="#b1b8a0"/><stop offset=".52" stop-color="#5b8380"/><stop offset="1" stop-color="#173e44"/></linearGradient>
+    <pattern id="stillHoles" x="0" y="0" width="15" height="10" patternUnits="userSpaceOnUse"><rect x="3" y="2" width="8" height="5" rx="1.2" fill="#a99d78"/></pattern>
+    <clipPath id="stillGate"><rect x="10" y="15" width="280" height="147" rx="2"/></clipPath>
+  </defs>
+  <symbol id="film-still" viewBox="0 0 300 178">
+    <rect x=".5" y=".5" width="299" height="177" rx="5" fill="#172322" stroke="#958a68"/>
+    <path d="M8 2h220v8H8zm64 160h173v8H72z" fill="url(#stillHoles)"/>
+    <g clip-path="url(#stillGate)">
+      <path fill="url(#stillSky)" d="M10 15h280v102H10z"/>
+      <circle cx="208" cy="58" r="30" fill="none" stroke="#f6d39b" opacity=".32"/>
+      <circle cx="208" cy="58" r="23" fill="#f8d79e"/>
+      <path d="m10 97 30-14 18 4 30-22 19 10 22-12 18 11 20-16 25 22 30-7 23-17 45 24v37H10z" fill="#81978c"/>
+      <path d="m10 105 27-12 20 5 48-33 32 25 19-8 26 13 34-20 26 11 19-6 29 14v26H10z" fill="#557b76"/>
+      <path d="m92 76 13-11 21 17-15-7-5-5-4 6 2-7z" fill="#d3c9ab" opacity=".8"/>
+      <path d="m10 90 25-9 31 21 29-11 43 17 31-7 29 6 34-16 21 5 37-15v37H10z" fill="#355e5e"/>
+      <path d="M10 111q56-4 114 0t166-3v54H10z" fill="url(#stillLake)"/>
+      <path d="M172 114h53m-28 3h37m-68 4h34m-10 5h32m-66 5h43m-22 7h26m-60 6h37" fill="none" stroke="#e5ca97" opacity=".68"/>
+      <path d="m10 98 23 4 30 13 48 4-28 4-41-1-32 4z" fill="#24494b"/>
+      <path d="m290 94-20 9-11 7-31 8 28 3-18 6 52 2z" fill="#284e4e"/>
+      <path d="m10 122 32 6 17 10 22 3 14 8 50 13H10zm280 7-28 3-24 12-26 3-35 15h113z" fill="#183a3d"/>
+      <path d="m10 142 37 6 25 14H10zm280 0-23 7-35 13h58z" fill="#102a2e"/>
+    </g>
+    <g fill="#e5c28c" font-family="monospace" font-size="7" letter-spacing="1.4">
+      <text x="238" y="10">VS / 35</text><text x="10" y="173">COLOR NEG.</text><text x="252" y="173">024 A</text>
+    </g>
+  </symbol>
 </svg>
 
 <div class="aurora"><span></span><span></span><span></span></div>
 <div class="grid-overlay"></div>
 
-<div class="shell">
+<main id="accessGate" class="access-gate">
+  <div class="access-poster">
+    <span class="access-kicker">VS / PHÒNG HẬU KỲ</span>
+    <h1>VSub <em>Studio.</em></h1>
+    <p>Không gian biên tập lời thoại, phụ đề và giọng nhân vật.</p>
+    <div class="film-study" aria-hidden="true"><svg viewBox="0 0 300 178"><use href="#film-still"/></svg></div>
+    <span class="access-folio">01 &nbsp; / &nbsp; PHIÊN LÀM VIỆC</span>
+  </div>
+  <form id="accessForm" class="access-form" method="post">
+    <div class="access-tools">
+      <span class="access-kicker">TÀI KHOẢN STUDIO</span>
+      <button class="btn sm ghost" data-appearance-open type="button" aria-haspopup="dialog" aria-controls="appearancePanel"><svg class="i" aria-hidden="true"><use href="#i-palette"/></svg> Giao diện</button>
+    </div>
+    <h2 id="accessTitle">Đăng nhập</h2>
+    <p class="hint">Đăng nhập để mở thư viện của bạn. Dự án của người khác chỉ hiện khi bạn được mời.</p>
+    <label class="field"><span>Tên tài khoản</span><input type="text" id="accountName" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="48" pattern="[A-Za-z0-9_.\-]{3,48}" required></label>
+    <label class="field"><span>Mật khẩu</span><input id="accountPass" name="password" type="password" autocomplete="current-password" minlength="10" maxlength="128" required></label>
+    <label class="field hide" id="inviteField"><span>Mã mời dùng một lần</span><input type="text" id="inviteCode" autocomplete="off" maxlength="128" spellcheck="false">
+      <small class="muted">Chủ máy tạo mã bằng <code>python run.py --invite</code>. Mã có hiệu lực 24 giờ.</small></label>
+    <p id="accessMessage" role="status" aria-live="polite"></p>
+    <button class="btn primary" id="accessSubmit" type="submit" disabled>Vào studio</button>
+    <button class="btn ghost" id="accessMode" type="button">Có mã mời? Đăng ký</button>
+  </form>
+</main>
+
+<div class="shell hide" id="studioShell">
 
   <header class="top">
     <div class="logo">
@@ -81,11 +133,15 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
         <p>Tạo phụ đề · Dịch đa ngôn ngữ · Nung vào video</p>
       </div>
     </div>
-    <div class="top-right">
+    <a class="btn sm profile-link" href="#profile" id="profileLink"><svg class="i" aria-hidden="true"><use href="#i-user"/></svg> Trang cá nhân</a>
+    <button type="button" class="btn sm ghost studio-toggle" id="studioToggle" aria-controls="studioTools" aria-expanded="false" aria-label="Tùy chọn studio" title="Tùy chọn studio"><svg class="i" aria-hidden="true"><use href="#i-sliders"/></svg></button>
+    <div class="top-right" id="studioTools">
       <div class="status-row" id="statusRow">
         <span class="pill"><i class="dot"></i> Đang kiểm tra…</span>
       </div>
-      <div class="theme-pick" id="themePick"></div>
+      <a class="btn sm ghost" href="#teams">Nhóm của tôi</a>
+      <a class="btn sm ghost hide" href="#admin" data-admin-link>Quản trị</a>
+      <button class="btn sm ghost" data-appearance-open type="button" aria-haspopup="dialog" aria-controls="appearancePanel"><svg class="i" aria-hidden="true"><use href="#i-palette"/></svg> Giao diện</button>
     </div>
   </header>
 
@@ -103,17 +159,24 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
   <!-- ══════════════════════════ BƯỚC 1 ══════════════════════════ -->
   <section class="panel active" id="panel1">
     <div class="card" id="projectCard">
-      <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg></span> Dự án phim <span class="badge" id="projCount">…</span></h2>
-      <p class="hint">Làm theo ba bước: <b>1.</b> tạo bộ phim → <b>2.</b> tạo tập →
-        <b>3.</b> đưa link hoặc upload video cho từng tập.</p>
+      <div class="project-mast">
+        <span class="edition-label">Thư viện &nbsp; / &nbsp; 01</span>
+        <h2>Dự án phim <span class="badge" id="projCount">…</span></h2>
+        <p class="hint">Tạo bộ phim, thêm từng tập rồi tải video lên hoặc dán liên kết.</p>
+        <div class="film-study" aria-hidden="true"><svg viewBox="0 0 300 178"><use href="#film-still"/></svg></div>
+      </div>
       <p class="projsum" id="projSum"></p>
       <div class="actions" style="margin-bottom:16px">
         <button class="btn primary sm" id="filmNew"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg> Tạo dự án phim</button>
+        <a class="btn sm ghost" href="#teams"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg> Nhóm &amp; mã mời</a>
         <button class="btn sm ghost" id="projReload"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg> Tải lại</button>
       </div>
 
       <!-- form tạo bộ phim, ẩn cho tới khi bấm nút -->
       <div id="filmForm" class="newfilm hide">
+        <label class="field"><span>Không gian dự án</span>
+          <select id="filmTeam"><option value="">Cá nhân</option></select>
+          <small class="muted">Thành viên nhóm vẫn cần mã riêng của dự án để cộng tác.</small></label>
         <label class="field">
           <span>Tên bộ phim</span>
           <input type="text" id="filmName" placeholder="Ví dụ: Đại Hán Thiên Mệnh Nhân">
@@ -157,11 +220,11 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
       <div class="tabpane" data-pane="url">
         <label class="field">
           <span>Link video</span>
-          <input type="url" id="urlInput" placeholder="https://www.youtube.com/watch?v=…">
+          <input type="url" id="urlInput" aria-describedby="linkState" placeholder="https://www.youtube.com/watch?v=…">
         </label>
         <div class="actions">
           <button class="btn sm ghost" id="checkLink"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg> Kiểm tra link</button>
-          <span class="muted" id="linkState" style="align-self:center"></span>
+          <span class="muted" id="linkState" role="status" style="align-self:center"></span>
         </div>
         <p class="muted" style="margin-top:12px">Tool dùng <b>yt-dlp</b> để tải, ưu tiên chất lượng tối đa 1080p.
           Link nhiều phần (bilibili nhiều <b>P</b>, playlist YouTube…) sẽ được hỏi chọn phần.
@@ -310,9 +373,10 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
       <label class="field" style="margin-top:18px">
         <span>Bộ thuật ngữ <span class="muted">(tuỳ chọn — mỗi dòng một quy tắc, dùng cho mọi engine)</span></span>
         <textarea id="glossary" rows="3" placeholder="John = anh John&#10;朱大生 = Chu Đại Sinh&#10;郎君 / 夫君 = lang quân"></textarea>
-        <small class="muted">Giữ thống nhất tên riêng, cách xưng hô và từ chuyên ngành. Với Google / NLLB,
-          thuật ngữ được cài thẳng vào câu gốc trước khi dịch nên tên không còn bị để dạng phiên âm.</small>
+        <small class="muted">Tên riêng, địa danh và thành ngữ Trung → Việt được tra tự động. Quy tắc bạn nhập được ưu tiên.</small>
       </label>
+      <button class="btn sm ghost" type="button" id="suggestTerms">Tra Hán Việt từ kịch bản</button>
+      <div id="termResults" class="hint" aria-live="polite"></div>
       <p class="hint" id="tmInfo" style="margin:10px 0 0">Bộ nhớ dịch đang kiểm tra…</p>
     </div>
 
@@ -351,7 +415,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
         <input type="checkbox" id="autoFix" checked>
         <span class="track"></span>
         <span class="txt"><b>Tự sửa khi phụ đề bị hụt</b>
-          <small>Đo độ phủ, tự nhận dạng lại và quét bù các đoạn dài bị bỏ sót.</small></span>
+          <small>Tìm tiếng nói trong khoảng chưa có chữ, nghe bù và đánh dấu đoạn còn nghi thiếu lời để kiểm tra ở bước 4.</small></span>
       </label>
       <label class="switch" style="margin-bottom:14px">
         <input type="checkbox" id="genderOn" checked>
@@ -366,36 +430,53 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
         <input type="checkbox" id="separateFirstOn">
         <span class="track"></span>
         <span class="txt"><b>Tách nhạc nền trước khi nghe giọng</b>
-          <small>Bỏ nhạc và tiếng động trước khi đo giọng (Demucs, chạy CPU khoảng bằng thời lượng video)
-            → nhận vai chính xác hơn với phim nhiều nhạc nền. Kết quả tách được dùng lại khi lồng tiếng,
-            nên tổng thời gian không tăng nếu bạn chọn Bỏ giọng gốc ở bước 4.</small></span>
+          <small>Dùng rãnh giọng của Demucs cho cả Whisper và nhận diện người nói, hữu ích khi nhạc lấn thoại.
+            Nếu không tách được, tool dùng tiếng gốc. Rãnh đã tách được dùng lại khi lồng tiếng.</small></span>
       </label>
       <label class="switch" style="margin-bottom:14px">
-        <input type="checkbox" id="diarizeOn">
+        <input type="checkbox" id="diarizeOn" aria-controls="diarizeOpts">
         <span class="track"></span>
         <span class="txt"><b>Nhận diện người nói</b>
-          <small>Nghe ra trong video có mấy nhân vật, để bước lồng tiếng cấp cho
-            <b>mỗi nhân vật một giọng riêng</b> thay vì cả phim một giọng.
-            Chạy thêm vài phút sau khi nghe lời thoại.</small></span>
+          <small>Phân đoạn đường tiếng để biết <b>ai nói lúc nào</b>. Vai 1, Vai 2… là nhãn trong video này,
+            không phải tên thật. Bạn đặt tên và chọn giọng ở bước 4.</small></span>
       </label>
 
       <div id="diarizeOpts" class="hide subbox">
         <div class="grid2">
           <label class="field">
-            <span>Số nhân vật <span class="muted">(biết trước thì điền — chính xác hơn hẳn)</span></span>
-            <input type="number" id="numSpeakers" min="1" max="20" placeholder="để trống = tự đoán">
+            <span>Số người thực sự có thoại <span class="muted">(không bắt buộc)</span></span>
+            <input type="number" id="numSpeakers" min="1" max="20" step="1" placeholder="Để trống để tự ước lượng">
+            <small class="muted">Ví dụ: hai khách và một người dẫn đều nói → điền 3. Không tính người chỉ xuất hiện trong hình.</small>
           </label>
           <label class="field" id="hfTokenWrap">
             <span>Token Hugging Face</span>
-            <input type="password" id="hfToken" placeholder="hf_..." autocomplete="off">
+            <input type="password" id="hfToken" placeholder="hf_..." maxlength="512" autocomplete="off" spellcheck="false">
           </label>
         </div>
-        <p class="hint" id="diarizeHint"></p>
+        <p class="hint" id="diarizeHint" role="status"></p>
+        <details>
+          <summary>Thiết lập Hugging Face và kiểm tra kết quả</summary>
+          <ol>
+            <li>Đăng nhập Hugging Face và chấp nhận điều khoản tại <span id="diarizeModels"></span>.</li>
+            <li><a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Tạo token đọc</a>
+              bằng cùng tài khoản. Với token fine-grained, cho phép đọc các model gated bạn đã được cấp quyền.
+              Dán vào ô trên hoặc đặt <code>HF_TOKEN</code> trên máy chủ rồi khởi động lại VSub. Không cần quyền ghi.</li>
+            <li>Bấm <b>Kiểm tra quyền tải</b>, sau đó <b>Bắt đầu xử lý</b>. Máy chủ tải model lần đầu;
+              phép kiểm tra quyền không gửi video và không tải trọng số.</li>
+            <li>Bước 4: đối chiếu nhãn vai ở từng dòng, sửa nếu hai người nói chồng nhau. Mở <b>Chọn giọng để nghe thử và lồng tiếng</b>,
+              đặt tên, chọn giọng cho từng vai rồi <b>Xem &amp; nghe</b> trước khi duyệt.</li>
+          </ol>
+        </details>
+        <div class="actions">
+          <button class="btn sm" type="button" id="diarizeCheck">Kiểm tra quyền tải</button>
+          <button class="btn sm ghost" type="button" id="diarizeBasic">Dùng cách không cần token</button>
+        </div>
       </div>
 
       <label class="field">
-        <span>Gợi ý từ khoá <span class="muted">(tên riêng, thuật ngữ — giúp nghe đúng hơn)</span></span>
+        <span>Gợi ý từ khoá cho Whisper <span class="muted">(không dùng để gán vai)</span></span>
         <input type="text" id="prompt" placeholder="VD: Nguyễn Văn A, VieNeu-TTS, FastAPI">
+        <small class="muted">Nhập tên hoặc thuật ngữ theo ngôn ngữ gốc, cách nhau bằng dấu phẩy. Chỉ dùng khi nghe lời thoại; không đổi tên vai hay viết lại file SRT.</small>
       </label>
     </div>
 
@@ -450,7 +531,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
         <div class="card bench-mon" style="padding:14px">
           <div class="slate" aria-hidden="true"><span class="stripes"></span><b>Màn ảnh</b><span class="hide-narrow">Bản xem trước</span><span class="rec">Biên tập</span></div>
           <div class="player-box">
-            <video id="player" controls preload="metadata"></video>
+            <video id="player" controls playsinline preload="metadata"></video>
             <div class="hs-mask hide" id="hsMask" aria-hidden="true"></div>
             <div class="sub-overlay" id="subOverlay"></div>
           </div>
@@ -464,6 +545,11 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
             </div>
             <span class="muted" id="cueCount"></span>
             <p class="mon-note hide" id="monNote"></p>
+            <div class="actions hide" id="draftMonitor">
+              <span class="muted" id="draftStatus" role="status"></span>
+              <button class="btn sm ghost" type="button" id="draftStop">Dừng</button>
+              <button class="btn sm ghost" type="button" id="draftEdit">Sửa tiếp</button>
+            </div>
           </div>
         </div>
 
@@ -472,8 +558,8 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
           <div class="stylebar">
             <label class="field"><span>Font</span>
               <select id="stFont">
-                <option>Arial</option><option>Segoe UI</option><option>Tahoma</option>
-                <option>Verdana</option><option>Roboto</option><option>Times New Roman</option>
+                <option selected>Times New Roman</option><option>Arial</option><option>Segoe UI</option>
+                <option>Tahoma</option><option>Verdana</option><option>Roboto</option>
                 <option>Impact</option><option>Comic Sans MS</option>
               </select>
             </label>
@@ -549,6 +635,8 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
           <span class="muted hide-narrow">Kéo khối để dời mốc giờ · kéo mép để co giãn · kéo sang rãnh khác để đổi vai</span>
           <span class="tl-readout" id="tlReadout" aria-live="polite"></span>
           <span class="tl-over" id="tlOver"></span>
+          <button class="btn sm ghost" id="tlSpeakersBtn" type="button"
+            title="Nhận diện và lưu vai từ tiếng gốc. Giữ nguyên lời thoại, bản dịch và mốc giờ.">Phân giọng</button>
           <label class="tl-zoom"><span>Thu phóng</span>
             <input type="range" id="tlZoom" min="0" max="100" value="40" aria-label="Thu phóng dòng thời gian"></label>
           <button class="btn sm ghost" id="tlFitBtn" type="button">Xem trọn</button>
@@ -561,8 +649,34 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
 
       <div class="bench-right">
         <div class="card bench-list">
-          <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg></span> Nội dung phụ đề</h2>
-          <p class="hint">Bấm vào một dòng để tua video tới đó. Sửa trực tiếp trong ô.</p>
+          <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-list"/></svg></span> Kịch bản theo phút</h2>
+          <p class="hint">Chọn phút để nghe và so lời gốc với bản dịch. Câu vắt qua hai phút vẫn là một câu.</p>
+          <div class="minute-bar">
+            <label class="field"><span>Khoảng thời gian</span><select id="cueMinute"></select></label>
+            <label><input type="checkbox" id="minuteFollow" checked> Theo video</label>
+          </div>
+          <div class="actions minute-actions">
+            <button class="btn sm" type="button" id="cueAdd">+ Thêm câu</button>
+            <button class="btn sm ghost hide" type="button" id="cueFill" title="Chỉ dịch các dòng có lời gốc nhưng chưa có bản dịch trong phút đã chọn, bằng engine ở bước 2">Dịch câu thiếu</button>
+            <button class="btn sm ghost" type="button" id="cueSave">Lưu kịch bản</button>
+            <span class="muted" id="minuteStatus" aria-live="polite"></span>
+          </div>
+          <div class="minute-gaps" id="minuteGaps"></div>
+          <form class="subbox cue-form hide" id="cueForm">
+            <b id="cueFormTitle">Thêm câu</b>
+            <div class="minute-times">
+              <label class="field"><span>Bắt đầu (phút:giây)</span><input id="cueStart" required placeholder="02:03.250"></label>
+              <label class="field"><span>Kết thúc (phút:giây)</span><input id="cueEnd" required placeholder="02:05.000"></label>
+            </div>
+            <label class="field"><span>Lời gốc</span><textarea id="cueOriginal" rows="1"></textarea></label>
+            <label class="field"><span>Bản dịch</span><textarea id="cueTranslation" rows="1"></textarea></label>
+            <div class="actions">
+              <button class="btn sm" type="submit">Áp dụng</button>
+              <button class="btn sm ghost" type="submit" id="cueApplyPreview">Áp dụng &amp; nghe thử</button>
+              <button class="btn sm ghost" type="button" id="cueCancel">Hủy</button>
+              <span id="cueFormError" role="alert"></span>
+            </div>
+          </form>
           <div class="actions" style="margin:0 0 10px">
             <button class="btn sm ghost" id="redoTransBtn" type="button" title="Về bước 2 để đổi engine, bối cảnh, thuật ngữ rồi dịch lại — không phải tải video lên lại"><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg> Dịch lại…</button>
             <button class="btn sm ghost hide" id="fitAllBtn" type="button" title="Dịch lại cho gọn những dòng đang gắn nhãn Dài hoặc cps vàng, bằng engine đang chọn ở bước 2"><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg> <span id="fitAllText">Dịch gọn câu dài</span></button>
@@ -576,6 +690,24 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
           <div class="cuelist" id="cueList"></div>
         </div>
 
+        <div class="card" id="scriptBox">
+          <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg></span> Duyệt kịch bản sau dịch</h2>
+          <p class="hint">Mỗi dòng có một câu đọc ở đúng mốc phụ đề. Bấm <b>Xem &amp; nghe</b> để thử lời vừa sửa trên video. Khi xuất, câu đã nghe dùng lại đúng bản thu với giọng đã duyệt; câu chưa nghe mới được tạo tiếng. Nếu lời đè sang câu sau, công cụ báo dòng cần chỉnh thay vì cắt tiếng.</p>
+          <label class="switch">
+            <input type="checkbox" id="dubShorten"><span class="track"></span>
+            <span class="txt"><b>Rút gọn câu đọc không kịp</b><small>Chỉ đề xuất lời đọc ngắn hơn khi dựng kịch bản; không đổi chữ trong phụ đề.</small></span>
+          </label>
+          <div class="actions">
+            <button type="button" class="btn sm ghost" id="scriptBtn"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg> Dựng kịch bản</button>
+            <button type="button" class="btn sm primary" id="scriptApprove" disabled>Duyệt kịch bản này</button>
+            <button type="button" class="btn sm ghost hide" id="scriptDl"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg> Tải .txt</button>
+          </div>
+          <span class="muted" id="scriptCount"></span>
+          <span class="muted" id="scriptMsg" role="status"></span>
+          <div id="scriptIssues"></div>
+          <div id="scriptList" class="script-list hide"></div>
+        </div>
+
         <div class="card">
           <h2><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg></span> Lồng tiếng <span class="badge">VieNeu-TTS</span></h2>
           <p class="hint">Đọc bản dịch thành tiếng Việt và ghép vào video, canh khớp mốc giờ phụ đề.</p>
@@ -585,15 +717,9 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
           </div>
 
           <div id="ttsBox">
-            <label class="switch" style="margin-bottom:16px">
-              <input type="checkbox" id="dubOn">
-              <span class="track"></span>
-              <span class="txt"><b>Bật lồng tiếng</b>
-                <small>Video xuất ra sẽ nói tiếng Việt thay vì chỉ có phụ đề.</small></span>
-            </label>
-
-            <div id="dubOpts" class="hide">
-              <div class="grid2">
+            <details id="draftVoices">
+              <summary>Chọn giọng để nghe thử và lồng tiếng</summary>
+              <div class="grid3">
                 <label class="field">
                   <span>Giọng đọc</span>
                   <select id="dubVoice"><option value="">Đang tải danh sách giọng…</option></select>
@@ -602,12 +728,17 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
                   <span>Phong cách đọc</span>
                   <select id="dubStyle"></select>
                 </label>
+                <label class="field">
+                  <span>Tăng tốc tối đa <span class="muted">(khi lời đọc dài hơn khung)</span></span>
+                  <div class="rangeline">
+                    <input type="range" id="dubSpeed" min="100" max="200" step="5" value="150">
+                    <output id="dubSpeedOut">1.50×</output>
+                  </div>
+                </label>
               </div>
 
               <div class="actions" style="margin:-4px 0 14px">
-                <button class="btn sm ghost" id="dubTest"><svg class="i" aria-hidden="true"><use href="#i-volume"/></svg> Nghe thử giọng</button>
-                <audio id="dubAudio" class="hide"></audio>
-                <span class="muted" id="dubTestMsg"></span>
+                <button class="btn sm ghost" id="dubTest"><svg class="i" aria-hidden="true"><use href="#i-volume"/></svg> Xem &amp; nghe câu đang chọn</button>
               </div>
 
               <div id="spkBox" class="hide subbox" style="margin-bottom:14px">
@@ -618,23 +749,15 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
                 <p class="hint">Ô "Giọng đọc" ở trên áp dụng cho những dòng chưa nhận ra ai nói.</p>
                 <div id="spkList"></div>
               </div>
+            </details>
 
-              <div id="scriptBox" class="subbox" style="margin-bottom:14px">
-                <div class="spk-head">
-                  <b><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg> Kịch bản lồng tiếng</b>
-                  <span class="muted" id="scriptCount"></span>
-                </div>
-                <p class="hint">Bản dịch được ghép thành từng câu đọc, có dấu chấm, phẩy, hỏi đúng chỗ — giọng đọc
-                  ngắt nghỉ theo dấu câu. Xem lại và sửa câu nào chưa xuôi; lúc xuất sẽ đọc đúng kịch bản này và
-                  xuất kèm file <code>.kichban.txt</code>.</p>
-                <div class="actions" style="margin:10px 0 4px">
-                  <button type="button" class="btn sm ghost" id="scriptBtn"><svg class="i" aria-hidden="true"><use href="#i-file-text"/></svg> Dựng kịch bản</button>
-                  <button type="button" class="btn sm ghost hide" id="scriptDl"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg> Tải .txt</button>
-                  <span class="muted" id="scriptMsg"></span>
-                </div>
-                <div id="scriptList" class="script-list hide" aria-live="polite"></div>
-              </div>
-
+            <label class="switch" style="margin:16px 0">
+              <input type="checkbox" id="dubOn" disabled>
+              <span class="track"></span>
+              <span class="txt"><b>Bật lồng tiếng</b>
+                <small>Duyệt kịch bản ở trên để bật. Video sẽ đọc đúng lời đã duyệt.</small></span>
+            </label>
+            <div id="dubOpts" class="hide">
               <label class="field" id="origModeWrap">
                 <span>Tiếng gốc của video</span>
                 <select id="dubOrigMode">
@@ -660,7 +783,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
                     đều suốt cả video.</small></span>
               </label>
 
-              <div class="grid3" style="margin-top:14px">
+              <div class="grid2" style="margin-top:14px">
                 <label class="field">
                   <span>Âm lượng giọng đọc</span>
                   <div class="rangeline">
@@ -675,23 +798,7 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
                     <output id="dubOrigVolOut">45%</output>
                   </div>
                 </label>
-                <label class="field">
-                  <span>Tăng tốc tối đa <span class="muted">(khi câu dịch dài hơn khung giờ)</span></span>
-                  <div class="rangeline">
-                    <input type="range" id="dubSpeed" min="100" max="200" step="5" value="150">
-                    <output id="dubSpeedOut">1.50×</output>
-                  </div>
-                </label>
               </div>
-              <label class="switch" style="margin:8px 0 4px">
-                <input type="checkbox" id="dubShorten" checked>
-                <span class="track"></span>
-                <span class="txt"><b>Rút gọn câu đọc không kịp</b>
-                  <small>Trước khi đọc, dự đoán câu nào dài hơn khung giờ rồi bỏ từ đệm, thay cụm dài
-                    bằng cụm ngắn cùng nghĩa (không cần AI, không cắt ý). Phụ đề nung dùng cùng câu đã rút gọn.
-                    Câu vẫn dài mới phải tăng tốc.</small></span>
-              </label>
-
               <p class="muted" style="margin-top:4px">
                 Giọng còn lép thì kéo <b>Âm lượng giọng đọc</b> lên — nó nhân thêm lên mức tool đã
                 tự cân. Nếu bạn cũng chọn <b>Video nung phụ đề</b>, tiếng sẽ được lồng lên chính
@@ -781,22 +888,226 @@ try { var _t = JSON.parse(localStorage.getItem('vsub.theme.v1') || '{}').theme |
   </footer>
 </div>
 
+<main id="profilePage" class="shell profile-page hide" aria-labelledby="profileTitle">
+  <nav class="profile-nav" aria-label="Điều hướng tài khoản">
+    <a class="btn sm ghost" href="#studio"><svg class="i" aria-hidden="true"><use href="#i-arrow-left"/></svg> Quay lại studio</a>
+    <a href="#admin" class="btn sm ghost hide" data-admin-link>Quản trị studio</a>
+    <button class="btn sm ghost" type="button" id="signOut" data-sign-out title="Đăng xuất khỏi thiết bị này">Đăng xuất</button>
+  </nav>
+  <header class="profile-mast">
+    <div>
+      <span class="edition-label">VSub Studio &nbsp;/&nbsp; Tài khoản</span>
+      <h1 id="profileTitle" tabindex="-1">Trang cá nhân</h1>
+    </div>
+    <div class="film-study" aria-hidden="true"><svg viewBox="0 0 300 178"><use href="#film-still"/></svg></div>
+  </header>
+  <p id="profileUpgrade" class="profile-notice hide" role="status"><strong>Máy chủ đang chạy bản cũ.</strong>
+    Khởi động lại VSub Studio trên máy chủ rồi tải lại trang để xem và chỉnh sửa đầy đủ hồ sơ.</p>
+  <div class="profile-grid">
+    <section class="card" aria-labelledby="profileName">
+      <div class="profile-identity">
+        <span id="profileInitial" class="profile-initial" aria-hidden="true"></span>
+        <div><span class="edition-label">01 &nbsp;/&nbsp; Thẻ thành viên</span>
+          <h2 id="profileName" dir="auto"></h2></div>
+      </div>
+      <div id="profileDetails">
+        <dl class="profile-meta">
+          <div><dt>Tên đăng nhập</dt><dd id="profileUsername"></dd></div>
+          <div><dt>Quyền tài khoản</dt><dd id="profileAccountRole"></dd></div>
+          <div><dt>Ngày tham gia</dt><dd><time id="profileCreated"></time></dd></div>
+          <div><dt>Công việc trong ê-kíp</dt><dd id="profileCrewRole"></dd></div>
+          <div><dt>Email liên hệ</dt><dd id="profileEmail"></dd></div>
+        </dl>
+        <h3 class="profile-caption">Giới thiệu</h3>
+        <p id="profileBio" class="profile-bio" dir="auto"></p>
+        <button class="btn ghost" type="button" id="editProfile" aria-controls="profileForm" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg> Chỉnh sửa hồ sơ</button>
+      </div>
+      <form id="profileForm" class="hide" method="post">
+        <label class="field"><span>Tên hiển thị</span>
+          <input type="text" id="displayName" name="display_name" autocomplete="nickname" maxlength="80" aria-describedby="displayNameHint"></label>
+        <p class="hint" id="displayNameHint">Để trống để dùng tên đăng nhập.</p>
+        <label class="field"><span>Công việc trong ê-kíp</span>
+          <input type="text" name="crew_role" maxlength="80" placeholder="Ví dụ: Biên dịch phụ đề" aria-describedby="crewRoleHint"></label>
+        <p class="hint" id="crewRoleHint">Mô tả công việc của bạn, không thay đổi quyền tài khoản.</p>
+        <label class="field"><span>Email liên hệ</span>
+          <input type="email" name="contact_email" autocomplete="email" maxlength="254" placeholder="ban@example.com" aria-describedby="contactEmailHint"></label>
+        <p class="hint" id="contactEmailHint">Không dùng để đăng nhập hay khôi phục mật khẩu.</p>
+        <label class="field"><span>Giới thiệu (tối đa 500 ký tự)</span>
+          <textarea name="bio" rows="3" maxlength="500" placeholder="Bạn phụ trách phần nào của bộ phim?"></textarea></label>
+        <div class="actions">
+          <button class="btn primary" type="submit">Lưu hồ sơ</button>
+          <button class="btn ghost" id="cancelProfile" type="button">Hủy</button>
+        </div>
+      </form>
+      <p class="profile-message" role="status" id="profileMessage"></p>
+    </section>
+    <section class="card" aria-labelledby="passwordTitle">
+      <span class="edition-label">02 &nbsp;/&nbsp; Bảo mật</span>
+      <h2 id="passwordTitle">Đổi mật khẩu</h2>
+      <p class="hint">Sau khi đổi, bạn vẫn đăng nhập trên thiết bị này. Các thiết bị khác sẽ cần đăng nhập lại.</p>
+      <form id="passwordForm" method="post">
+        <fieldset aria-labelledby="passwordTitle">
+          <input type="hidden" name="username" autocomplete="username">
+          <label class="field"><span>Mật khẩu hiện tại</span>
+            <input type="password" name="current_password" autocomplete="current-password" maxlength="128" required></label>
+          <label class="field"><span>Mật khẩu mới (10–128 ký tự)</span>
+            <input type="password" name="new_password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+          <label class="field"><span>Nhập lại mật khẩu mới</span>
+            <input type="password" name="confirmation" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+          <button class="btn primary" type="submit">Đổi mật khẩu</button>
+        </fieldset>
+        <p class="profile-message" role="status" id="passwordMessage"></p>
+      </form>
+    </section>
+  </div>
+</main>
+
+<main id="crewPage" class="shell profile-page hide" aria-labelledby="crewTitle">
+  <nav class="actions" aria-label="Không gian làm việc">
+    <a href="#studio" class="btn sm ghost">← Thư viện</a><a href="#teams" class="btn sm ghost">Nhóm của tôi</a>
+    <a href="#admin" class="btn sm ghost hide" data-admin-link>Quản trị</a><a href="#profile" class="btn sm ghost">Trang cá nhân</a>
+  </nav>
+  <header class="profile-mast"><div><span class="edition-label">VSub Studio &nbsp; / &nbsp; Phòng sản xuất</span>
+    <h1 id="crewTitle" tabindex="-1">Nhóm &amp; cộng tác</h1><p class="hint">Cùng một ê-kíp, đúng từng bộ phim. Mã nhóm và mã dự án được cấp riêng.</p></div>
+    <div class="film-study" aria-hidden="true"><svg viewBox="0 0 300 178"><use href="#film-still"/></svg></div></header>
+  <p id="crewNotice" class="profile-message" role="status"></p>
+  <section id="crewEntry" class="profile-grid">
+    <form class="card" id="crewJoin" method="post">
+      <span class="edition-label">01 / Lời mời</span><h2>Tham gia bằng mã</h2>
+      <label class="field"><span>Mã nhóm hoặc mã dự án</span><input type="text" name="code" maxlength="128" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>
+      <p class="hint">Dự án nhóm cần hai bước: vào nhóm bằng mã TM, rồi dùng mã PJ của dự án.</p>
+      <button class="btn primary sm">Dùng mã mời</button>
+    </form>
+    <form class="card" id="crewCreate" method="post">
+      <span class="edition-label">02 / Ê-kíp</span><h2>Tạo nhóm làm phim</h2>
+      <label class="field"><span>Tên nhóm mới</span><input type="text" name="name" maxlength="100" placeholder="Ví dụ: Tổ biên tập A" required></label>
+      <p class="hint">Bạn là trưởng nhóm. Mời từng người vào nhóm trước khi chia sẻ phim.</p>
+      <button class="btn sm">Tạo nhóm</button>
+    </form>
+  </section>
+  <section class="card"><span class="edition-label">Danh bạ / Nhóm</span><h2 id="crewGroupTitle">Các nhóm</h2><div id="crewTeams"></div></section>
+  <section class="card"><span class="edition-label">Phân công / Dự án</span><h2>Dự án phim</h2>
+    <p class="hint">Quản lý người cộng tác theo từng bộ phim. Để chia sẻ video lẻ, gán video vào một tập trong thư viện.</p>
+    <div id="crewFilms"></div></section>
+</main>
+<main id="adminPage" class="shell admin-page hide" aria-labelledby="adminTitle">
+  <nav class="admin-top" aria-label="Điều hướng quản trị">
+    <a href="#studio" class="btn sm ghost"><svg class="i" aria-hidden="true"><use href="#i-arrow-left"/></svg> Về thư viện</a>
+    <a href="#profile" class="btn sm ghost" id="adminOperator">Trang cá nhân</a>
+    <button type="button" class="btn sm ghost" data-sign-out>Đăng xuất</button>
+  </nav>
+  <header class="admin-mast">
+    <div><span class="edition-label">VSub Studio &nbsp;/&nbsp; Phòng điều hành</span>
+      <h1 id="adminTitle" tabindex="-1">Quản trị studio</h1>
+      <p>Quản lý người được vào studio, các ê-kíp và quyền cộng tác trên từng bộ phim.</p></div>
+    <button type="button" class="btn primary" id="registrationCode"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg> Tạo mã đăng ký</button>
+  </header>
+  <nav class="admin-register" aria-label="Danh mục quản trị">
+    <button type="button" data-admin-tab="members" aria-controls="adminMembersPanel" aria-pressed="true"><span>01 / Tài khoản</span><b id="adminMembersCount">—</b></button>
+    <button type="button" data-admin-tab="teams" aria-controls="adminTeamsPanel" aria-pressed="false"><span>02 / Nhóm sản xuất</span><b id="adminTeamsCount">—</b></button>
+    <button type="button" data-admin-tab="films" aria-controls="adminFilmsPanel" aria-pressed="false"><span>03 / Dự án phim</span><b id="adminFilmsCount">—</b></button>
+  </nav>
+  <div class="admin-status"><p id="adminNotice" class="profile-message" role="status"></p>
+    <button type="button" class="btn sm ghost" id="adminReload"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg> Làm mới</button></div>
+  <section id="adminMembersPanel" class="card" data-admin-section="members" aria-labelledby="adminMembersHeading">
+    <h2 id="adminMembersHeading">Danh bạ tài khoản</h2>
+    <p class="hint">Đổi quyền hoặc khóa tài khoản khác. Khóa tài khoản sẽ kết thúc các phiên đăng nhập của người đó.</p>
+    <div class="admin-filters">
+      <label class="field"><span>Tìm thành viên</span><input type="search" id="crewSearch" placeholder="Tên đăng nhập, tên hiển thị hoặc nhóm"></label>
+      <label class="field"><span>Trạng thái</span><select id="adminMemberState"><option value="">Tất cả</option><option value="active">Đang hoạt động</option><option value="locked">Đã khóa</option></select></label>
+    </div>
+    <div id="memberDirectory"></div>
+  </section>
+  <section id="adminTeamsPanel" class="card hide" data-admin-section="teams" aria-labelledby="adminTeamsHeading">
+    <h2 id="adminTeamsHeading">Nhóm sản xuất</h2>
+    <p class="hint">Mở danh sách thành viên để mời hoặc gỡ người khỏi nhóm. Chỉ có thể giải tán nhóm không còn dự án.</p>
+    <div id="adminTeams"></div>
+  </section>
+  <section id="adminFilmsPanel" class="card hide" data-admin-section="films" aria-labelledby="adminFilmsHeading">
+    <h2 id="adminFilmsHeading">Phân công dự án</h2>
+    <p class="hint">Quản lý cộng tác viên của từng bộ phim. Dự án cũ chưa có chủ có thể giao cho trưởng nhóm.</p>
+    <div id="adminFilms"></div>
+  </section>
+</main>
+<dialog class="look-panel crew-dialog" id="crewDialog" aria-labelledby="crewDialogTitle">
+  <header class="look-heading"><div><span class="edition-label" id="crewDialogLabel">Cộng tác</span><h2 id="crewDialogTitle"></h2></div>
+    <button class="btn sm ghost" type="button" id="crewClose">Đóng</button></header>
+  <div class="crew-dialog-body" id="crewDialogBody"></div>
+  <p id="crewDialogNotice" class="profile-message" role="status"></p>
+</dialog>
+
+<dialog id="coverDialog" class="look-panel cover-dialog" aria-labelledby="coverTitle">
+  <header class="look-heading">
+    <div><span class="edition-label">Thư viện / Ảnh bìa</span><h2 id="coverTitle"></h2></div>
+    <button class="btn sm ghost" type="button" id="coverClose">Đóng</button>
+  </header>
+  <div class="cover-body">
+    <img id="coverSample" alt="Ảnh bìa hiện tại" hidden>
+    <p id="coverOrigin"></p>
+    <p class="hint">Chọn ảnh JPG, PNG hoặc WebP, tối đa 5 MB. Ảnh bìa không thay đổi nội dung video.</p>
+    <input type="file" id="coverFile" accept="image/jpeg,image/png,image/webp" hidden>
+    <div class="actions">
+      <button class="btn primary" type="button" id="coverUpload"><svg class="i" aria-hidden="true"><use href="#i-upload-cloud"/></svg> Tải ảnh lên</button>
+      <button class="btn ghost" type="button" id="coverAuto">Dùng bìa tự động</button>
+    </div>
+    <p id="coverNotice" class="profile-message" role="status"></p>
+  </div>
+</dialog>
+
+<dialog id="appearancePanel" class="look-panel" aria-labelledby="lookTitle">
+  <header class="look-heading">
+    <div><span class="edition-label">VSub &nbsp; / &nbsp; Phòng hậu kỳ</span><h2 id="lookTitle">Cài đặt giao diện</h2></div>
+    <button class="btn sm ghost look-close" id="lookClose" type="button" aria-label="Đóng cài đặt giao diện"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <div class="look-body">
+    <figure class="look-proof">
+      <span class="edition-label">Khung xem thử &nbsp; / &nbsp; 01</span>
+      <div class="film-study" aria-hidden="true"><svg viewBox="0 0 300 178"><use href="#film-still"/></svg></div>
+      <figcaption><span id="lookName"></span><span class="look-inks" aria-hidden="true"></span></figcaption>
+    </figure>
+    <div class="look-controls">
+      <label class="field"><span>Bảng màu</span><select id="lookTheme"></select></label>
+      <div class="look-accent">
+        <label for="accentPick">Màu nhấn</label>
+        <div><input type="color" id="accentPick"><span id="lookHex"></span>
+          <button type="button" class="btn sm ghost" id="accentReset">Màu gốc</button></div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="lookDepth"><span class="track"></span>
+        <span class="txt"><b>Chiều sâu 3D</b><small>Khung phim xếp lớp với mọi bảng màu. Tắt để dùng khung phẳng.</small></span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="lookMotion"><span class="track"></span>
+        <span class="txt"><b>Giảm chuyển động</b><small>Tắt hiệu ứng động. Khi không bật, dùng cài đặt của thiết bị.</small></span>
+      </label>
+    </div>
+  </div>
+  <footer class="look-foot">
+    <small>Áp dụng ngay trên thiết bị này. Không thay đổi video xuất.</small>
+    <button type="button" class="btn sm ghost" id="lookReset"><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg> Về mặc định</button>
+  </footer>
+</dialog>
 <div class="toasts" id="toasts"></div>
 <script src="/config.js"></script>
 <script src="/js/core.js"></script>
 <script src="/js/theme.js"></script>
 <script src="/js/boot.js"></script>
+<script src="/js/covers.js"></script>
 <script src="/js/films.js"></script>
 <script src="/js/source.js"></script>
 <script src="/js/setup.js"></script>
 <script src="/js/ai.js"></script>
 <script src="/js/progress.js"></script>
+<script src="/js/minutes.js"></script>
 <script src="/js/editor.js"></script>
 <script src="/js/hardsub.js"></script>
 <script src="/js/dubbing.js"></script>
 <script src="/js/timeline.js"></script>
 <script src="/js/export.js"></script>
+<script src="/js/audition.js"></script>
 <script src="/js/prefs.js"></script>
+<script src="/js/profile.js"></script>
+<script src="/js/crew.js"></script>
 <script src="/js/main.js"></script>
 </body>
 </html>

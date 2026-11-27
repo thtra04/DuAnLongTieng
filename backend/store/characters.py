@@ -104,7 +104,7 @@ def list_for(job_id) -> list[dict]:
         return [_to_dict(c) for c in _rows(db, job_id)]
 
 
-def sync(job_id, speakers: list[dict] | None) -> list[dict]:
+def sync(job_id, speakers: list[dict] | None, *, keep_cast: bool = False) -> list[dict]:
     """Ghi/cập nhật vai theo kết quả phân đoạn.
 
     Giữ tên và giọng người dùng đã đặt cho nhãn còn tồn tại; nhãn không còn
@@ -141,7 +141,7 @@ def sync(job_id, speakers: list[dict] | None) -> list[dict]:
                 ))
             else:
                 ch.total_speech = info["seconds"]
-                if info["gender"]:
+                if info["gender"] and (not keep_cast or not ch.gender):
                     ch.gender = info["gender"]
                 if info["f0"]:
                     ch.f0 = info["f0"]
@@ -149,7 +149,10 @@ def sync(job_id, speakers: list[dict] | None) -> list[dict]:
                     ch.age = info["age"]
         for label, ch in existing.items():
             if label not in wanted:
-                db.delete(ch)
+                if keep_cast:
+                    ch.total_speech = 0.0
+                else:
+                    db.delete(ch)
         db.flush()
         return [_to_dict(c) for c in _rows(db, job_id)]
 

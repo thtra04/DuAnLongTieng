@@ -27,6 +27,27 @@ def workdir():
         shutil.rmtree(path, ignore_errors=True)
 
 
+@pytest.fixture
+def studio_client():
+    """Admin session for route tests that fabricate legacy jobs without an owner."""
+    import secrets
+    import time
+    from fastapi.testclient import TestClient
+    from backend.api.auth import COOKIE, digest
+    from backend.db import LoginSession, Member, get_db
+    from backend.main import app
+
+    with TestClient(app, base_url="https://testserver") as client:
+        token = secrets.token_urlsafe(32)
+        with get_db() as db:
+            member = Member(username="test-" + secrets.token_hex(8), password_hash="unused:unused", role="admin", created=0)
+            db.add(member)
+            db.flush()
+            db.add(LoginSession(member_id=member.id, digest=digest(token), expires=time.time() + 3600))
+        client.cookies.set(COOKIE, token)
+        yield client
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _db_cach_ly():
     """Cả phiên test dùng DB tạm.
@@ -61,6 +82,25 @@ def _hanviet_cach_ly():
     path = Path(tempfile.mkdtemp(prefix="vsub-test-hv-"))
     mp = pytest.MonkeyPatch()
     mp.setattr(hanviet, "LEARNED_PATH", path / "hanviet_learned.json")
+    try:
+        yield
+    finally:
+        mp.undo()
+        shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _job_cach_ly():
+    """Cả phiên test tạo thư mục job trong chỗ tạm.
+
+    `Job.dir` tạo thư mục ngay khi được đọc. Không cách ly thì mỗi lượt chạy test
+    để lại vài thư mục rỗng trong `data/jobs` thật — đếm được 111 cái trên máy dev.
+    """
+    from backend.core import jobs as jobs_mod
+
+    path = Path(tempfile.mkdtemp(prefix="vsub-test-jobs-"))
+    mp = pytest.MonkeyPatch()
+    mp.setattr(jobs_mod, "JOB_DIR", path)
     try:
         yield
     finally:

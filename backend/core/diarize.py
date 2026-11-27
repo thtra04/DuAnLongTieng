@@ -21,16 +21,25 @@ Module này không phụ thuộc ngôn ngữ: nó chỉ đọc đặc trưng âm
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import threading
+import wave
+from importlib.metadata import PackageNotFoundError, version
+from inspect import signature
 from pathlib import Path
 from typing import Callable
 
-from ..config import MODEL_DIR
 from .subtitles import Cue
 
-# Model mặc định. Cần chấp nhận điều khoản trên trang model rồi mới tải được.
-MODEL_ID = os.environ.get("VSUB_DIARIZE_MODEL", "pyannote/speaker-diarization-3.1")
+LEGACY = "pyannote/speaker-diarization-3.1"
+COMMUNITY = "pyannote/speaker-diarization-community-1"
+SEGMENTATION = "pyannote/segmentation-3.0"
+try:
+    _legacy_api = version("pyannote.audio").split(".", 1)[0] == "3"
+except PackageNotFoundError:
+    _legacy_api = False
+MODEL_ID = os.environ.get("VSUB_DIARIZE_MODEL") or (LEGACY if _legacy_api else COMMUNITY)
 
 # Cue không chồng lấn lượt nói nào thì tìm lượt gần nhất trong khoảng này (giây).
 # Rộng hơn nữa là gán bừa: phụ đề ở đoạn nhạc nền cách chỗ có thoại vài giây thì
@@ -42,6 +51,7 @@ NEAR_WINDOW = 1.5
 CONFIDENT_RATIO = 0.55
 
 _lock = threading.Lock()
+_inference_lock = threading.Lock()
 _pipeline = None
 _pipeline_key: tuple | None = None
 
@@ -65,43 +75,100 @@ def hf_token(explicit: str = "") -> str:
 
 
 def available(token: str = "") -> tuple[bool, str]:
-    """Có chạy được diarization không, kèm lý do nếu không.
+    state = setup_status(token)
+    return state["available"], state["reason"]
 
-    Cố ý KHÔNG tải model, và cũng KHÔNG `import` thư viện thật ở đây — hàm này
-    chạy mỗi lần mở trang qua `/api/system`. `import pyannote.audio` kéo theo cả
-    torch và speechbrain, mất hàng chục giây lượt đầu; `find_spec` chỉ tra xem
-    gói có tồn tại hay không nên gần như tức thì. (Cùng lý do mà `/api/system`
-    không kiểm torch cho tính năng nhân bản giọng — xem `tts_voices` ở main.py.)
-    """
-    import importlib.util
 
-    try:
-        if importlib.util.find_spec("pyannote.audio") is None:
-            return False, "Chưa cài pyannote: uv sync --extra diarize"
-        if importlib.util.find_spec("torch") is None:
-            return False, "Nhận diện người nói cần `torch`: uv sync --extra diarize"
-    except (ImportError, ValueError) as exc:
-        return False, f"Không kiểm được thư viện pyannote: {exc}"
-
-    if not hf_token(token) and not _cached_locally():
-        return False, (
-            "Cần token Hugging Face để tải model phân đoạn người nói. "
-            "Vào trang model, bấm chấp nhận điều khoản, rồi dán token vào ô "
-            "bên dưới (hoặc đặt biến môi trường HF_TOKEN)."
-        )
-    return True, ""
+def _assets():
+    if MODEL_ID == COMMUNITY:
+        return [(COMMUNITY, f) for f in ("config.yaml", "embedding/pytorch_model.bin",
+                "segmentation/pytorch_model.bin", "plda/plda.npz", "plda/xvec_transform.npz")]
+    if MODEL_ID == LEGACY:
+        files = [(LEGACY, "config.yaml"), (SEGMENTATION, "pytorch_model.bin"),
+                 ("pyannote/wespeaker-voxceleb-resnet34-LM", "pytorch_model.bin")]
+        if not _legacy_api:
+            files.extend((COMMUNITY, f) for f in ("plda/plda.npz", "plda/xvec_transform.npz"))
+        return files
+    return []
 
 
 def _cached_locally() -> bool:
-    """Model đã tải về máy rồi thì không cần token nữa."""
-    for base in (MODEL_DIR, Path.home() / ".cache" / "huggingface" / "hub"):
+    from huggingface_hub import try_to_load_from_cache
+
+    assets = _assets()
+    for repo, filename in assets:
+        path = try_to_load_from_cache(repo, filename)
+        # Interrupted downloads and Windows/LFS pointer files are not weights.
+        if not isinstance(path, str) or Path(path).stat().st_size <= (0 if filename == "config.yaml" else 1024):
+            return False
+    return bool(assets)
+
+
+def _valid_input(token) -> bool:
+    if token is None:
+        return True
+    if not isinstance(token, str):
+        return False
+    text = token.strip()
+    return not text or (text.startswith("hf_") and 3 < len(text) <= 512 and not any(c.isspace() for c in text))
+
+
+def setup_status(token: str = "") -> dict:
+    """Local preflight for /api/system: no model import, Hub request or credential in the response."""
+    local = Path(MODEL_ID).is_file() or (Path(MODEL_ID) / "config.yaml").is_file()
+    pages = [] if local else [MODEL_ID]
+    if MODEL_ID == LEGACY:
+        pages += [SEGMENTATION] if _legacy_api else [SEGMENTATION, COMMUNITY]
+    has_token = bool(hf_token())
+    try:
+        installed = all(importlib.util.find_spec(mod) is not None for mod in ("pyannote.audio", "torch", "torchaudio"))
+    except (ImportError, ValueError):
+        installed = False
+    state, reason = "configured", ""
+    if not installed:
+        state, reason = "missing_dependency", "Chưa đủ thư viện pyannote/torch/torchaudio. Cài nhóm diarize trên máy chạy VSub."
+    elif not _valid_input(token):
+        state, reason = "invalid_token", "Token không đúng định dạng Hugging Face. Hãy dùng token đọc của tài khoản đã được duyệt."
+    elif _pipeline is not None and _pipeline_key == (MODEL_ID,):
+        state = "loaded"
+    elif local:
+        state = "local_config"
+    else:
+        from huggingface_hub.constants import HF_HUB_OFFLINE
+
         try:
-            slug = "models--" + MODEL_ID.replace("/", "--")
-            if (Path(base) / slug).is_dir():
-                return True
-        except OSError:
-            continue
-    return False
+            cached = _cached_locally()
+        except (ImportError, OSError, ValueError):
+            cached = False
+        if cached:
+            state = "cached"
+        elif HF_HUB_OFFLINE:
+            state, reason = "offline", "Máy chủ đang ở chế độ offline và chưa có đủ tệp model. Tải model trước hoặc dùng cách không cần token."
+        elif not (has_token or token and token.strip()):
+            state, reason = "needs_token", "Chưa đủ tệp model trên máy. Cần token có quyền đọc để tải lần đầu."
+    return {"available": state in ("configured", "loaded", "cached", "local_config"), "state": state,
+            "reason": reason, "has_token": has_token, "model": Path(MODEL_ID).name if local else MODEL_ID,
+            "model_pages": pages}
+
+
+def check_access(token: str = "") -> tuple[bool, str]:
+    """Only on request: HEAD the configured repositories; no audio, download or inference."""
+    status = setup_status(token)
+    if not status["available"]:
+        return False, status["reason"]
+    if status["state"] != "configured":
+        return True, {"loaded": "Model đã nạp; không cần token.", "cached": "Đủ tệp trong cache; không cần token.",
+                      "local_config": "Đã thấy cấu hình cục bộ; trọng số sẽ được kiểm tra khi nạp."}[status["state"]]
+    from huggingface_hub import get_hf_file_metadata, hf_hub_url
+
+    for repo in status["model_pages"]:
+        filename = next((f for r, f in _assets() if r == repo), "config.yaml")
+        try:
+            url = hf_hub_url(repo, filename, endpoint="https://huggingface.co")
+            get_hf_file_metadata(url, token=hf_token(token), timeout=5)
+        except Exception as exc:
+            return False, _explain_load_error(exc, repo)
+    return True, "Có quyền đọc model. Chưa tải trọng số; lần phân tích đầu tiên cần Internet."
 
 
 # ------------------------------------------------------------------ nạp model
@@ -120,15 +187,20 @@ def _load(token: str = "", on_log: Callable[[str], None] | None = None):
         # config.py đã đặt rồi; lặp lại ở đây để không phụ thuộc thứ tự import.
         os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
 
-        from pyannote.audio import Pipeline
-
         auth = hf_token(token) or None
         if on_log:
-            on_log("Đang nạp model phân đoạn người nói (lần đầu tải ~1 GB)…")
+            on_log("Đang nạp model phân đoạn người nói…")
         try:
-            # pyannote 4.x đổi tên tham số: `token=`, không còn `use_auth_token=`
-            # (không có **kwargs nên truyền tên cũ là TypeError ngay).
-            pipeline = Pipeline.from_pretrained(MODEL_ID, token=auth)
+            from huggingface_hub.constants import HF_HUB_CACHE
+            from pyannote.audio import Pipeline
+
+            auth_arg = "use_auth_token" if "use_auth_token" in signature(Pipeline.from_pretrained).parameters else "token"
+            source = MODEL_ID
+            if MODEL_ID == COMMUNITY and _cached_locally():
+                from huggingface_hub import try_to_load_from_cache
+
+                source = str(Path(try_to_load_from_cache(MODEL_ID, "config.yaml")).parent)
+            pipeline = Pipeline.from_pretrained(source, cache_dir=HF_HUB_CACHE, **{auth_arg: auth})
         except Exception as exc:
             raise DiarizeError(_explain_load_error(exc)) from exc
         if pipeline is None:
@@ -162,20 +234,44 @@ def _to_gpu(pipeline, on_log=None):
     return pipeline
 
 
-def _explain_load_error(exc: Exception) -> str:
-    msg = str(exc)
-    low = msg.lower()
-    if "401" in msg or "unauthorized" in low or "gated" in low or "awaiting" in low:
+def _explain_load_error(exc: Exception, repo: str | None = None) -> str:
+    low = f"{type(exc).__name__} {exc}".lower()
+    if any(s in low for s in ("401", "403", "unauthorized", "forbidden", "gated", "awaiting")):
         return (
-            f"Chưa có quyền tải `{MODEL_ID}`. Mở trang model trên Hugging Face, "
-            "bấm chấp nhận điều khoản, rồi dùng token của chính tài khoản đó."
+            f"Chưa có quyền đọc {repo or MODEL_ID}. Chấp nhận điều khoản của model "
+            "và dùng token đọc từ đúng tài khoản (fine-grained cần quyền đọc model gated)."
         )
-    if "connection" in low or "timeout" in low or "resolve" in low:
-        return "Không kết nối được Hugging Face để tải model. Kiểm tra mạng rồi thử lại."
-    return f"Không nạp được model phân đoạn người nói: {msg}"
+    if any(s in low for s in ("connection", "timeout", "offline", "resolve")):
+        return "Không kết nối được Hugging Face. Kiểm tra mạng/chế độ offline hoặc dùng tách vai không token."
+    if any(s in low for s in ("import", "dll", "torchcodec")):
+        return "Không nạp được thư viện âm thanh. Kiểm tra bộ torch, torchaudio và FFmpeg của máy chủ."
+    # Raw Hub exceptions can contain request details. They must not enter job logs or HTTP responses.
+    return f"Không nạp được model phân đoạn ({type(exc).__name__}). Kiểm tra bản pyannote và các tệp model."
 
 
 # ------------------------------------------------------------------ chạy
+
+
+def _pcm_audio(wav_path: str | Path) -> dict:
+    """Feed the PCM produced by media.extract_audio directly; no TorchCodec DLL is needed."""
+    import numpy as np
+    import torch
+
+    path = Path(wav_path)
+    with wave.open(str(path), "rb") as wav:
+        frames, rate = wav.getnframes(), wav.getframerate()
+        if (wav.getnchannels() != 1 or wav.getsampwidth() != 2 or frames < 1
+                or frames > path.stat().st_size // 2):
+            raise DiarizeError("Đường tiếng không phải WAV PCM 16-bit mono hợp lệ. Hãy tách lại âm thanh.")
+        # One float buffer for the model; don't duplicate an entire film in memory as PCM bytes.
+        audio = np.empty(frames, dtype=np.float32)
+        for start in range(0, frames, 262144):
+            stop = min(start + 262144, frames)
+            pcm = np.frombuffer(wav.readframes(stop - start), dtype="<i2")
+            if pcm.size != stop - start:
+                raise DiarizeError("File âm thanh bị thiếu dữ liệu. Hãy tách lại âm thanh.")
+            np.multiply(pcm, 1 / 32768., out=audio[start:stop])
+    return {"waveform": torch.from_numpy(audio).unsqueeze(0), "sample_rate": rate}
 
 
 def run(
@@ -208,14 +304,18 @@ def run(
 
     hook = _progress_hook(on_progress)
     try:
-        if hook is not None:
-            with hook as h:
-                annotation = pipeline(str(wav_path), hook=h, **kwargs)
-        else:
-            annotation = pipeline(str(wav_path), **kwargs)
+        if hook:
+            kwargs["hook"] = hook
+        with _inference_lock:
+            annotation = pipeline(_pcm_audio(wav_path), **kwargs)
+    except DiarizeError:
+        raise
     except Exception as exc:
-        raise DiarizeError(f"Phân đoạn người nói thất bại: {exc}") from exc
+        raise DiarizeError(f"Phân đoạn người nói thất bại ({type(exc).__name__}). Kiểm tra đường tiếng và bộ nhớ máy chủ.") from exc
 
+    # pyannote 4 may return DiarizeOutput rather than an Annotation directly.
+    annotation = getattr(annotation, "exclusive_speaker_diarization", None) or getattr(
+        annotation, "speaker_diarization", annotation)
     turns = [
         {"start": float(seg.start), "end": float(seg.end), "speaker": str(label)}
         for seg, _, label in annotation.itertracks(yield_label=True)
@@ -235,17 +335,24 @@ def run(
 
 
 def _progress_hook(on_progress):
-    """ProgressHook của pyannote, nếu bản đang cài có. Không có thì bỏ qua."""
+    """Translate pyannote batch callbacks to monotonic progress in the Studio, not a console bar."""
     if on_progress is None:
         return None
-    try:
-        from pyannote.audio.pipelines.utils.hook import ProgressHook
-    except Exception:
-        return None
-    try:
-        return ProgressHook()
-    except Exception:
-        return None
+    spans = {"segmentation": (0, .45), "embeddings": (.45, .92), "discrete_diarization": (.92, .98)}
+    previous = -1.
+
+    def hook(step_name, step_artifact=None, file=None, total=None, completed=None):
+        nonlocal previous
+        if step_name not in spans:
+            return
+        start, end = spans[step_name]
+        ratio = min(1., max(0., completed / total)) if total and completed is not None else 1.
+        progress = start + (end - start) * ratio
+        if progress > previous:
+            on_progress(progress)
+            previous = progress
+
+    return hook
 
 
 def relabel_by_talktime(turns: list[dict]) -> list[dict]:
@@ -259,6 +366,36 @@ def relabel_by_talktime(turns: list[dict]) -> list[dict]:
 
 
 # ------------------------------------------------------------------ gán nhãn
+
+
+def _split_spoken_cue(cue: Cue, turns: list[dict]) -> list[Cue]:
+    """Split only at timed words with unambiguous evidence for a different voice."""
+    if cue.pinned or cue.speaker_fixed or cue.text2 or len(cue.words) < 2 or len({t["speaker"] for t in turns}) < 2:
+        return [cue]
+    cuts = [0]
+    last = ""
+    for i, w in enumerate(cue.words):
+        a, b = w["start"], w["end"]
+        if b <= a:
+            continue
+        roles = {t["speaker"] for t in turns
+                 if min(t["end"], b) - max(t["start"], a) >= (b - a) * CONFIDENT_RATIO}
+        if len(roles) == 1:
+            who = next(iter(roles))
+            if last and who != last and a > max(cue.start, cue.words[cuts[-1]]["start"]) and a < cue.end:
+                cuts.append(i)
+            last = who
+    if len(cuts) == 1:
+        return [cue]
+    parts = []
+    for i, j in zip(cuts, cuts[1:] + [len(cue.words)]):
+        words = cue.words[i:j]
+        start = max(cue.start, words[0]["start"]) if i else cue.start
+        end = min(cue.end, cue.words[j]["start"], words[-1]["end"]) if j < len(cue.words) else cue.end
+        if end <= start:
+            return [cue]
+        parts.append(Cue(start, end, "".join(w["word"] for w in words).strip(), words=words))
+    return parts
 
 
 def assign(cues: list[Cue], turns: list[dict]) -> dict:
@@ -277,37 +414,59 @@ def assign(cues: list[Cue], turns: list[dict]) -> dict:
     * **Tiếng nói chồng lấn.** pyannote trả nhiều lượt cùng lúc; công thức
       chồng lấn lớn nhất vẫn chọn được người nói chính của cue đó.
     """
-    stats = {"total": len(cues), "labeled": 0, "unsure": 0, "empty": 0, "speakers": 0}
+    stats = {"total": len(cues), "labeled": 0, "unsure": 0, "empty": 0, "speakers": 0, "review_at": []}
     if not cues:
         return stats
     if not turns:
         for cue in cues:
-            cue.speaker = ""
-        stats["empty"] = len(cues)
+            if not cue.speaker_fixed:
+                cue.speaker = ""
+        stats["labeled"] = sum(bool(c.speaker) for c in cues)
+        stats["empty"] = len(cues) - stats["labeled"]
+        stats["speakers"] = len({c.speaker for c in cues if c.speaker})
         return stats
 
+    pieces = []
     for cue in cues:
-        best, best_overlap = "", 0.0
+        local = []
         for turn in turns:
             if turn["start"] >= cue.end:
-                break  # turns đã sắp theo start -> phía sau không thể chồng lấn
+                break
+            if turn["end"] > cue.start:
+                local.append(turn)
+        pieces.extend((part, local) for part in _split_spoken_cue(cue, local))
+    cues[:] = [part for part, _ in pieces]
+    stats["total"] = len(cues)
+    for cue, local in pieces:
+        if cue.speaker_fixed:
+            stats["labeled" if cue.speaker else "empty"] += 1
+            continue
+        overlap = {}
+        for turn in local:
             gap = min(cue.end, turn["end"]) - max(cue.start, turn["start"])
-            if gap > best_overlap:
-                best, best_overlap = turn["speaker"], gap
+            if gap > 0:
+                who = turn["speaker"]
+                overlap[who] = overlap.get(who, 0.0) + gap
+        best = max(overlap, key=overlap.get) if overlap else ""
+        best_overlap = overlap.get(best, 0.0)
 
         if not best:
             best = _nearest(cue, turns)
             if best:
                 stats["labeled"] += 1
                 stats["unsure"] += 1
+                if len(stats["review_at"]) < 6:
+                    stats["review_at"].append(cue.start)
             else:
                 stats["empty"] += 1
             cue.speaker = best
             continue
 
         span = max(0.01, cue.end - cue.start)
-        if best_overlap / span < CONFIDENT_RATIO:
+        if best_overlap / max(span, sum(overlap.values())) < CONFIDENT_RATIO:
             stats["unsure"] += 1
+            if len(stats["review_at"]) < 6:
+                stats["review_at"].append(cue.start)
         stats["labeled"] += 1
         cue.speaker = best
 

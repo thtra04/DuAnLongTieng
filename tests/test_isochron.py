@@ -169,8 +169,8 @@ def test_vong_lap_ngan_sach_gui_kem_cau_goc():
 
     def tightener(requests):
         seen.extend(requests)
-        return ["Ta thắng rồi." for _ in requests]
+        return ["Chúng ta thắng rồi." for _ in requests]
 
     stats = budget.run_loop(cues, tightener, MoHinh())
     assert seen and seen[0]["source"] == "我们获胜了。"
-    assert cues[0].text2 == "Ta thắng rồi." and stats["tightened"] == 1
+    assert cues[0].text2 == "Chúng ta thắng rồi." and stats["tightened"] == 1

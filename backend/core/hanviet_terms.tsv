@@ -1,0 +1,97 @@
+# Loại / dạng giản thể và phồn thể / cách dùng trong tiếng Việt / diễn nghĩa tiếng Trung cho MT khi nằm trong câu.
+place	北京	Bắc Kinh
+place	南京	Nam Kinh
+place	上海	Thượng Hải
+place	重庆/重慶	Trùng Khánh
+place	长安/長安	Trường An
+place	洛阳/洛陽	Lạc Dương
+place	苏州/蘇州	Tô Châu
+place	杭州	Hàng Châu
+place	广州/廣州	Quảng Châu
+place	成都	Thành Đô
+place	开封/開封	Khai Phong
+place	汴京	Biện Kinh
+place	金陵	Kim Lăng
+place	西安	Tây An
+place	云南/雲南	Vân Nam
+place	四川	Tứ Xuyên
+place	陕西/陝西	Thiểm Tây
+place	山西	Sơn Tây
+place	江南	Giang Nam
+place	长江/長江	Trường Giang
+place	黄河/黃河	Hoàng Hà
+place	泰山	Thái Sơn
+place	武当山/武當山	núi Võ Đang
+place	少林寺	chùa Thiếu Lâm
+place	紫禁城	Tử Cấm Thành
+place	北京大学/北京大學	Đại học Bắc Kinh
+person	曹操	Tào Tháo
+person	司马懿/司馬懿	Tư Mã Ý
+person	诸葛亮/諸葛亮	Gia Cát Lượng
+person	刘备/劉備	Lưu Bị
+person	关羽/關羽	Quan Vũ
+person	孙权/孫權	Tôn Quyền
+person	秦始皇	Tần Thủy Hoàng
+person	武则天/武則天	Võ Tắc Thiên
+person	李白	Lý Bạch
+person	杜甫	Đỗ Phủ
+person	孔子	Khổng Tử
+title	郎君	lang quân
+title	夫君	phu quân
+title	夫人	phu nhân
+title	小娘子	tiểu nương tử
+title	娘子	nương tử
+title	奴家	thiếp
+title	公子	công tử
+title	少爷/少爺	thiếu gia
+title	老爷/老爺	lão gia
+title	陛下	bệ hạ
+title	殿下	điện hạ
+title	太后	thái hậu
+title	皇帝	hoàng đế
+title	皇后	hoàng hậu
+title	王爷/王爺	vương gia
+title	太子	thái tử
+title	公主	công chúa
+title	县令/縣令	huyện lệnh
+title	知府	tri phủ
+title	师父/師父	sư phụ
+title	师兄/師兄	sư huynh
+title	师姐/師姐	sư tỷ
+title	师妹/師妹	sư muội
+title	师弟/師弟	sư đệ
+noun	歹人	kẻ xấu	坏人
+noun	贵客/貴客	khách quý	尊贵的客人
+noun	银两/銀兩	bạc nén
+noun	银票/銀票	ngân phiếu
+noun	盘缠/盤纏	lộ phí	路费
+noun	用度	chi tiêu	开销
+noun	客栈/客棧	quán trọ	旅店
+noun	衙门/衙門	nha môn
+noun	圣旨/聖旨	thánh chỉ
+noun	玉佩	ngọc bội
+noun	药方/藥方	đơn thuốc
+noun	燕窝/燕窩	tổ yến
+noun	嫁妆/嫁妝	của hồi môn
+noun	王朝	vương triều
+noun	身份证/身份證	thẻ căn cước
+noun	护照/護照	hộ chiếu
+noun	急诊室/急診室	phòng cấp cứu
+noun	火车站/火車站	ga tàu
+noun	博物馆/博物館	bảo tàng
+idiom	锦衣玉食/錦衣玉食	ăn ngon mặc đẹp	吃得好穿得好
+idiom	粗茶淡饭/粗茶淡飯	món ăn đạm bạc	简朴的饭菜
+idiom	衣食无忧/衣食無憂	không lo cơm áo	不用担心吃穿
+idiom	吃穿不愁	không lo cái ăn cái mặc	不用担心吃穿
+idiom	不愁用度	không lo chi tiêu	不用担心开销
+idiom	好大的口气/好大的口氣	khẩu khí lớn thật	好狂妄的语气
+idiom	美若天仙	đẹp tựa thiên tiên	像仙女一样美
+idiom	来历不明/來歷不明	không rõ lai lịch	身份不明
+idiom	深更半夜	đêm hôm khuya khoắt	深夜
+idiom	威风凛凛/威風凜凜	oai phong lẫm liệt	非常威严
+idiom	刮目相看	nhìn bằng con mắt khác	重新看待
+idiom	一见如故/一見如故	mới gặp mà như đã thân quen	初次见面就像老朋友
+idiom	身不由己	thân bất do kỷ	无法自己做主
+idiom	一言为定/一言為定	nhất ngôn vi định	说好了不反悔
+idiom	画蛇添足/畫蛇添足	vẽ rắn thêm chân	做多余的事
+idiom	雪中送炭	giúp người lúc hoạn nạn	在人困难时帮助他

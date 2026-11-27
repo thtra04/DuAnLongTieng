@@ -9,9 +9,11 @@ import os
 import re
 import threading
 import time
+from difflib import SequenceMatcher
 from typing import Callable
 
-from .languages import google_code, name_en, nllb_code
+from . import hanviet, workspaces, zh_terms
+from .languages import BY_CODE, google_code, name_en, nllb_code
 from .subtitles import SENTENCE_END, Cue
 
 _CACHE_LOCK = threading.Lock()
@@ -24,7 +26,7 @@ def _translation_cache_file():
     global _CACHE_FILE
     if _CACHE_FILE is None:
         _CACHE_FILE = DATA_DIR / "translation_cache.json"
-    return _CACHE_FILE
+    return workspaces.file_for(_CACHE_FILE)
 
 
 def _cache_key(texts, source, target, engine, model, note, mode, glossary, base_url="", extra=None) -> str:
@@ -73,6 +75,7 @@ def _write_cached(key: str, value: list[str]) -> None:
             if not isinstance(data, dict):
                 data = {}
             data[key] = value
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
@@ -188,16 +191,20 @@ def engine_available(engine: str) -> tuple[bool, str]:
 
 # ------------------------------------------------------- gom cue thành câu
 
-# Whisper cắt cue theo độ dài/khoảng lặng nên một câu thường nằm vắt qua nhiều
-# cue. Dịch từng mảnh rời sẽ ra kết quả sai nghĩa, nhất là với tiếng Trung/Nhật.
-# Vì vậy ta gom các cue thuộc cùng một câu lại, dịch trọn câu, rồi chia bản dịch
-# về lại từng cue theo tỉ lệ độ dài.
+# Nhóm để đọc thành câu. Bước dịch giữ quan hệ một dòng gốc -> một dòng đích.
 GROUP_MAX_CUES = 6
 GROUP_MAX_CHARS = 240
 GROUP_MAX_GAP = 1.5  # giây — im lặng dài hơn ngần này coi như sang câu khác
 
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿]")
 _CLOSERS = "\"'”’)]}»"
+
+# Chữ Thái, Lào, Khmer, Miến Điện: viết liền, gần như không dùng dấu chấm câu
+# (Whisper ra tiếng Thái hầu như không có dấu "."), nên dấu câu không cho biết câu
+# hết ở đâu — y như chữ Hán. Đo thật (phim Thái 468 dòng): không có luật này thì
+# 310 dòng bị gom 2–6 dòng một "câu" rồi chia bản dịch theo tỉ lệ ký tự → 30 % dòng
+# dịch mở đầu bằng đuôi câu trước, chữ hiện trễ 1,5–3 s so với lời.
+_NO_STOP = re.compile(r"[฀-๿຀-໿ក-៿က-႟]")
 
 
 def _ends_sentence(text: str) -> bool:
@@ -207,16 +214,16 @@ def _ends_sentence(text: str) -> bool:
 def _cue_seg(cue: Cue):
     """Chỉ số đoạn Whisper mà cue này thuộc về (asr gắn vào từng từ), nếu có."""
     words = getattr(cue, "words", None) or []
-    return words[0].get("seg") if words and isinstance(words[0], dict) else None
+    return words[0].get("seg") if words and isinstance(words[0], dict) else cue.segment
 
 
 def _cjk_segment_break(prev: Cue, cue: Cue, split_lines: bool = False) -> bool:
-    """Chữ Hán/Nhật không có dấu câu nên không biết câu kết thúc ở đâu; coi mỗi
-    cue là một câu, trừ khi hai cue thuộc cùng một đoạn Whisper (bị chẻ vì quá
-    dài). Gộp rồi chia ngược theo tỉ lệ ký tự làm bản dịch lệch dòng (đo thật:
-    dòng sau hiện đuôi câu trước)."""
+    """Chữ Hán/Nhật (và Thái, Lào, Khmer, Miến — xem `_NO_STOP`) không có dấu câu
+    nên không biết câu kết thúc ở đâu; coi mỗi cue là một câu, trừ khi hai cue
+    thuộc cùng một đoạn Whisper (bị chẻ vì quá dài). Gộp rồi chia ngược theo tỉ lệ
+    ký tự làm bản dịch lệch dòng (đo thật: dòng sau hiện đuôi câu trước)."""
     text = prev.text.strip()
-    if not _CJK.search(text) or _ends_sentence(text):
+    if not (_CJK.search(text) or _NO_STOP.search(text)) or _ends_sentence(text):
         return False
     a, b = _cue_seg(prev), _cue_seg(cue)
     if a is None or b is None:
@@ -230,8 +237,8 @@ def _cjk_segment_break(prev: Cue, cue: Cue, split_lines: bool = False) -> bool:
 def group_cues(cues: list[Cue], split_cjk_lines: bool = False) -> list[list[int]]:
     """Chia chỉ số cue thành từng nhóm, mỗi nhóm cố gắng là một câu trọn vẹn.
 
-    `split_cjk_lines=True` (bước dịch): cue chữ Hán/Nhật không dấu câu mà không
-    biết chắc là cùng một đoạn Whisper thì mỗi cue một nhóm — gộp rồi chia lại
+    `split_cjk_lines=True` (bước dịch): cue chữ Hán/Nhật/Thái (xem `_NO_STOP`) không
+    dấu câu mà không biết chắc là cùng một đoạn Whisper thì mỗi cue một nhóm — gộp rồi chia lại
     theo tỉ lệ ký tự làm bản dịch lệch dòng. Mặc định False cho khâu lồng tiếng:
     ở đó gộp thành câu đọc dài vẫn hay hơn (đo thật: tách từng cue làm số câu
     phải nén tăng từ 17 % lên 28 %)."""
@@ -252,6 +259,8 @@ def group_cues(cues: list[Cue], split_cjk_lines: bool = False) -> list[list[int]
             gap = cue.start - prev.end
             if (
                 gap > GROUP_MAX_GAP
+                or cue.speaker != prev.speaker
+                or cue.pinned or prev.pinned
                 or len(cur) >= GROUP_MAX_CUES
                 or cur_chars + len(text) > GROUP_MAX_CHARS
                 or _cjk_segment_break(prev, cue, split_cjk_lines)
@@ -344,38 +353,49 @@ def translate_cues(
     lướt kịch bản một lượt trước khi dịch. `use_memory` dùng lại những câu người dùng
     đã sửa tay ở các dự án trước (bộ nhớ dịch).
 
-    Đơn vị gửi đi dịch là **câu** chứ không phải cue: các cue thuộc cùng một câu
-    được ghép lại, dịch một lần rồi chia ngược về từng cue. Nhờ vậy bản dịch
-    đúng ngữ pháp và khớp với chữ đang hiện trên màn hình.
+    Các dòng đi cùng lô để có ngữ cảnh nhưng mỗi kết quả thuộc đúng một mốc.
+    Chia lại một bản dịch theo số ký tự có thể chuyển cả ý phủ định sang vai kế.
     """
     if not any(c.text.strip() for c in cues):
         return cues
+    if engine in ("nllb", "mymemory") and not source:
+        raise TranslateError("Engine này cần biết ngôn ngữ nguồn. Chọn đúng nguyên ngữ ở bước 2.")
+    if engine == "nllb" and (source not in BY_CODE or target not in BY_CODE):
+        raise TranslateError(f"NLLB chưa cấu hình cặp {source} → {target}; chọn lại ngôn ngữ hoặc engine.")
 
     ok, reason = engine_available(engine)
     if not ok:
         raise TranslateError(reason)
 
-    groups = group_cues(cues, split_cjk_lines=True)
-    texts = [_join_fragments([cues[i].text.strip() for i in g]) for g in groups]
-    if on_log and len(groups) < len(cues):
-        on_log(f"Gom {len(cues)} dòng thành {len(groups)} câu để dịch trọn ý.")
+    lines = [c for c in cues if c.text.strip()]
+    texts = [c.text.strip() for c in lines]
 
     is_ai = engine in ("claude", "openai")
-    speakers = _speaker_labels(cues, groups, cast) if is_ai else None
+    speakers = _speaker_labels(lines, cast) if is_ai else None
     examples: list[tuple[str, str]] = []
     remembered: dict[int, str] = {}
     if use_memory:
         remembered, examples = _recall(texts, source, target, on_log)
 
+    manual = parse_glossary(glossary)
+    lex = zh_terms.Lexicon(texts, manual) if hanviet.enabled(source, target) else None
+    if lex and manual:
+        hanviet.learn([p for p in manual if hanviet.is_han(p[0])], "thuật ngữ")
+    if lex and is_ai:
+        explicit = dict(manual)
+        hints = [f"{r['zh']} = {r['vi']}" for r in lex.suggest(texts)
+                 if r["zh"] not in explicit and len(r["zh"]) > 1]
+        glossary = "\n".join(filter(None, [glossary, "\n".join(hints[:160])]))
     out = None
     cache_key = None
     if is_ai:
         cache_model = model or ("claude-opus-5" if engine == "claude" else "gpt-4o-mini")
-        extra = {"ctx": 2, "speakers": speakers, "brief": bool(auto_context), "examples": examples}
+        extra = {"ctx": 3, "speakers": speakers, "cast": _cast_note(cast, speakers),
+                 "brief": bool(auto_context), "examples": examples}
         cache_key = _cache_key(
             texts, source, target, engine, cache_model,
             context_note, translation_mode, glossary, base_url,
-            extra=extra if (speakers or auto_context or examples) else {"ctx": 2},
+            extra=extra,
         )
         out = _read_cached(cache_key)
         if out is not None:
@@ -384,32 +404,35 @@ def translate_cues(
             if on_progress:
                 on_progress(1.0)
 
-    from . import hanviet
-
-    use_hv = hanviet.enabled(source, target)
-    manual = parse_glossary(glossary)
-    if use_hv and manual:
-        # bộ thuật ngữ người dùng gõ cũng là thứ đáng nhớ: tập sau, dự án sau tự áp
-        hanviet.learn([p for p in manual if hanviet.is_han(p[0])], "thuật ngữ")
-
     if engine in ("google", "mymemory", "nllb"):
-        # Engine miễn phí không nhận chỉ dẫn, nên bộ thuật ngữ được cài thẳng vào câu
-        # gốc trước khi gửi đi: tên riêng và xưng hô ra đúng như người dùng đã ghi.
-        pairs = list(manual)
-        if use_hv:
-            # + cụm Hán Việt đã học ở các lần trước (người sửa tay, bộ thuật ngữ cũ, tên trong bản AI)
-            auto = hanviet.learned_pairs(texts, exclude={p[0] for p in manual})
-            if auto and on_log:
-                shown = ", ".join(f"{z} → {v}" for z, v in auto[:6]) + (" …" if len(auto) > 6 else "")
-                on_log(f"Cài {len(auto)} cụm Hán Việt đã học vào câu gốc: {shown}")
-            pairs = sorted(pairs + auto, key=lambda p: -len(p[0]))
-        sent, used = apply_glossary(texts, pairs)
-        if used and on_log:
-            on_log(f"Áp bộ thuật ngữ vào {used} câu trước khi dịch ({len(pairs)} mục).")
-        if engine == "nllb":
-            out = _translate_nllb(sent, source, target, on_progress, on_log)
-        else:
-            out = _translate_deep(sent, source, target, engine, on_progress, on_log)
+        def run(batch, progress):
+            result = (_translate_nllb(batch, source, target, progress, on_log) if engine == "nllb"
+                      else _translate_deep(batch, source, target, engine, progress, on_log))
+            if len(result) != len(batch):
+                raise TranslateError("Số dòng nhận được không khớp với lời gốc.")
+            return result
+
+        sent, _ = apply_glossary(texts, [p for p in manual if not lex or not hanviet.is_han(p[0])])
+        out = [lex.direct(t) if lex else "" for t in sent]
+        pending = [i for i, val in enumerate(out) if not val]
+        prepared = [lex.prepare(sent[i]) if lex else (sent[i], {}) for i in pending]
+        retry = []
+        if pending:
+            for i, (_, slots), raw in zip(pending, prepared, run([t for t, _ in prepared], on_progress)):
+                val = zh_terms.restore(raw or "", slots)
+                if val is None:
+                    retry.append(i)
+                else:
+                    out[i] = val
+        if retry:
+            if on_log:
+                on_log(f"{len(retry)} dòng không giữ đủ tên: dịch lại nguyên câu, cần duyệt tên.")
+            for i, raw in zip(retry, run([lex.prepare(sent[i], protect=False)[0] for i in retry], None)):
+                out[i] = raw
+        if lex and on_log:
+            on_log(f"Đối chiếu tên và âm Hán Việt: {len(texts)-len(pending)} dòng khớp trọn mục từ hoặc lời giới thiệu.")
+        if not pending and on_progress:
+            on_progress(1.0)
     elif is_ai and out is None:
         out = _translate_ai(
             engine, texts, source, target, api_key, model, base_url, context_note,
@@ -419,12 +442,14 @@ def translate_cues(
     elif not is_ai:
         raise TranslateError(f"Engine không hỗ trợ: {engine}")
 
-    if cache_key is not None and out is not None:
+    if len(out) != len(lines):
+        raise TranslateError("Số dòng nhận được không khớp với lời gốc; không gán bản dịch lệch mốc.")
+    if cache_key is not None and all(out):
         _write_cached(cache_key, out)
 
-    if use_hv and out is not None:
+    if lex and out is not None:
         # Phiên âm pinyin engine để sót ("Lang Jun", "Huo") → âm Hán Việt của đúng chữ trong câu gốc
-        known = {z: t["vi"] for z, t in hanviet.load().items()} | dict(manual)
+        known = {z: t.vi for z, t in lex.terms.items()}
         fixed = []
         for i, (src, tr) in enumerate(zip(texts, out)):
             new, changes = hanviet.fix_pinyin(src, tr or "", known)
@@ -440,17 +465,22 @@ def translate_cues(
     # Câu người dùng từng sửa tay thắng mọi engine: họ đã quyết định câu đó rồi.
     for i, tr in remembered.items():
         out[i] = tr
+    # A glossary entry for this entire line is an explicit project decision,
+    # not source text for MT to reinterpret (or for an older memory to override).
+    exact_terms = {src.casefold(): dst for src, dst in manual}
+    for i, text in enumerate(texts):
+        term = exact_terms.get(text.casefold())
+        if term:
+            out[i] = term
 
     _warn_long_translations(texts, out, translation_mode, on_log)
 
-    for g, tr in zip(groups, out):
-        tr = (tr or "").strip()
-        if len(g) == 1:
-            cues[g[0]].text2 = tr
-            continue
-        weights = [max(1, len(cues[i].text.strip())) for i in g]
-        for i, part in zip(g, split_proportional(tr, weights)):
-            cues[i].text2 = part
+    for i, (cue, tr) in enumerate(zip(lines, out)):
+        cue.text2 = (tr or "").strip()
+        cue.translation_reviewed = i in remembered or texts[i].casefold() in exact_terms
+    missing = sum(not c.text2 for c in lines)
+    if missing and on_log:
+        on_log(f"Còn {missing} dòng thiếu bản dịch — xem nhãn “Chưa dịch” ở bước 4.")
     return cues
 
 
@@ -549,7 +579,7 @@ def _translate_gtx(
         joined = "\n".join(clean[i] or "…" for i in batch)
         raw = attempt(joined)
         parts = [p.strip() for p in raw.split("\n")]
-        if len(parts) != len(batch):
+        if len(parts) != len(batch) or any(clean[i] and not p for i, p in zip(batch, parts)):
             if on_log:
                 on_log(f"Lô {bi + 1}: Google gộp/tách dòng khác đầu vào — dịch từng dòng của lô này.")
             parts = []
@@ -619,7 +649,7 @@ def _translate_deep(
             try:
                 raw = tr.translate(joined) or ""
                 parts = [p.strip() for p in re.split(r"⟦\s*⟧", raw)]
-                if len(parts) == len(batch):
+                if len(parts) == len(batch) and all(p or not texts[i] for i, p in zip(batch, parts)):
                     translated = parts
                     break
                 # tách sai -> dịch từng dòng
@@ -702,7 +732,9 @@ def lora_available() -> bool:
     """
     import importlib.util
 
-    if os.environ.get("VSUB_NLLB_LORA", "1") == "0" or not lora_langs():
+    from . import isochron
+
+    if os.environ.get("VSUB_NLLB_LORA", "1") == "0" or not (lora_langs() or isochron.dialogue_adapters()):
         return False
     return importlib.util.find_spec("peft") is not None
 
@@ -736,7 +768,9 @@ def _attach_lora(tok, mdl, langs: list[str]):
     from . import isochron
     from ..config import MODEL_DIR
 
-    first = isochron.adapter_dir(MODEL_DIR, langs[0])
+    paths = {lang: isochron.adapter_dir(MODEL_DIR, lang) for lang in langs}
+    paths.update(isochron.dialogue_adapters())
+    first_name, first = next(iter(paths.items()))
     lora_tok = AutoTokenizer.from_pretrained(str(first))
     old = mdl.get_input_embeddings().weight.shape[0]
     if len(lora_tok) > old:
@@ -746,14 +780,13 @@ def _attach_lora(tok, mdl, langs: list[str]):
         with torch.no_grad():
             w = mdl.get_input_embeddings().weight
             w[old:] = w[:old].mean(dim=0, keepdim=True)
-    mdl = PeftModel.from_pretrained(mdl, str(first), adapter_name=langs[0])
-    loaded = [langs[0]]
-    tokens = (first / "added_tokens.json").read_text(encoding="utf-8")
-    for lang in langs[1:]:
-        path = isochron.adapter_dir(MODEL_DIR, lang)
+    mdl = PeftModel.from_pretrained(mdl, str(first), adapter_name=first_name)
+    loaded = [first_name]
+    tokens = json.loads((first / "added_tokens.json").read_text(encoding="utf-8"))
+    for lang, path in list(paths.items())[1:]:
         try:
             # mọi adapter phải thêm đúng 60 token như nhau thì mới dùng chung một tokenizer
-            if (path / "added_tokens.json").read_text(encoding="utf-8") != tokens:
+            if json.loads((path / "added_tokens.json").read_text(encoding="utf-8")) != tokens:
                 continue
             mdl.load_adapter(str(path), adapter_name=lang)
             loaded.append(lang)
@@ -762,14 +795,24 @@ def _attach_lora(tok, mdl, langs: list[str]):
     return lora_tok, mdl, tuple(loaded)
 
 
-def _adapter_plan(loaded: tuple, source: str | None, target: str | None) -> tuple[str | None, bool]:
+def _adapter_plan(loaded: tuple, source: str | None, target: str | None, *, budgeted=False, spoken=False) -> tuple[str | None, bool]:
     """(adapter cần bật, có phải tắt adapter không) cho một lượt dịch.
 
     Không có adapter nào được nạp → chạy thẳng mô hình; có nạp nhưng cặp này không có
     adapter của nó → tắt hết adapter để ra đúng NLLB gốc.
     """
+    from . import isochron
+
+    if spoken:
+        if source != "vi" or target != "vi" or "spoken_vi" not in loaded:
+            raise TranslateError("Chưa nạp được model lời đọc tiếng Việt; giữ nguyên lời đã duyệt.")
+        return "spoken_vi", False
     if not loaded:
         return None, False
+    if source and target and nllb_code(target) == "vie_Latn" and not budgeted:
+        meaning = f"meaning_{isochron.lang_key(nllb_code(source))}"
+        if meaning in loaded:
+            return meaning, False
     name = lora_for(source, target)
     if name in loaded:
         return name, False
@@ -817,7 +860,7 @@ def _nllb_inputs(texts: list[str], budgets: list | None = None) -> list[str]:
     return [isochron.with_budget(t if t.strip() else "…", n) for t, n in zip(texts, budgets)]
 
 
-def _translate_nllb(texts, source, target, on_progress=None, on_log=None, budgets=None) -> list[str]:
+def _translate_nllb(texts, source, target, on_progress=None, on_log=None, budgets=None, *, spoken=False) -> list[str]:
     """Dịch bằng NLLB-200. `budgets[i]` (số âm tiết) chỉ có tác dụng khi adapter đẳng thời
     của ngôn ngữ nguồn này đang được dùng; không thì bị bỏ qua."""
     import contextlib
@@ -827,11 +870,11 @@ def _translate_nllb(texts, source, target, on_progress=None, on_log=None, budget
     from . import isochron
 
     tok, mdl, device, lora = _load_nllb()
-    name, disable = _adapter_plan(lora, source, target)
+    name, disable = _adapter_plan(lora, source, target, budgeted=bool(budgets), spoken=spoken)
     use_lora = name is not None
     if on_log:
         on_log(f"NLLB-200 chạy trên {device.upper()}"
-               + (f" · adapter đẳng thời HP-4 (LoRA {name} → vi)" if use_lora else ""))
+               + (f" · LoRA {name} → vi" if use_lora else ""))
 
     src = nllb_code(source or "en")
     tgt = nllb_code(target)
@@ -903,6 +946,43 @@ def _nllb_tightener(source: str, target: str, on_log=None):
     return tighten
 
 
+def spoken_tightener(on_log=None):
+    """Only operate on the accepted Vietnamese, never retranslate the source for TTS."""
+    from . import budget, duration, isochron, shorten
+
+    rules = shorten.make_tightener(on_log=on_log)
+    if os.environ.get("VSUB_NLLB_LORA") == "0" or "spoken_vi" not in isochron.dialogue_adapters():
+        return rules
+
+    def tighten(requests):
+        out = [budget._shorter_line(r["text"], v) for r, v in zip(requests, rules(requests))]
+        pending = [i for i, r in enumerate(requests) if duration.syllables(out[i]) > r["target_syllables"]]
+        if not pending:
+            return out
+        try:
+            raw = _translate_nllb([requests[i]["text"] for i in pending], "vi", "vi", on_log=on_log,
+                                  budgets=[requests[i]["target_syllables"] for i in pending], spoken=True)
+        except Exception as exc:
+            if on_log:
+                on_log(f"Không dùng được model lời đọc; giữ phương án theo luật: {exc}")
+            return out
+        if len(raw) != len(pending):
+            return out
+        for i, proposal in zip(pending, raw):
+            before = requests[i]["text"]
+            line = budget._shorter_line(before, proposal)
+            # Copy-biased weak supervision sometimes invents new words. Abstain on
+            # materially different rewrites rather than trusting their token count.
+            a, b = (re.findall(r"\w+", s.casefold()) for s in (before, line))
+            original_order = iter(a)
+            if (duration.syllables(line) < duration.syllables(out[i])
+                    and all(word in original_order for word in b) and SequenceMatcher(None, a, b).ratio() >= .72):
+                out[i] = line
+        return out
+
+    return tighten
+
+
 # ----------------------------------------------- rút gọn có kiểm soát (HP-5)
 
 _TIGHTEN_PROMPT = """Bạn là biên tập viên lồng tiếng {tgt}. Mỗi dòng dưới đây là một câu thoại
@@ -910,7 +990,7 @@ _TIGHTEN_PROMPT = """Bạn là biên tập viên lồng tiếng {tgt}. Mỗi dò
 
 Định dạng đầu vào: `<số dòng>|<số âm tiết tối đa>|<câu>`.
 Quy tắc bắt buộc:
-- Câu viết lại KHÔNG được quá số âm tiết tối đa đã cho ở dòng đó.
+- Số âm tiết là mục tiêu. Nếu không thể rút mà giữ đủ nghĩa (kể cả phủ định, điều kiện), trả lại câu cũ.
 - Giữ nguyên ý chính, sắc thái, tên riêng và số liệu; bỏ từ đệm, rút gọn cách diễn đạt.
 - Không thêm ý mới, không chú thích, không xuống dòng bên trong một câu.
 - Trả về ĐÚNG số dòng, mỗi dòng dạng `<số dòng>|<câu đã rút gọn>`, không thêm lời dẫn."""
@@ -923,7 +1003,7 @@ sang {tgt} sao cho gọn, vừa khung.
 
 Định dạng đầu vào: `<số dòng>|<số âm tiết tối đa>|<câu gốc>|<bản dịch hiện tại>`.
 Quy tắc bắt buộc:
-- Câu dịch mới KHÔNG được quá số âm tiết tối đa đã cho ở dòng đó.
+- Số âm tiết là mục tiêu, không được bỏ nghĩa để ép vừa khung. Không rút được thì trả lại bản dịch hiện tại.
 - Đủ ý của câu gốc; giữ cách xưng hô, tên riêng và giọng điệu của bản dịch hiện tại.
 - Là lời nói tự nhiên, trọn câu — chọn cách nói ngắn hơn chứ không cắt cụt câu.
 - Không thêm ý mới, không chú thích, không xuống dòng bên trong một câu.
@@ -954,6 +1034,9 @@ def _openai_client(api_key: str, base_url: str = "", timeout: float | None = Non
         raise TranslateError("Chưa có API key: nhập ở bước 2 hoặc đặt biến môi trường OPENAI_API_KEY.")
     args: dict = {"api_key": key}
     if base_url.strip():
+        host_endpoint = os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+        if not api_key and base_url.strip().rstrip("/") != host_endpoint.rstrip("/"):
+            raise TranslateError("Endpoint riêng cần API key riêng; không gửi khóa của studio sang endpoint khác.")
         args["base_url"] = base_url.strip().rstrip("/")
     # max_retries: SDK tự thử lại khi lỗi mạng / 429 / 5xx; phần còn lại do _with_retry lo
     return OpenAI(timeout=timeout or ai_timeout(), max_retries=retries, **args)
@@ -1158,9 +1241,9 @@ Chất lượng dịch:
   Câu rút gọn, đại từ, câu trả lời cộc lốc phải hiểu theo câu trước đó chứ không dịch rời từng dòng.
 - Dịch tự nhiên như người bản xứ nói, không dịch từng chữ. Thành ngữ, tiếng lóng dịch theo nghĩa.
 - Chế độ dịch hiện tại: {mode}.
-- Giữ số từ gần bản gốc nhất có thể, thường trong khoảng 75–125% số từ gốc.
-    Không thêm ý giải thích. Nếu bản dịch dài, hãy chủ động rút gọn mà vẫn giữ ý chính.
-- Với chế độ tối ưu lồng tiếng, ưu tiên câu ngắn, dễ nói và vừa thời lượng cue hơn dịch sát từng chữ.
+- Giữ đủ nghĩa của chính dòng mang số đó, nhất là phủ định, điều kiện, số lượng và người thực hiện.
+  Không chuyển ý sang mốc khác. Không ép số từ theo nguyên ngữ, đặc biệt với tiếng viết liền.
+- Với chế độ tối ưu lồng tiếng, chọn cách nói gọn khi tương đương về nghĩa; nếu không thì giữ đủ ý.
 - Giữ nguyên thương hiệu, số liệu, đơn vị. {names}
 - Một tên riêng, một thuật ngữ, một cặp xưng hô đã dùng ở phần trước thì dùng lại y như vậy.{pronouns}{note}{cast}{brief}{glossary}{examples}"""
 
@@ -1245,12 +1328,12 @@ def _cast_label(person: dict) -> str:
     return (person.get("name") or person.get("id") or "").strip()
 
 
-def _speaker_labels(cues: list[Cue], groups: list[list[int]], cast: list[dict] | None) -> list[str] | None:
+def _speaker_labels(cues: list[Cue], cast: list[dict] | None) -> list[str] | None:
     """Tên người nói của từng câu gửi đi dịch, hoặc None nếu phụ đề chưa gán vai."""
     names = {str(p.get("id") or ""): _cast_label(p) for p in (cast or [])}
     labels = []
-    for g in groups:
-        sid = (cues[g[0]].speaker or "").strip()
+    for cue in cues:
+        sid = (cue.speaker or "").strip()
         labels.append(names.get(sid) or sid)
     return labels if any(labels) else None
 
@@ -1375,33 +1458,6 @@ def _parse_numbered(raw: str, offset: int, count: int) -> list[str]:
     return out
 
 
-def _apply_parsed(results: list[str], batch: list[int], texts: list[str], parsed: list[str]) -> int:
-    """Ghi kết quả đã đọc vào `results`. Trả về số dòng AI bỏ sót.
-
-    Dòng bị bỏ sót thì giữ nguyên văn gốc — thà để nguyên chữ gốc còn hơn mất
-    dòng, nhưng phải đếm lại để nói cho người dùng biết, không thì phụ đề lẫn
-    chữ nước ngoài mà chẳng ai hay.
-    """
-    missing = 0
-    for i, val in zip(batch, parsed):
-        if val:
-            results[i] = val
-        else:
-            results[i] = texts[i]
-            if texts[i].strip():
-                missing += 1
-    return missing
-
-
-def _warn_missing(missing: int, total: int, engine: str, on_log) -> None:
-    if missing and on_log:
-        on_log(
-            f"⚠ {engine} không trả về bản dịch cho {missing}/{total} câu — "
-            "những câu đó đang giữ nguyên văn gốc. Sửa tay ở bước 4, "
-            "hoặc dịch lại bằng Google."
-        )
-
-
 def _ai_batches(texts: list[str], max_chars: int = 2600, max_lines: int = 40):
     cur: list[int] = []
     cur_len = 0
@@ -1431,6 +1487,10 @@ def _length_units(text: str) -> int:
     return max(1, len(re.findall(r"\S+", text or "")))
 
 
+def comparable_lengths(source: str, target: str) -> bool:
+    return bool(source.strip() and not _NO_STOP.search(source) and not _NO_STOP.search(target))
+
+
 def _warn_long_translations(
     source_texts: list[str], translated_texts: list[str], mode: str, on_log=None
 ) -> None:
@@ -1439,7 +1499,7 @@ def _warn_long_translations(
         return
     limit = 1.25
     long_count = sum(
-        bool(src.strip()) and _length_units(tr) > _length_units(src) * limit
+        comparable_lengths(src, tr) and _length_units(tr) > _length_units(src) * limit
         for src, tr in zip(source_texts, translated_texts)
     )
     if long_count:
@@ -1497,19 +1557,28 @@ def _translate_ai(engine, texts, source, target, api_key, model, base_url, note,
             return resp.choices[0].message.content or ""
 
     results = [""] * len(texts)
-    missing = 0
     batches = list(_ai_batches(texts))
     for bi, batch in enumerate(batches):
         payload = _batch_payload(texts, results, batch, speakers)
         raw = _call_logged(lambda payload=payload: ask(payload), label, model, bi, len(batches), len(batch), on_log)
         parsed = _parse_numbered(raw, batch[0], len(batch))
-        if speakers:
-            parsed = [_strip_speaker_tag(p, speakers[i]) for p, i in zip(parsed, batch)]
-        missing += _apply_parsed(results, batch, texts, parsed)
+        missing = [i for i, p in zip(batch, parsed) if not p and texts[i].strip()]
+        if missing:
+            if on_log:
+                on_log(f"{label} bỏ sót {len(missing)} dòng trong lô; yêu cầu lại đúng các số dòng đó.")
+            try:
+                retry = ask(_batch_payload(texts, results, missing, speakers))
+                fixed = _parse_numbered(retry, batch[0], len(batch))
+                for i in missing:
+                    parsed[i - batch[0]] = fixed[i - batch[0]]
+            except Exception as exc:
+                if on_log:
+                    on_log(f"Không lấy được các dòng thiếu: {_short_error(exc)}")
+        for i, val in zip(batch, parsed):
+            results[i] = _strip_speaker_tag(val, speakers[i]) if speakers else val
         if on_progress:
             on_progress((bi + 1) / len(batches))
 
-    _warn_missing(missing, len(texts), label, on_log)
     return results
 
 

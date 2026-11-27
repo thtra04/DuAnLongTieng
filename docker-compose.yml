@@ -7,11 +7,13 @@ services:
       args:
         EXTRAS: ${VSUB_EXTRAS:---extra queue --extra tts --extra ai}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - vsub-data:/data
     environment:
       - VSUB_DATA_DIR=/data
+      # Docker's bridge is the TCP peer even when the host only publishes to loopback.
+      - VSUB_LOOPBACK_PUBLISHED=1
       # Trong mạng của compose, Redis ở host tên "redis" chứ không phải localhost —
       # thiếu dòng này thì hàng đợi lặng lẽ lùi về chạy trong bộ nhớ.
       - VSUB_REDIS_URL=redis://redis:6379/0

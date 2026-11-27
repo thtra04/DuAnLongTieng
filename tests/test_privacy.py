@@ -100,6 +100,15 @@ def test_khong_co_token_thi_truyen_none(pyannote_gia, monkeypatch):
     assert PipelineGia.calls[0]["token"] is None
 
 
+def test_pyannote_3_dung_tham_so_token_cu(pyannote_gia, monkeypatch):
+    def load(cls, model_id, use_auth_token=None, cache_dir=None):
+        assert model_id == pyannote_gia.LEGACY and use_auth_token == "hf_test_legacy" and cache_dir
+        return cls()
+    monkeypatch.setattr(pyannote_gia, "MODEL_ID", pyannote_gia.LEGACY)
+    monkeypatch.setattr(PipelineGia, "from_pretrained", classmethod(load))
+    assert isinstance(pyannote_gia._load("hf_test_legacy"), PipelineGia)
+
+
 def test_nap_pipeline_dat_bien_tat_telemetry_truoc(pyannote_gia, monkeypatch):
     monkeypatch.delenv("PYANNOTE_METRICS_ENABLED", raising=False)
     pyannote_gia._load(token="x")

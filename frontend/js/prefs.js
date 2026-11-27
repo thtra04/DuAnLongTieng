@@ -4,7 +4,7 @@
 const PREF_KEY = 'vsub.prefs.v1';
 function savePrefs() {
   try {
-    localStorage.setItem(PREF_KEY, JSON.stringify({
+    localStorage.setItem(accountKey(PREF_KEY), JSON.stringify({
       engine: S.engine,
       tgt: $('#tgtLang').value,
       src: $('#srcLang').value,
@@ -20,7 +20,7 @@ function savePrefs() {
 }
 function restorePrefs() {
   let p;
-  try { p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}'); } catch { return; }
+  try { p = JSON.parse(localStorage.getItem(accountKey(PREF_KEY)) || '{}'); } catch { return; }
   if (p.tgt) $('#tgtLang').value = p.tgt;
   if (p.src) $('#srcLang').value = p.src;
   if (p.asr) $('#asrModel').value = p.asr;
@@ -42,13 +42,12 @@ function restorePrefs() {
 
 /* ------------------------------ phím tắt -------------------------------- */
 document.addEventListener('keydown', e => {
-  if (e.target.matches('input, textarea, select')) return;
+  if (e.target.closest('input, textarea, select, button, a[href], dialog, [role="button"]')) return;
   const p = $('#player');
-  if (!p || !$('#panel4').classList.contains('active')) return;
+  if (!p || !$('#panel4').getClientRects().length) return;
   if (e.code === 'Space') { e.preventDefault(); p.paused ? p.play() : p.pause(); }
   if (e.code === 'ArrowLeft') { e.preventDefault(); jumpCue(-1); }
   if (e.code === 'ArrowRight') { e.preventDefault(); jumpCue(1); }
 });
 
 window.addEventListener('resize', () => { if (S.cues.length) updateOverlay(); });
-

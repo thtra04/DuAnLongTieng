@@ -17,16 +17,18 @@ import re
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
 
 from . import __version__
-from .api import ai, films, jobs, media, projects, system, tts
+from .api import access, ai, auth, collaboration, films, jobs, media, projects, system, tts
 from .api.deps import safe_id
 from .config import FRONTEND_DIR
 from .core import media as core_media
 from .db import init_db
+from .store.projects import ScriptChanged
 
 
 @asynccontextmanager
@@ -56,6 +58,25 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
+
+class _PrivateApiResponses:
+    """Don't cache private scripts/media past logout; leave streaming bodies untouched."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope["path"].startswith("/api/"):
+            return await self.app(scope, receive, send)
+
+        async def private_send(message):
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["cache-control"] = "private, no-store"
+            await send(message)
+        await self.app(scope, receive, private_send)
+
+
+app.add_middleware(_PrivateApiResponses)
+
 # CORS chỉ bật khi người dùng chủ ý chạy giao diện ở origin khác. Mặc định tắt:
 # server nghe ở 127.0.0.1 và trang web ngoài không được phép gọi vào.
 _origins = [o.strip() for o in os.environ.get("VSUB_CORS_ORIGINS", "").split(",") if o.strip()]
@@ -63,16 +84,22 @@ if _origins:
     from fastapi.middleware.cors import CORSMiddleware
 
     app.add_middleware(
-        CORSMiddleware, allow_origins=_origins, allow_methods=["*"], allow_headers=["*"]
+        CORSMiddleware, allow_origins=_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"]
     )
 
-for router in (system.router, tts.router, ai.router, media.router, jobs.router, films.router, projects.router):
-    app.include_router(router)
+app.include_router(auth.router)
+for router in (system.router, tts.router, ai.router, media.router, jobs.router, films.router, projects.router, collaboration.router):
+    app.include_router(router, dependencies=[Depends(access.request_space)])
 
 
 @app.exception_handler(HTTPException)
 async def http_error(request: Request, exc: HTTPException):
     return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(ScriptChanged)
+async def script_conflict(request: Request, exc: ScriptChanged):
+    return JSONResponse({"error": str(exc)}, status_code=409)
 
 
 # ------------------------------------------------------------ giao diện

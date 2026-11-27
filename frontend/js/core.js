@@ -11,6 +11,7 @@ const API_BASE = (window.VSUB_API_BASE || '').replace(/\/+$/, '');
 const apiUrl = p => (/^https?:/.test(p) ? p : API_BASE + p);
 
 const S = {
+  member: null,
   sys: null,
   sourceType: 'file',
   mediaId: null,
@@ -39,6 +40,7 @@ const S = {
 };
 
 const RECOVERY_KEY = 'vsub.active-job.v1';
+const accountKey = key => `${key}:${S.member?.username || ''}`;
 
 function saveJobRecovery(payload) {
   try {
@@ -46,17 +48,17 @@ function saveJobRecovery(payload) {
     // Bí mật không được nằm trong localStorage — nó sống qua cả lần đóng trình duyệt
     delete safe.api_key;
     delete safe.hf_token;
-    localStorage.setItem(RECOVERY_KEY, JSON.stringify({ jobId: S.jobId, payload: safe }));
+    localStorage.setItem(accountKey(RECOVERY_KEY), JSON.stringify({ jobId: S.jobId, payload: safe }));
   } catch { }
 }
 
 function clearJobRecovery() {
-  try { localStorage.removeItem(RECOVERY_KEY); } catch { }
+  try { localStorage.removeItem(accountKey(RECOVERY_KEY)); } catch { }
 }
 
 async function restoreJobRecovery() {
   let saved;
-  try { saved = JSON.parse(localStorage.getItem(RECOVERY_KEY) || 'null'); } catch { return; }
+  try { saved = JSON.parse(localStorage.getItem(accountKey(RECOVERY_KEY)) || 'null'); } catch { return; }
   if (!saved?.jobId || !saved.payload) return;
   try {
     const job = await api(`/api/jobs/${saved.jobId}`);
@@ -83,7 +85,8 @@ async function restoreJobRecovery() {
       pollJob();
       toast('Đã tiếp tục theo dõi job sau khi tải lại trang.', 'ok', 4000);
     }
-  } catch {
+  } catch (err) {
+    if ([401, 403, 404].includes(err.status)) { clearJobRecovery(); return; }
     toast('Job cũ không còn trên server; cấu hình nguồn vẫn được giữ lại.', 'warn', 6000);
     restorePayload(saved.payload);
   }
@@ -155,15 +158,24 @@ function esc(s) {
 }
 
 async function api(url, opts = {}) {
-  const res = await fetch(apiUrl(url), opts);
+  if (S.jobId && /^\/api\/(ai\/terms|translation-(memory|cache)|translate-missing)$/.test(url)) {
+    opts = {...opts, headers: {...opts.headers, 'X-VSub-Project': S.jobId}};
+  }
+  const res = await fetch(apiUrl(url), {credentials: 'include', ...opts});
   let data = null;
   try { data = await res.json(); } catch { /* không phải JSON */ }
-  if (!res.ok) throw new Error((data && data.error) || `Lỗi ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 401 && S.member) location.reload();
+    const error = new Error((data && data.error) || `Lỗi ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 
 /* ------------------------------ điều hướng ------------------------------ */
 function goStep(n) {
+  if (n !== 4 && typeof stopAudition === 'function') stopAudition();
   $$('.panel').forEach(p => p.classList.remove('active'));
   $(`#panel${n}`).classList.add('active');
   $$('.step-btn').forEach(b => {
@@ -171,7 +183,7 @@ function goStep(n) {
     b.classList.toggle('active', i === n);
     b.classList.toggle('done', i < n);
   });
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (!$('#studioShell').classList.contains('hide')) window.scrollTo({ top: 0, behavior: uiScrollBehavior() });
   if (n === 4 && typeof markScriptStale === 'function') markScriptStale();
 }
 

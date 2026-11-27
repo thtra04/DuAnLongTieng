@@ -40,6 +40,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.net.URI;
+import java.util.Locale;
+
 /**
  * Ứng dụng Android của VSub Studio.
  *
@@ -110,15 +113,16 @@ public class MainActivity extends Activity {
         s.setAllowFileAccess(false);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
-        s.setUserAgentString(s.getUserAgentString() + " VSubStudioAndroid/1.0");
+        s.setUserAgentString(s.getUserAgentString() + " VSubStudioAndroid/1.1");
         CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(w, false);
 
         w.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
                 Uri u = req.getUrl();
-                Uri base = Uri.parse(server);
-                if (u.getHost() != null && u.getHost().equals(base.getHost())) return false;
+                if (isStudioUrl(u)) return false;
+                if (!"https".equals(u.getScheme()) || !req.isForMainFrame()) return true;
                 // Liên kết ra ngoài (GitHub, trang tài liệu…) mở bằng trình duyệt của máy
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, u));
@@ -167,10 +171,22 @@ public class MainActivity extends Activity {
     }
 
     private void open(String url) {
-        server = url;
+        String valid = normalize(url);
+        if (valid == null) {
+            showSetup("Địa chỉ cũ dùng HTTP qua Wi-Fi. Hãy đổi sang HTTPS hoặc kết nối USB.");
+            return;
+        }
+        server = valid;
         showWeb();
         bar.setVisibility(View.VISIBLE);
-        web.loadUrl(url + "/");
+        web.loadUrl(valid + "/");
+    }
+
+    private boolean isStudioUrl(Uri u) {
+        if (server == null || u.getUserInfo() != null) return false;
+        Uri base = Uri.parse(server);
+        return base.getScheme().equals(u.getScheme()) && base.getHost() != null
+                && base.getHost().equalsIgnoreCase(u.getHost()) && base.getPort() == u.getPort();
     }
 
     private void showWeb() {
@@ -181,8 +197,8 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------------ Tải video kết quả
 
     private void download(String url, String disposition, String mime) {
-        if (!url.startsWith("http")) {
-            toast("Tệp này chỉ xem được trong ứng dụng");
+        if (!isStudioUrl(Uri.parse(url))) {
+            toast("Chỉ tải tệp từ studio đang kết nối");
             return;
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
@@ -231,22 +247,38 @@ public class MainActivity extends Activity {
     private View buildSetup() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(28), dp(56), dp(28), dp(28));
+        box.setPadding(dp(24), dp(32), dp(24), dp(28));
 
-        TextView logo = text("VSub Studio", 30, INK, true);
-        box.addView(logo);
-        TextView sub = text("Lồng tiếng video tự động đa nhân vật", 15, MUTED, false);
-        sub.setPadding(0, dp(4), 0, dp(28));
-        box.addView(sub);
+        LinearLayout poster = new LinearLayout(this);
+        poster.setOrientation(LinearLayout.VERTICAL);
+        poster.setPadding(dp(22), dp(20), dp(22), dp(24));
+        GradientDrawable cover = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{0xFF423B2C, 0xFF232821});
+        cover.setCornerRadius(dp(18));
+        poster.setBackground(cover);
+        TextView folio = text("VS  /  PHÒNG HẬU KỲ", 12, 0xFFEDC78E, true);
+        folio.setLetterSpacing(.12f);
+        poster.addView(folio);
+        TextView logo = text("VSub Studio.", 40, BG, false);
+        logo.setTypeface(Typeface.SERIF, Typeface.ITALIC);
+        logo.setPadding(0, dp(12), 0, dp(5));
+        poster.addView(logo);
+        poster.addView(text("Biên tập phụ đề và lời thoại ngay trên điện thoại.", 15, BG2, false));
+        box.addView(poster);
+        TextView step = text("01   /   KẾT NỐI MÁY CHỦ", 12, ACCENT, true);
+        step.setLetterSpacing(.10f);
+        step.setPadding(0, dp(28), 0, dp(12));
+        box.addView(step);
 
         box.addView(text("Địa chỉ máy tính đang chạy VSub Studio", 14, INK, true));
         address = new EditText(this);
-        address.setHint("ví dụ 192.168.1.5:8000");
+        address.setHint("https://studio.example:8000");
         address.setSingleLine(true);
         address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         address.setImeOptions(EditorInfo.IME_ACTION_GO);
         address.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
         address.setTextColor(INK);
+        address.setContentDescription("Địa chỉ máy chủ VSub Studio");
         address.setPadding(dp(14), dp(12), dp(14), dp(12));
         address.setBackground(round(Color.WHITE, 0x4D574623));
         address.setOnEditorActionListener((v, id, ev) -> {
@@ -266,7 +298,7 @@ public class MainActivity extends Activity {
         box.addView(message);
 
         Button go = new Button(this);
-        go.setText("Kết nối");
+        go.setText("Tiếp tục đến đăng nhập");
         go.setAllCaps(false);
         go.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
         go.setTextColor(BG);
@@ -278,14 +310,11 @@ public class MainActivity extends Activity {
         box.addView(go, gp);
 
         TextView help = text(
-                "Cách dùng\n"
-                        + "1. Trên máy tính, trong thư mục VSub Studio chạy:\n"
-                        + "     uv run python run.py --host 0.0.0.0\n"
-                        + "2. Điện thoại và máy tính dùng chung một mạng Wi-Fi.\n"
-                        + "3. Xem địa chỉ IP của máy tính bằng lệnh ipconfig (dòng IPv4 Address), "
-                        + "nhập vào ô trên kèm cổng, ví dụ 192.168.1.5:8000.\n\n"
-                        + "Nhận dạng giọng nói, dịch và lồng tiếng chạy trên máy tính (cần GPU); "
-                        + "điện thoại dùng để tải video lên, sửa phụ đề, nghe thử và tải video kết quả về.",
+                "Chọn cách kết nối\n\n"
+                        + "Wi-Fi  ·  Nhập địa chỉ HTTPS của studio. Chứng thư phải được điện thoại tin cậy.\n\n"
+                        + "USB  ·  Trên máy tính chạy VSub Studio, bật gỡ lỗi USB rồi chạy:\n"
+                        + "adb reverse tcp:8000 tcp:8000\nNhập localhost:8000 trên điện thoại.\n\n"
+                        + "Lần đầu? Xin mã mời từ chủ máy để tạo tài khoản. Video vẫn được xử lý trên máy tính.",
                 14, MUTED, false);
         help.setLineSpacing(0, 1.25f);
         help.setPadding(dp(16), dp(14), dp(16), dp(14));
@@ -306,7 +335,7 @@ public class MainActivity extends Activity {
         bar.setVisibility(View.GONE);
         setup.setVisibility(View.VISIBLE);
         String s = server != null ? server : prefs.getString(KEY_SERVER, "");
-        address.setText(s == null ? "" : s.replaceFirst("^https?://", ""));
+        address.setText(s == null ? "" : s);
         address.setSelection(address.getText().length());
         message.setText(error == null ? "" : error);
         message.setVisibility(error == null ? View.GONE : View.VISIBLE);
@@ -315,7 +344,7 @@ public class MainActivity extends Activity {
     private void connect() {
         String url = normalize(address.getText().toString());
         if (url == null) {
-            message.setText("Nhập địa chỉ IP hoặc tên máy, ví dụ 192.168.1.5:8000");
+            message.setText("Wi-Fi cần địa chỉ HTTPS. Qua USB, dùng localhost:8000.");
             message.setVisibility(View.VISIBLE);
             return;
         }
@@ -327,18 +356,24 @@ public class MainActivity extends Activity {
         open(url);
     }
 
-    /** "192.168.1.5" → "http://192.168.1.5:8000"; giữ nguyên cổng và http/https nếu người dùng gõ. */
+    /** Never submit studio credentials over cleartext Wi-Fi. */
     static String normalize(String raw) {
         String s = raw == null ? "" : raw.trim();
-        while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
-        if (s.isEmpty() || s.contains(" ")) return null;
-        if (!s.matches("(?i)^https?://.*")) s = "http://" + s;
-        Uri u = Uri.parse(s);
-        if (u.getHost() == null || u.getHost().isEmpty()) return null;
-        String scheme = u.getScheme().toLowerCase();
-        int port = u.getPort();
-        if (port == -1 && scheme.equals("http")) port = DEFAULT_PORT;
-        return scheme + "://" + u.getHost() + (port == -1 ? "" : ":" + port);
+        if (!s.contains("://")) s = (s.matches("(?i)(localhost|127\\.0\\.0\\.1)([:/].*)?") ? "http://" : "https://") + s;
+        try {
+            URI u = new URI(s);
+            String h = u.getHost(), scheme = u.getScheme().toLowerCase(Locale.ROOT);
+            if (h == null || u.getUserInfo() != null || u.getQuery() != null || u.getFragment() != null
+                    || !(u.getPath().isEmpty() || u.getPath().equals("/"))) return null;
+            boolean loopback = h.equalsIgnoreCase("localhost") || h.equals("127.0.0.1") || h.equals("[::1]");
+            if (!scheme.equals("https") && !(loopback && scheme.equals("http"))) return null;
+            int port = u.getPort();
+            if (port == 0 || port > 65535) return null;
+            if (port == -1 && scheme.equals("http")) port = DEFAULT_PORT;
+            return scheme + "://" + h + (port == -1 || (port == 443 && scheme.equals("https")) ? "" : ":" + port);
+        } catch (Exception invalid) {
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ Nút quay lại

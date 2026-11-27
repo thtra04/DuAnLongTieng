@@ -155,10 +155,5 @@ def test_buoc_do_luon_co_khi_phan_tich():
     assert keys.index("asr") < keys.index("hardsub") < keys.index("translate")
 
 
-def test_api_do_lai_du_an_khong_ton_tai(tmp_db):
-    from fastapi.testclient import TestClient
-
-    from backend.main import app
-
-    with TestClient(app) as client:
-        assert client.post("/api/projects/khongco/hardsub").status_code == 404
+def test_api_do_lai_du_an_khong_ton_tai(tmp_db, studio_client):
+    assert studio_client.post("/api/projects/khongco/hardsub").status_code == 404

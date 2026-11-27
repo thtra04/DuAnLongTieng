@@ -8,12 +8,15 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
 from ..config import TOOLS_DIR
 
 _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+_thumbnail_slots = threading.BoundedSemaphore(2)
 
 _TIME_RE = re.compile(r"time=(\d+):(\d{2}):(\d{2})\.(\d{1,2})")
 _DUR_RE = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2})\.(\d{1,2})")
@@ -210,6 +213,33 @@ def probe(path: str | Path) -> dict:
     if m:
         info["fps"] = float(m.group(1))
     return info
+
+
+def thumbnail(path: Path) -> bytes | None:
+    """A small JPEG from local media; do not leave private stills on disk."""
+    try:
+        stamp = path.stat()
+        return _cached_thumbnail(path, stamp.st_size, stamp.st_mtime_ns)
+    except (OSError, MediaError, subprocess.TimeoutExpired):
+        return None
+
+
+@lru_cache(maxsize=192)
+def _cached_thumbnail(path: Path, size: int, mtime_ns: int) -> bytes | None:
+    with _thumbnail_slots:
+        # Skip the opening fade. A very short clip may only have a frame at zero.
+        for seek in ("2", "0"):
+            result = subprocess.run(
+                [ffmpeg_exe(), "-nostdin", "-v", "error", "-threads", "1",
+                 "-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,webm,avi,flv,mpegts,asf",
+                 "-ss", seek, "-i", str(path), "-map", "0:V:0", "-frames:v", "1",
+                 "-vf", "scale=320:240:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
+                 "-threads", "1", "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", "-q:v", "4", "-f", "image2pipe", "pipe:1"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=8, creationflags=_CREATE_NO_WINDOW,
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+    return None
 
 
 # ------------------------------------------------------- chạy ffmpeg có tiến độ

@@ -3,7 +3,7 @@
 /* --------------------------- dự án đã làm ------------------------------- */
 const LANG_VI = code => {
   const l = (S.sys?.languages || []).find(x => x.code === code);
-  return l ? `${l.flag} ${l.vi}` : code;
+  return l ? `${l.flag} ${l.vi}` : esc(code);
 };
 
 async function loadProjects() {
@@ -17,6 +17,7 @@ async function loadProjects() {
     return;
   }
   S.dash = data;
+  libraryCovers.clear();
 
   const films = data.films || [];
   const loose = data.loose || [];
@@ -42,6 +43,7 @@ async function loadProjects() {
     `<div class="serieslist">${films.map(filmCard).join('')}</div>`
     + (loose.length ? looseSection(loose) : '');
 
+  libraryCovers.paintAll(box);
   films.forEach(f => bindFilm(f, box));
   bindLoose(loose, box);
 }
@@ -55,8 +57,9 @@ function filmCard(f) {
   return `
   <div class="sr${open ? ' open' : ''}" data-film="${f.id}">
     <div class="sr-top">
-      <span class="ic">${icon('film')}</span>
+      ${libraryCovers.film(f)}
       <div class="sr-main">
+        <span class="edition-label">Bộ phim</span>
         <span class="sr-name">${esc(f.name)}</span>
         <span class="sr-prog">
           ${f.total
@@ -68,12 +71,14 @@ function filmCard(f) {
           ${f.done ? `Làm gần nhất ${fmtWhen(f.updated)} · ${fmtBytes(f.size)}`
                    : `Tạo ${fmtWhen(f.created)}`}
           ${f.url ? ' · có link cả bộ' : ''}
+          · ${esc(crewRoles[f.role])}${f.team_id ? ' · Dự án nhóm' : f.legacy ? ' · Chưa phân công' : ''}
         </span>
       </div>
       <div class="sr-ops">
-        <button class="btn sm f-addep">${icon('plus')} Thêm tập</button>
-        <button class="btn sm ghost f-rename">${icon('pencil')} Đổi tên</button>
-        <button class="btn sm danger f-del">${icon('trash')} Xoá bộ</button>
+        <button class="btn sm ghost f-crew">${icon('users')} Cộng tác</button>
+        ${f.role !== 'viewer' ? `<button class="btn sm f-addep">${icon('plus')} Thêm tập</button>` : ''}
+        ${f.role === 'owner' ? `<button class="btn sm ghost f-rename">${icon('pencil')} Đổi tên</button>
+        <button class="btn sm danger f-del">${icon('trash')} Xoá bộ</button>` : ''}
       </div>
       <span class="sr-caret">${icon('chevron-down')}</span>
     </div>
@@ -89,7 +94,7 @@ function filmCard(f) {
 
       ${!f.episodes.length ? `
         <div class="sr-sec">Bộ này chưa có tập nào</div>
-        <p class="muted">Bấm <b>Thêm tập</b> ở trên để tạo tập đầu tiên.</p>` : ''}
+        <p class="muted">${f.role === 'viewer' ? 'Tập sẽ hiện tại đây khi được thêm.' : 'Bấm <b>Thêm tập</b> ở trên để tạo tập đầu tiên.'}</p>` : ''}
     </div>
   </div>`;
 }
@@ -119,7 +124,7 @@ function epDone(f, e) {
 
   return `
   <div class="ep${p.video_ok ? '' : ' gone'}" data-no="${e.no}" data-id="${p.id}">
-    <span class="ep-no"><b>${e.no}</b><span>TẬP</span></span>
+    ${libraryCovers.episode(f, e)}
     <div class="ep-info">
       <div class="line1" title="${esc(p.video_name)}">
         ${e.title ? esc(e.title) + ' · ' : ''}${langs} · ${p.cue_count} dòng · ${fmtLength(p.duration)}
@@ -131,8 +136,8 @@ function epDone(f, e) {
     </div>
     <div class="ep-ops">
       ${epWatch(p)}
-      <button class="btn sm ep-open">Mở ra sửa</button>
-      <button class="btn sm danger ep-del">${icon('trash')} Xoá tập</button>
+      <button class="btn sm ep-open">${f.role === 'viewer' ? 'Xem kịch bản' : 'Mở ra sửa'}</button>
+      ${f.role === 'owner' ? `<button class="btn sm danger ep-del">${icon('trash')} Xoá tập</button>` : ''}
     </div>
   </div>`;
 }
@@ -141,7 +146,7 @@ function epDone(f, e) {
 function epTodo(f, e) {
   return `
   <div class="ep todo-ep" data-no="${e.no}">
-    <span class="ep-no empty"><b>${e.no}</b><span>TẬP</span></span>
+    ${libraryCovers.episode(f, e)}
     <div class="ep-info">
       <div class="line1">${e.title ? esc(e.title) : 'Chưa đặt tên tập'}
         ${e.duration ? `<span class="muted"> · ${fmtLength(e.duration)}</span>` : ''}</div>
@@ -152,8 +157,8 @@ function epTodo(f, e) {
       </div>
     </div>
     <div class="ep-ops">
-      <button class="btn sm primary ep-src">${icon('import')} Đưa video vào</button>
-      <button class="btn sm danger ep-rm" title="Bỏ tập này khỏi bộ" aria-label="Bỏ tập ${e.no} khỏi bộ">${icon('trash')}</button>
+      ${f.role !== 'viewer' ? `<button class="btn sm primary ep-src">${icon('import')} Đưa video vào</button>` : ''}
+      ${f.role === 'owner' ? `<button class="btn sm danger ep-rm" title="Bỏ tập này khỏi bộ" aria-label="Bỏ tập ${e.no} khỏi bộ">${icon('trash')}</button>` : ''}
     </div>
   </div>`;
 }
@@ -162,8 +167,9 @@ function looseSection(loose) {
   return `
   <div class="sr open loosebox" data-film="">
     <div class="sr-top" style="cursor:default">
-      <span class="ic">${icon('video')}</span>
+      ${libraryCovers.shelf(loose)}
       <div class="sr-main">
+        <span class="edition-label">Phim lẻ</span>
         <span class="sr-name">Chưa thuộc bộ nào — ${loose.length} video</span>
         <span class="sr-when">Làm trước khi tạo bộ, hoặc upload lẻ. Gán vào bộ để gom lại.</span>
       </div>
@@ -171,18 +177,18 @@ function looseSection(loose) {
     <div class="sr-body">
       <div class="eplist">${loose.map(p => `
         <div class="ep${p.video_ok ? '' : ' gone'}" data-id="${p.id}">
-          <span class="ep-no">${icon('film')}</span>
+          ${libraryCovers.loose(p)}
           <div class="ep-info">
             <div class="line1" title="${esc(p.video_name)}">${esc(p.video_name)}</div>
             <div class="line2">${p.cue_count} dòng · ${fmtLength(p.duration)} ·
               ${p.target_lang ? `${LANG_VI(p.source_lang || '?')} → ${LANG_VI(p.target_lang)}`
-                              : LANG_VI(p.source_lang || '?')}</div>
+                              : LANG_VI(p.source_lang || '?')}${p.video_ok ? '' : ' · <span class="warn">Mất video gốc</span>'}</div>
           </div>
           <div class="ep-ops">
             ${epWatch(p)}
-            <button class="btn sm lo-assign">Gán vào bộ</button>
-            <button class="btn sm lo-open">Mở ra sửa</button>
-            <button class="btn sm danger lo-del" title="Xoá video này" aria-label="Xoá video này">${icon('trash')}</button>
+            ${p.role === 'owner' ? '<button class="btn sm lo-assign">Gán vào bộ</button>' : ''}
+            <button class="btn sm lo-open">${p.role === 'viewer' ? 'Xem kịch bản' : 'Mở ra sửa'}</button>
+            ${p.role === 'owner' ? `<button class="btn sm danger lo-del" title="Xoá video này" aria-label="Xoá video này">${icon('trash')}</button>` : ''}
           </div>
         </div>`).join('')}</div>
     </div>
@@ -194,12 +200,13 @@ function bindFilm(f, box) {
   if (!card) return;
 
   $('.sr-top', card).addEventListener('click', e => {
-    if (e.target.closest('.btn')) return;
+    if (e.target.closest('button')) return;
     card.classList.toggle('open');
   });
-  $('.f-addep', card).addEventListener('click', () => addEpisode(f));
-  $('.f-rename', card).addEventListener('click', () => renameFilm(f));
-  $('.f-del', card).addEventListener('click', () => deleteFilm(f));
+  $('.f-crew', card).addEventListener('click', () => openRoster('films', f.id));
+  $('.f-addep', card)?.addEventListener('click', () => addEpisode(f));
+  $('.f-rename', card)?.addEventListener('click', () => renameFilm(f));
+  $('.f-del', card)?.addEventListener('click', () => deleteFilm(f));
 
   $$('.ep', card).forEach(row => {
     const no = +row.dataset.no;
@@ -207,7 +214,7 @@ function bindFilm(f, box) {
     $('.ep-open', row)?.addEventListener('click', () => openProject(row.dataset.id));
     $('.ep-watch', row)?.addEventListener('click', e => {
       const b = e.currentTarget;
-      showVideo(`${API_BASE}/api/projects/${row.dataset.id}/files/${encodeURIComponent(b.dataset.name)}`,
+      showVideo(`${API_BASE}/api/projects/${row.dataset.id}/files/${encodeURIComponent(b.dataset.name)}?download=0`,
         `Tập ${row.dataset.no} — ${b.dataset.what}`);
     });
     $('.ep-del', row)?.addEventListener('click', () => removeEpisode(f, ep, true));
@@ -224,7 +231,7 @@ function bindLoose(loose, box) {
     $('.lo-open', row)?.addEventListener('click', () => openProject(row.dataset.id));
     $('.ep-watch', row)?.addEventListener('click', e => {
       const b = e.currentTarget;
-      showVideo(`${API_BASE}/api/projects/${row.dataset.id}/files/${encodeURIComponent(b.dataset.name)}`,
+      showVideo(`${API_BASE}/api/projects/${row.dataset.id}/files/${encodeURIComponent(b.dataset.name)}?download=0`,
         `${p.video_name} — ${b.dataset.what}`);
     });
     $('.lo-del', row)?.addEventListener('click', () => deleteProject(p, null));
@@ -247,6 +254,7 @@ function fmtWhen(ts) {
 
 /* ---------------------- tạo bộ phim / thêm tập -------------------------- */
 $('#filmNew').addEventListener('click', () => {
+  refreshTeamChoices().catch(e => toast(e.message, 'err'));
   $('#filmForm').classList.remove('hide');
   $('#filmName').focus();
 });
@@ -258,7 +266,12 @@ $('#filmSave').addEventListener('click', createFilm);
 
 async function createFilm() {
   const name = $('#filmName').value.trim();
-  const url = $('#filmUrl').value.trim();
+  const input = $('#filmUrl');
+  let url = input.value.trim();
+  if (url) {
+    try { url = input.value = videoLink(url); }
+    catch (e) { input.focus(); return toast(e.message, 'warn'); }
+  }
   if (!name && !url) return toast('Đặt tên bộ phim, hoặc dán link để tool tự lấy tên.', 'warn');
 
   const btn = $('#filmSave');
@@ -268,7 +281,7 @@ async function createFilm() {
     const r = await api('/api/films', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, url }),
+      body: JSON.stringify({ name, url, team_id: $('#filmTeam').value || null }),
     });
     const n = (r.film.episodes || []).length;
     toast(`Đã tạo bộ "${r.film.name}"${n ? ` với ${n} tập` : ''}.`, 'ok', 4000);
@@ -374,7 +387,7 @@ async function giveSource(f, ep) {
     const el = $(`.part[data-part="${ep.no}"]`);
     if (el) {
       el.click();
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.scrollIntoView({ behavior: uiScrollBehavior(), block: 'center' });
       toast(`Đã chọn phần ${ep.no} — bấm "Tiếp tục →".`, 'ok', 6000);
       return;
     }
@@ -402,7 +415,7 @@ function renderTargetBar() {
 
 /** Gán một video lẻ (đã làm rồi) vào một tập của bộ nào đó. */
 async function assignLoose(p) {
-  const films = (S.dash?.films || []);
+  const films = (S.dash?.films || []).filter(f => f.role !== 'viewer');
   if (!films.length) return toast('Chưa có bộ phim nào. Tạo bộ trước đã.', 'warn', 6000);
 
   const menu = films.map((f, i) => `${i + 1}. ${f.name} (${f.done}/${f.total} tập)`).join('\n');
@@ -437,21 +450,28 @@ async function openProject(id) {
   } catch (e) {
     return toast('Không mở được dự án: ' + e.message, 'err', 9000);
   }
-  if (!p.cues || !p.cues.length) return toast('Dự án này không có dòng phụ đề nào.', 'warn');
+  if (!Array.isArray(p.cues)) return toast('Không đọc được kịch bản của dự án.', 'warn');
+  if (p.role === 'viewer') return showScriptProof(p);
 
   S.jobId = id;                       // xuất file vẫn dùng state.json của job này
   S.projectId = id;
   S.projectName = p.video_name || 'Dự án đã lưu';
   S.videoSrc = p.video_ok ? `${API_BASE}/api/projects/${id}/video` : '';
   S.cues = p.cues.map(c => ({ ...c }));
+  S.dubScript = null;
+  $('#dubShorten').checked = !!p.dub_review?.shorten;
   applyCharacters(p.characters || []);   // tên vai & giọng đã chọn lần trước
+  useDetectedProfiles(p.speakers);
   S.analyzed = {
-    source_lang: p.source_lang, target_lang: p.target_lang,
+    dub_review: p.dub_review,
+    role: p.role,
+    revision: p.revision, source_lang: p.source_lang, target_lang: p.target_lang,
     duration: p.duration, width: p.width, height: p.height,
-    cue_count: p.cue_count, coverage: 1,
+    cue_count: p.cue_count, speakers: p.speakers || [], speech_gaps: p.speech_gaps || [],
     hardsub: p.hardsub || null,
   };
   S.display = p.target_lang ? 'second' : 'main';
+  restoreReadingMix(p.dub_review?.playback);
   if (p.source_lang) $('#srcLang').value = p.source_lang;
   if (p.target_lang) $('#tgtLang').value = p.target_lang;
 
@@ -462,7 +482,7 @@ async function openProject(id) {
   // Dự án đã từng xuất bản lồng tiếng -> cho nghe lại ngay ở màn hình xem
   const dubbed = (p.files || []).filter(f => /\.longtieng\.mp4$/i.test(f.name)).pop();
   setMonitorOutput(dubbed && p.video_ok ? {
-    url: `${API_BASE}/api/projects/${id}/files/${encodeURIComponent(dubbed.name)}`,
+    url: `${API_BASE}/api/projects/${id}/files/${encodeURIComponent(dubbed.name)}?download=0`,
     label: 'Bản lồng tiếng',
     burned: (p.files || []).some(f => /\.hardsub\.mp4$/i.test(f.name)),
   } : null);
@@ -500,4 +520,3 @@ async function deleteProject(ep, group) {
 }
 
 $('#projReload').addEventListener('click', loadProjects);
-

@@ -260,3 +260,35 @@ def test_chu_han_khong_co_thong_tin_doan_luc_long_tieng_van_gom():
 def test_chu_latin_khong_co_thong_tin_doan_van_gom():
     cues = [Cue(0, 1, "I think that"), Cue(1, 2, "he is right.")]
     assert group_cues(cues) == [[0, 1]]
+
+
+# ------------------------------- chữ Thái (không dấu chấm câu) cũng như chữ Hán
+
+
+def test_chu_thai_khong_co_thong_tin_doan_luc_dich_thi_moi_dong_mot_cau():
+    """Đo thật (phim Thái 468 dòng): gom 2–6 dòng rồi chia tỉ lệ làm 30 % dòng dịch
+    mở đầu bằng đuôi câu trước, chữ hiện trễ 1,5–3 s so với lời."""
+    cues = [Cue(99.7, 102.2, "วันนี้ครบสิบวันตามสัญญาแล้วนะครับ"), Cue(102.2, 103.6, "เก่งมากๆเลย"),
+            Cue(103.7, 105.1, "คุณทำงานที่ร้านของเราดีๆ")]
+    assert group_cues(cues, split_cjk_lines=True) == [[0], [1], [2]]
+
+
+def test_chu_thai_khac_doan_whisper_thi_moi_cue_mot_nhom():
+    cues = [_cue_seg("แม่ เป็นยังไงบ้าง", 0, 1, 0), _cue_seg("อันนี้อากาศดีนะ", 1, 2, 1)]
+    assert group_cues(cues) == [[0], [1]]
+
+
+def test_chu_thai_cung_doan_bi_tach_vi_dai_thi_van_gom():
+    cues = [_cue_seg("จำได้ว่าแม่ชอบกินส้มมาก ๆ", 0, 1, 7), _cue_seg("เลย", 1, 2, 7)]
+    assert group_cues(cues, split_cjk_lines=True) == [[0, 1]]
+
+
+def test_chu_thai_khong_co_thong_tin_doan_luc_long_tieng_van_gom():
+    """Khâu lồng tiếng (mặc định) vẫn đọc theo câu dài như với chữ Hán."""
+    cues = [Cue(0, 1, "วันนี้ครบสิบวัน"), Cue(1, 2, "เก่งมากๆเลย")]
+    assert group_cues(cues) == [[0, 1]]
+
+
+def test_chu_lao_khmer_mien_cung_khong_gom_luc_dich():
+    for a, b in (("ສະບາຍດີ", "ຂອບໃຈ"), ("សួស្តី", "អរគុណ"), ("မင်္ဂလာပါ", "ကျေးဇူးပါ")):
+        assert group_cues([Cue(0, 1, a), Cue(1, 2, b)], split_cjk_lines=True) == [[0], [1]], a

@@ -1,7 +1,10 @@
 # training/ — phần huấn luyện AI
 
-Bốn notebook, chạy theo thứ tự số. Mỗi notebook tự tìm gốc dự án nên mở từ thư
-mục nào cũng chạy được.
+Bốn notebook đầu cho quy trình HP-3/HP-4; notebook 05 có thể mở riêng để train tiếp bằng
+lời đã duyệt. Mỗi notebook tự tìm gốc dự án.
+
+Để **train tiếp phần dịch và lời đọc bằng hai adapter riêng**, xem [DIALOGUE.md](DIALOGUE.md).
+Quy trình này chỉ đọc corpus được chỉ định, không thu thập dự án hay mẫu giọng của thành viên.
 
 | Notebook | Hợp phần | Việc | Cần gì |
 |---|---|---|---|
@@ -9,6 +12,7 @@ mục nào cũng chạy được.
 | `02_huan_luyen_duration.ipynb` | HP-3 | Huấn luyện mô hình dự đoán thời lượng đọc, so với ước lượng thô | Không |
 | `03_lora_nllb_dang_thoi.ipynb` | HP-4 | LoRA cho NLLB-200 dịch ràng buộc độ dài — giải thích + dịch thử; huấn luyện thật bằng script, xem dưới | Môi trường huấn luyện riêng, **đã chạy Trung, Nhật, Hàn, Anh → Việt** |
 | `04_khung_do_ket_qua.ipynb` | Khung đo | Gom `data/jobs/*/eval.json` thành bảng C0–C4 (Bảng 5.2) | Không |
+| [`05_dich_va_loi_doc.ipynb`](05_dich_va_loi_doc.ipynb) | Hai adapter | Tách theo phim, train dịch + lời đọc, chọn checkpoint theo dev, đối chiếu lỗi rồi mới mở test | Chỉ xem: Jupyter; train: môi trường CUDA riêng và JSONL đã duyệt |
 
 ## Corpus cho notebook 03
 

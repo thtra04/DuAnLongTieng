@@ -173,8 +173,8 @@ def test_co_chu_scale_theo_do_phan_giai():
     """Cỡ chữ người dùng đặt theo khung 1080p, lên 4K phải to lên tương ứng."""
     small = to_ass([Cue(0, 1, "a")], style={"size": 40}, play_res_y=1080)
     big = to_ass([Cue(0, 1, "a")], style={"size": 40}, play_res_y=2160)
-    assert "Default,Arial,40," in small
-    assert "Default,Arial,80," in big
+    assert "Default,Times New Roman,40," in small
+    assert "Default,Times New Roman,80," in big
 
 
 # ---------------------------------------------------------- đọc file

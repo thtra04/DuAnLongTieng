@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
 
 from backend.core import dubbing
 from backend.core.subtitles import Cue
@@ -96,8 +95,11 @@ def test_ban_sua_tay_chi_ap_khi_con_khop():
 
 
 def test_kich_ban_van_ban_co_moc_gio_va_ten_vai():
-    units = [{"start": 65.4, "speaker": "S1", "text": "Lão gia, đây là ai?"}, {"start": 3.0, "speaker": "", "text": "Đi thôi."}]
-    assert dubbing.script_text(units, {"S1": "Hoắc Thanh"}) == "[01:05.4] Hoắc Thanh: Lão gia, đây là ai?\n[00:03.0] Đi thôi.\n"
+    units = [{"start": 59.8, "end": 61, "speaker": "", "text": "Đi thôi."},
+             {"start": 65.4, "end": 67.1, "speaker": "S1", "text": "Lão gia, đây là ai?"}]
+    assert dubbing.script_text(units, {"S1": "Hoắc Thanh"}) == (
+        "Phút 0 · 00:00\n[00:59.800 → 01:01.000] Đi thôi.\n"
+        "Phút 1 · 01:00\n[01:05.400 → 01:07.100] Hoắc Thanh: Lão gia, đây là ai?\n")
 
 
 class GiongGhi:
@@ -108,7 +110,7 @@ class GiongGhi:
 
     def infer(self, text, **kw):
         self.read.append(text)
-        return np.zeros(int(0.8 * dubbing.SR), dtype=np.float32) + 0.05
+        return 0.05 * np.sin(np.arange(int(0.8 * dubbing.SR)) * 0.03)
 
 
 def test_long_tieng_doc_dung_kich_ban_da_sua(tmp_path, monkeypatch):
@@ -124,19 +126,15 @@ def test_long_tieng_doc_dung_kich_ban_da_sua(tmp_path, monkeypatch):
     assert "Cẩm y ngọc thực" in (tmp_path / "kich_ban_long_tieng.txt").read_text(encoding="utf-8")
 
 
-def test_api_kich_ban_tra_dung_cau_se_doc():
-    from backend.main import app
-
-    with TestClient(app) as client:
-        r = client.post("/api/tts/script", json={
-            "cues": [c.to_dict() for c in [cue(0, "老爷", "Lão gia"), cue(1.6, "这是谁", "đây là ai")]],
-            "shorten": False,
-        })
+def test_api_kich_ban_tra_dung_cau_se_doc(studio_client):
+    r = studio_client.post("/api/tts/script", json={
+        "cues": [c.to_dict() for c in [cue(0, "老爷", "Lão gia"), cue(1.6, "这是谁", "đây là ai")]],
+        "shorten": False,
+    })
     assert r.status_code == 200
     units = r.json()["units"]
     assert [(u["cues"], u["text"], u["speaker"]) for u in units] == [([0, 1], "Lão gia, đây là ai?", "S1")]
-    with TestClient(app) as client:
-        assert client.post("/api/tts/script", json={"cues": []}).json() == {"units": []}
+    assert studio_client.post("/api/tts/script", json={"cues": []}).json() == {"units": []}
 
 
 @pytest.mark.parametrize("text, want", [("Tôi thấy", "tôi thấy"), ("Chu Đại Thăng", "Chu Đại Thăng"), ("AI giỏi", "AI giỏi")])

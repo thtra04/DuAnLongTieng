@@ -13,21 +13,19 @@ là đổi token ngân sách; với Google/NLLB thường (cấu hình C0, khôn
 bộ luật rút gọn tiếng Việt `shorten.py`. Không có cách siết thì chỉ đo và báo.
 
 Ngân sách của một nhóm cue tính **đúng như lúc lồng tiếng**
-(`dubbing.build_dub_track`): khung thoại + khoảng lặng phía sau + một chút vào
-sớm — nếu tính khác đi thì câu "vừa" theo vòng lặp vẫn "tràn" theo TTS.
+(`dubbing.build_dub_track`): bắt đầu đúng mốc, chỉ mượn khoảng lặng phía sau.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Callable
 
 from . import duration
 from .subtitles import Cue
-from .translate import _join_fragments, split_proportional
+from .translate import _join_fragments, comparable_lengths
 
-# Đồng bộ với dubbing.MAX_LEAD_IN và khoảng chừa 0.02s trong build_dub_track
-LEAD_IN = 0.15
 GAP_MARGIN = 0.02
 # Vượt ít hơn ngần này (tỉ lệ) thì coi như vừa — TTS có sai số, đừng dịch lại vô ích
 TOLERANCE = 0.05
@@ -35,14 +33,15 @@ TOLERANCE = 0.05
 Tightener = Callable[[list[dict]], list]  # mỗi phần tử: str (cả câu) hoặc list[str] (từng cue)
 
 
-def window_seconds(cues: list[Cue], idx: list[int]) -> float:
-    """Ngân sách thời gian cho nhóm cue `idx` (giây)."""
+def window_seconds(cues: list[Cue], idx: list[int], video_duration: float = 0) -> float:
+    """A gap belongs only to the preceding line; even overlapping subtitles have disjoint audio slots."""
     start, end = cues[idx[0]].start, cues[idx[-1]].end
-    nxt, prev = idx[-1] + 1, idx[0] - 1
-    gap_after = (cues[nxt].start - end) if nxt < len(cues) else 2.0
-    gap_before = (start - cues[prev].end) if prev >= 0 else start
-    lead_in = max(0.0, min(LEAD_IN, gap_before - GAP_MARGIN))
-    return max(0.0, end - start) + max(0.0, gap_after - GAP_MARGIN) + lead_in
+    nxt = idx[-1] + 1
+    limit = cues[nxt].start if nxt < len(cues) else end + 2.0
+    stop = min(limit, max(end, limit - GAP_MARGIN))
+    if video_duration > 0:
+        stop = min(stop, video_duration)
+    return max(0.0, stop - start)
 
 
 def reading_units(cues: list[Cue]) -> list[list[int]]:
@@ -100,30 +99,43 @@ def target_syllables(item: dict, safety: float = 0.92) -> int:
     return max(1, min(item["syllables"] - 1, want))
 
 
-def _write_back(cues: list[Cue], item: dict, new_text) -> None:
-    """Ghi câu đã rút gọn vào các cue của đơn vị.
+_ANCHORS = re.compile(
+    r"[+\-−]?\d+(?:[.,:/-]\d+)*(?:\s*(?:%|(?:kg|gam|km|mét|cm|mm|ml|lít|đồng|giờ|phút|giây|ngày|tuần|tháng|năm)\b))?"
+    r"|\b(?:một|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|nửa)\s+(?:vé|lần|chiếc|phần|giờ|phút|ngày|tháng|tuần)\b"
+    r"|\b(?:không thể|có thể|không|chưa|đừng|chẳng|chớ|nếu|trừ khi|trước|sau|chỉ|phải|đang|sẽ|"
+    r"chúng (?:ta|tôi|mình)|tôi|tao|mày|anh|chị|em|ông|bà|cháu|bác|cô|cậu|bạn|ta|họ|hắn|"
+    r"ngươi|trẫm|thiếp|huynh|muội|sư phụ)\b", re.I)
+_WORDS = re.compile(r"[^\W\d_]+")
+_LEADS = set("à ừ ừm ờ ôi bởi tại vì nếu tuy mặc dù trong cứ hãy thật thực điều cái ngày "
+             "được thế vậy hiện lúc ngay có rất một tất chính không trước sau để".split())
 
-    Bộ siết có thể trả **danh sách từng mảnh** (bộ luật rút gọn từng cue một, giữ
-    nguyên ranh giới cue) hoặc **một chuỗi** (AI viết lại cả câu) — chuỗi thì chia
-    lại theo tỉ lệ ký tự như lúc dịch. Chia lại theo tỉ lệ có thể đẩy một từ cuối
-    cue này sang đầu cue sau, nên bộ nào giữ được mảnh thì nên trả mảnh.
-    """
-    g = item["cues"]
-    if isinstance(new_text, (list, tuple)):
-        if len(new_text) == len(g) and any((p or "").strip() for p in new_text):
-            for i, part in zip(g, new_text):
-                cues[i].text2 = (part or "").strip()
-            return
-        new_text = _join_fragments([(p or "").strip() for p in new_text])
-    new_text = (new_text or "").strip()
-    if not new_text:
-        return
-    if len(g) == 1:
-        cues[g[0]].text2 = new_text
-        return
-    weights = [max(1, len(cues[i].text.strip())) for i in g]
-    for i, part in zip(g, split_proportional(new_text, weights)):
-        cues[i].text2 = part
+
+def _names(text: str) -> list[str]:
+    words = _WORDS.findall(text)
+    return [w.casefold() for i, w in enumerate(words) if w[0].isupper()
+            and (i > 0 or w.casefold() not in _LEADS or w.isupper())]
+
+
+def keeps_anchors(before: str, after: str) -> bool:
+    """A conservative veto, not a semantic equivalence score."""
+    a, b = (unicodedata.normalize("NFC", s) for s in (before, after))
+    def anchors(s):
+        return [re.sub(r"\s+", "", x) for x in _ANCHORS.findall(s.casefold())]
+    # A capitalized subject can move to the start of a shorter line.
+    words = iter(w.casefold() for w in _WORDS.findall(b))
+    return (anchors(a) == anchors(b) and all(w in words for w in _names(a))
+            and a.rstrip().endswith(("?", "？")) == b.rstrip().endswith(("?", "？")))
+
+
+def _shorter_line(before: str, candidate) -> str:
+    if isinstance(candidate, (list, tuple)):
+        candidate = candidate[0] if len(candidate) == 1 else ""
+    text = " ".join(candidate.split()) if isinstance(candidate, str) else ""
+    if (not text or not any(ch.isalnum() for ch in text)
+            or duration.syllables(text) >= duration.syllables(before)
+            or not keeps_anchors(before, text)):
+        return before
+    return text
 
 
 def run_loop(
@@ -169,35 +181,37 @@ def run_loop(
     pending = before
     for n in range(1, max_passes + 1):
         stats["passes"] = n
-        requests = [
-            {
-                **it,
-                "target_syllables": target_syllables(it),
-                "pieces": [(cues[i].text2 or "").strip() for i in it["cues"]],
-                # câu gốc: bộ siết kiểu dịch lại (NLLB đẳng thời, HP-4) cần nó
-                "source": _join_fragments([(cues[i].text or "").strip() for i in it["cues"]]),
-            }
-            for it in pending
-        ]
+        # Đo theo cả lượt đọc nhưng chỉ chia NGÂN SÁCH, không chia lại lời dịch.
+        requests = []
+        for unit, it in enumerate(pending):
+            for i in it["cues"]:
+                if cues[i].translation_reviewed:
+                    continue
+                text = cues[i].text2.strip()
+                syl = duration.syllables(text)
+                if syl > 1:
+                    cap = max(1, round(target_syllables(it) * syl / max(1, it["syllables"])))
+                    requests.append({"unit": unit, "cues": [i], "text": text, "pieces": [text],
+                                     "source": cues[i].text, "syllables": syl, "target_syllables": cap})
+        if not requests:
+            break
         if on_log:
             on_log(f"  Lượt {n}/{max_passes}: gửi {len(requests)} câu vượt khung đi rút gọn.")
         try:
             shorter = tightener(requests)
+            if not isinstance(shorter, (list, tuple)) or len(shorter) != len(requests):
+                raise ValueError("Số câu trả về không khớp; giữ nguyên cả lô.")
         except Exception as exc:
             if on_log:
                 on_log(f"  Lượt rút gọn {n} lỗi, dừng: {exc}")
             break
-        changed = 0
-        for it, new_text in zip(requests, shorter):
-            if isinstance(new_text, (list, tuple)):
-                if [p.strip() for p in new_text] != it["pieces"]:
-                    _write_back(cues, it, new_text)
-                    changed += 1
-                continue
-            new_text = (new_text or "").strip()
-            if new_text and new_text != it["text"]:
-                _write_back(cues, it, new_text)
-                changed += 1
+        changed_units = set()
+        for req, candidate in zip(requests, shorter):
+            line = _shorter_line(req["text"], candidate)
+            if line != req["text"]:
+                cues[req["cues"][0]].text2 = line
+                changed_units.add(req["unit"])
+        changed = len(changed_units)
         stats["tightened"] += changed
         items = assess(cues, model)
         pending = over_budget(items, tolerance)
@@ -240,7 +254,7 @@ def line_target(cue: Cue, model: duration.DurationModel | None = None) -> int | 
     syl = duration.syllables(text)
     span = max(0.3, cue.end - cue.start)
     caps: list[int] = []
-    if (cue.text or "").strip():
+    if comparable_lengths(cue.text, text):
         allowed = length_units(cue.text) * LENGTH_RATIO
         units = length_units(text)
         if units > allowed:
@@ -279,11 +293,12 @@ def fit_lines(
                          "syllables": duration.syllables(text), "source": (cues[i].text or "").strip()})
     changes: list[dict] = []
     if requests:
-        for r, new in zip(requests, tightener(requests)):
-            if isinstance(new, (list, tuple)):
-                new = _join_fragments([(p or "").strip() for p in new])
-            new = " ".join((new or "").split())
-            if new and new != r["text"] and duration.syllables(new) < r["syllables"]:
+        results = tightener(requests)
+        if not isinstance(results, (list, tuple)) or len(results) != len(requests):
+            return {"asked": len(requests), "changes": []}
+        for r, new in zip(requests, results):
+            new = _shorter_line(r["text"], new)
+            if new != r["text"]:
                 changes.append({"i": r["cues"][0], "text2": new, "target": r["target_syllables"],
                                 "fits": duration.syllables(new) <= r["target_syllables"]})
     return {"asked": len(requests), "changes": changes}

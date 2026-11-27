@@ -24,6 +24,8 @@ from typing import Callable
 
 import numpy as np
 
+from . import gender as G
+from .diarize import speakers_of
 from .subtitles import Cue
 
 CHILD, ADULT, ELDER = "C", "A", "E"
@@ -135,8 +137,13 @@ def embed_cues(wav_path, cues: list[Cue], on_progress: Callable[[float], None] |
             out.append(None)
         else:
             x = _read(wav_path, cue)
-            v = np.asarray(model({"waveform": torch.from_numpy(x)[None], "sample_rate": SR})).reshape(-1)
-            out.append(v / (np.linalg.norm(v) + 1e-9))
+            # A padded subtitle can extend beyond the audio or contain only silence.
+            if x.size < SR * MIN_ASSIGN_S or not np.any(np.abs(x) > 0.005):
+                out.append(None)
+            else:
+                v = np.asarray(model({"waveform": torch.from_numpy(x)[None], "sample_rate": SR})).reshape(-1)
+                norm = np.linalg.norm(v)
+                out.append(v / norm if np.isfinite(norm) and norm > 0 else None)
         if on_progress:
             on_progress((i + 1) / max(1, len(cues)))
     return out
@@ -203,28 +210,27 @@ def split_speakers(
 
     Trả về ``{"labeled", "empty", "speakers": {nhãn: {"gender", "f0", "age"}}}``.
 
-    Các bước (số đo trên data/_bench/speaker_bench.py — trích đoạn 86 giây có nhãn tay đúng
-    69,8 % → 88,4 %; 6 giọng dựng sẵn 7 vai → đúng 6 vai):
-
-    1. Gom cụm trong từng giới (đoán theo cao độ) chỉ bằng các câu đủ dài (`MIN_EMBED_S`).
+    1. Gom cụm trong từng giới (đoán theo cao độ), ưu tiên câu đủ dài (`MIN_EMBED_S`).
     2. Cụm quá ít tiếng nói (dưới `MIN_CLUSTER_S` hoặc `MIN_CLUSTER_FRAC` tổng thoại) dồn vào
        cụm cùng giới gần nhất.
     3. Cụm bị chia nhầm giới (nam nói to, nữ nói trầm) gộp vào cụm khác giới nó giống hẳn.
-    4. Mỗi giới giữ tối đa `MAX_PER_GENDER` cụm.
+    4. Tìm vai phụ từ các câu ngắn lặp lại, khác các giọng đã biết. Mỗi giới giữ tối đa `MAX_PER_GENDER` cụm.
     5. MỌI câu có véc-tơ — kể cả câu ngắn và câu đã nằm trong cụm — về tâm gần nhất, không chặn
        theo giới: cao độ một câu lẻ kém tin hơn véc-tơ giọng.
     """
-    from . import gender as G
-
     n = len(cues)
     guess = [G.gender_of(p["f0"]) for p in pitches]
     dur = np.array([max(0.0, c.end - c.start) for c in cues])
-    min_cluster = max(MIN_CLUSTER_S, MIN_CLUSTER_FRAC * float(dur.sum()))
+    min_share = MIN_CLUSTER_FRAC * float(dur.sum())
+    min_cluster = max(MIN_CLUSTER_S, min_share)
 
     stats_thr: dict[str, float] = {}
     clusters: list[dict] = []  # {"gender", "members": [chỉ số cue], "centroid"}
     for g in (G.MALE, G.FEMALE):
-        idx = [i for i in range(n) if guess[i] == g and embeds[i] is not None and dur[i] >= MIN_EMBED_S]
+        eligible = [i for i in range(n) if guess[i] == g and embeds[i] is not None]
+        # A character may have *only* short replies. Don't force those replies
+        # into another character's cluster just because it has longer examples.
+        idx = [i for i in eligible if dur[i] >= MIN_EMBED_S] or eligible
         if not idx:
             continue
         vecs = np.stack([embeds[i] for i in idx])
@@ -284,6 +290,33 @@ def split_speakers(
 
     clusters.sort(key=lambda c: (-dur[c["members"]].sum(), c["gender"]))
     cents = [centroid(c) for c in clusters]
+    # A supporting voice may never get a long, clean subtitle of its own.
+    # Require repeated, mutually similar short replies that fit *none* of the known voices.
+    for g, threshold in stats_thr.items():
+        slots = MAX_PER_GENDER - sum(c["gender"] == g for c in clusters)
+        short = [i for i in range(n) if guess[i] == g and embeds[i] is not None
+                 and MIN_ASSIGN_S <= dur[i] < MIN_EMBED_S
+                 and max(float(embeds[i] @ v) for v in cents) < threshold]
+        if slots <= 0 or len(short) < 2:
+            continue
+        # Short samples are noisier than the long anchors. Form candidates at
+        # the similarity floor; their pooled voice must still fail the normal match.
+        labels = cluster(np.stack([embeds[i] for i in short]), dur[short],
+                         MIN_MERGE if merge_sim is None else merge_sim)
+        groups: dict[int, list[int]] = {}
+        for i, k in zip(short, labels):
+            groups.setdefault(k, []).append(i)
+        for members in sorted(groups.values(), key=lambda m: -dur[m].sum()):
+            if len(members) < 2 or dur[members].sum() < max(MIN_EMBED_S, min_share):
+                continue
+            candidate = {"gender": g, "members": members}
+            center = centroid(candidate)
+            if max(float(center @ v) for v in cents) < threshold:
+                clusters.append(candidate)
+                cents.append(center)
+                slots -= 1
+                if not slots:
+                    break
     owner: dict[int, int] = {}
     # Mọi câu có véc-tơ -> tâm gần nhất (mọi giới). Câu chỉ có cao độ -> cụm lớn nhất cùng giới;
     # không có gì -> để trống.
@@ -296,8 +329,6 @@ def split_speakers(
             cand = [k for k, c in enumerate(clusters) if c["gender"] == guess[i]]
             if cand:
                 owner[i] = cand[0]
-            else:
-                owner[i] = 0
     # cụm có thể rỗng sau bước trên -> đánh số lại theo thời lượng nói thật
     used = sorted({k for k in owner.values()}, key=lambda k: -sum(dur[i] for i in owner if owner[i] == k))
     remap = {k: r for r, k in enumerate(used)}
@@ -320,3 +351,109 @@ def split_speakers(
             "gender": c["gender"], "f0": round(f0, 1), "age": age_of(c["gender"], f0),
         }
     return stats
+
+
+def _keep_cast(cues: list[Cue], previous: list[str], embeds: list | None, reserved_ids) -> None:
+    """Keep cast IDs stable; use explicitly assigned lines as voice examples."""
+    groups: dict[str, list[int]] = {}
+    votes: dict[tuple[str, str], float] = {}
+    for i, (cue, old) in enumerate(zip(cues, previous)):
+        if cue.speaker:
+            groups.setdefault(cue.speaker, []).append(i)
+            if old:
+                pair = (cue.speaker, old)
+                votes[pair] = votes.get(pair, 0.0) + cue.end - cue.start
+
+    mapping: dict[str, str] = {}
+    for auto, old in sorted(votes, key=lambda p: (-votes[p], p)):
+        if auto not in mapping and old not in mapping.values():
+            mapping[auto] = old
+    reserved = set(previous).union(reserved_ids)
+    number = 1
+    for auto in sorted(groups, key=lambda label: int(label[1:])):
+        indices = groups[auto]
+        if auto not in mapping:
+            while f"S{number}" in reserved:
+                number += 1
+            mapping[auto] = f"S{number}"
+            reserved.add(mapping[auto])
+        default = mapping[auto]
+        for i in indices:
+            cues[i].speaker = default
+
+        # Two similar voices may share one automatic cluster. Only split that
+        # cluster when the editor supplies counterexamples, not by guessing a cast size.
+        if embeds is None:
+            if len({previous[i] for i in indices if previous[i]}) > 1:
+                for i in indices:
+                    cues[i].speaker = previous[i]  # Pitch cannot distinguish these cast members.
+            continue
+        examples: dict[str, list[int]] = {}
+        for i in indices:
+            if cues[i].speaker_fixed and previous[i] and embeds[i] is not None:
+                examples.setdefault(previous[i], []).append(i)
+        if not (examples.keys() - {default}):
+            continue
+        if default not in examples:
+            rest = [i for i in indices if not cues[i].speaker_fixed and embeds[i] is not None]
+            if not rest:
+                continue
+            examples[default] = rest
+        centers = {}
+        for label, members in examples.items():
+            center = np.average([embeds[i] for i in members], axis=0,
+                                weights=[cues[i].end - cues[i].start for i in members])
+            centers[label] = center / (np.linalg.norm(center) + 1e-9)
+        for i in indices:
+            if not cues[i].speaker_fixed and embeds[i] is not None:
+                scores = {k: float(embeds[i] @ v) for k, v in centers.items()}
+                best = max(scores, key=scores.get)
+                if scores[best] >= MIN_MERGE and scores[best] > scores[default]:
+                    cues[i].speaker = best
+    for cue, old in zip(cues, previous):
+        if cue.speaker_fixed or not cue.speaker or (embeds is None and old):
+            cue.speaker = old
+
+
+def identify(wav: Path, cues: list[Cue], *, use_embeddings: bool = True, on_log=None,
+             on_progress=None, reserved_ids=()) -> tuple[list[dict], str]:
+    """Identify voices without changing dialogue, timings, or any project on disk."""
+    previous = [c.speaker for c in cues]
+    pitches = G.measure(wav, cues)
+    if not any(p["f0"] for p in pitches):
+        return [], "pitch"
+    embeds = None
+    method = "pitch"
+    info = {}
+    if use_embeddings:
+        try:
+            if on_log:
+                on_log("Lấy véc-tơ giọng từng câu để tách nhiều người cùng giới…")
+            embeds = embed_cues(wav, cues, on_progress=on_progress)
+            stats = split_speakers(cues, embeds, pitches)
+            if stats["labeled"]:
+                info = stats["speakers"]
+                method = "voiceprint"
+        except Exception as exc:
+            embeds = None
+            if on_log:
+                on_log(f"Không dùng được véc-tơ giọng ({exc}), chuyển sang phân theo cao độ.")
+    if method == "pitch":
+        embeds = None
+        G.split_cues(cues, pitches)
+    if reserved_ids or any(previous) or any(c.speaker_fixed for c in cues):
+        _keep_cast(cues, previous, embeds, reserved_ids)
+        info = {}  # Recompute metadata for the final cast rather than the preliminary clusters.
+
+    speakers = speakers_of(cues)
+    if not info:
+        info = G.speaker_genders(cues, pitches)
+    counts: dict[str, int] = {}
+    for s in speakers:
+        s.update(info[s["id"]])
+        g = s["gender"]
+        s["age"] = age_of(g, s["f0"])
+        counts[g] = counts.get(g, 0) + 1
+        name = G.NAMES.get(g, "")
+        s["name"] = f"{name} {counts[g]}" if name and method == "voiceprint" else name
+    return speakers, method

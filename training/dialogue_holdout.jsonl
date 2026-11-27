@@ -1,0 +1,32 @@
+{"src":"船票不是我的，是阿姨的。","tgt":"Vé tàu không phải của tôi, mà là của dì.","spoken":"Vé tàu không phải của tôi, mà của dì.","cap":10,"checks":[["không","chẳng"],["dì","cô","bác gái"]]}
+{"src":"小林还没把钥匙交给医生。","tgt":"Tiểu Lâm vẫn chưa giao chìa khóa cho bác sĩ.","spoken":"Tiểu Lâm chưa giao chìa khóa cho bác sĩ.","cap":9,"checks":[["chưa"],["chìa"],["bác sĩ","bác sỹ","thầy thuốc","y sĩ"]]}
+{"src":"如果灯还亮着，就别拔插头。","tgt":"Nếu đèn vẫn còn sáng thì đừng rút phích cắm.","spoken":"Nếu đèn còn sáng, đừng rút phích cắm.","cap":8,"checks":[["đừng","chớ","không"],["phích","ổ cắm","dây điện"]]}
+{"src":"要等到明早才能拆开这封信。","tgt":"Phải chờ đến sáng mai mới được mở bức thư này.","spoken":"Phải chờ đến sáng mai mới được mở thư.","cap":9,"checks":[["sáng mai","sáng ngày mai"],["thư"]]}
+{"src":"师父，箱子里少了两本账簿。","tgt":"Sư phụ, trong chiếc rương thiếu mất hai quyển sổ sách.","spoken":"Sư phụ, trong rương thiếu hai quyển sổ sách.","cap":9,"checks":[["sư phụ","thầy"],["hai","2"],["sổ"]]}
+{"src":"别跟她说是我留下的伞。","tgt":"Đừng nói với cô ấy rằng chiếc ô là do tôi để lại.","spoken":"Đừng nói với cô ấy là tôi để lại ô.","cap":10}
+{"src":"奶奶，我把药放在窗台上了。","tgt":"Bà ơi, cháu đã để thuốc lên bệ cửa sổ rồi.","spoken":"Bà ơi, cháu đã để thuốc trên bệ cửa sổ.","cap":10,"checks":[["bà","nội"],["thuốc"]]}
+{"src":"下午3点以前别关西门。","tgt":"Đừng đóng cổng phía tây trước 3 giờ chiều.","spoken":"Đừng đóng cổng tây trước 3 giờ chiều.","cap":8}
+{"src":"不是要辞职，我只是想换班。","tgt":"Không phải tôi muốn nghỉ việc, tôi chỉ muốn đổi ca thôi.","spoken":"Tôi không muốn nghỉ việc, chỉ muốn đổi ca.","cap":9}
+{"src":"即使雨停了，也不要走山路。","tgt":"Cho dù mưa có tạnh thì cũng đừng đi đường núi.","spoken":"Dù mưa tạnh cũng đừng đi đường núi.","cap":8}
+{"src":"姐姐，你替我保管一下车票吧。","tgt":"Chị ơi, chị giữ hộ em tấm vé xe một lát nhé.","spoken":"Chị giữ hộ em vé xe một lát nhé.","cap":9}
+{"src":"是谁把那张蓝色的收据拿走了？","tgt":"Ai là người đã lấy mất tờ biên lai màu xanh ấy?","spoken":"Ai đã lấy tờ biên lai xanh ấy?","cap":8}
+{"src":"王师傅说今天只修好了一台。","tgt":"Bác Vương nói hôm nay chỉ sửa xong được một chiếc.","spoken":"Bác Vương nói hôm nay chỉ sửa xong một chiếc.","cap":10}
+{"src":"你不点头，我就不签字。","tgt":"Nếu anh không gật đầu thì tôi sẽ không ký tên.","spoken":"Anh không gật đầu, tôi sẽ không ký.","cap":8}
+{"src":"他们等的是船，不是火车。","tgt":"Thứ họ đang chờ là tàu thủy, không phải tàu hỏa.","spoken":"Họ đang chờ tàu thủy, không phải tàu hỏa.","cap":9,"checks":[["tàu thủy","tàu thuỷ","thuyền"],["không","chẳng"],["tàu hỏa","tàu hoả","xe lửa"]]}
+{"src":"桌上还有12张没用过的邮票。","tgt":"Trên bàn vẫn còn 12 con tem chưa hề được sử dụng.","spoken":"Trên bàn còn 12 con tem chưa dùng.","cap":8}
+{"src":"请先把窗户关上，再打开盒子。","tgt":"Xin hãy đóng cửa sổ trước rồi mới mở chiếc hộp ra.","spoken":"Xin đóng cửa sổ trước rồi mới mở hộp.","cap":9}
+{"src":"我以为你说的是昨天晚上。","tgt":"Tôi cứ tưởng rằng anh đang nói về tối ngày hôm qua.","spoken":"Tôi tưởng anh đang nói về tối hôm qua.","cap":9}
+{"src":"孩子醒来以前，我们不要开灯。","tgt":"Trước khi đứa bé tỉnh giấc, chúng ta đừng bật đèn.","spoken":"Trước khi bé thức, chúng ta đừng bật đèn.","cap":9}
+{"src":"小梅并没有答应搬走。","tgt":"Tiểu Mai không hề đồng ý chuyển đi nơi khác.","spoken":"Tiểu Mai không đồng ý chuyển đi.","cap":7}
+{"src":"这把尺子比原来的短5厘米。","tgt":"Cái thước này ngắn hơn cái thước cũ 5 xăng-ti-mét.","spoken":"Thước này ngắn hơn thước cũ 5 xăng-ti-mét.","cap":8}
+{"src":"只要你平安，晚一点也没关系。","tgt":"Chỉ cần con được bình an thì về muộn một chút cũng không sao.","spoken":"Chỉ cần con bình an, về muộn chút cũng không sao.","cap":11}
+{"src":"您是不是把我的围巾当成您的了？","tgt":"Có phải bác đã nhầm chiếc khăn của cháu với khăn của bác không ạ?","spoken":"Bác nhầm khăn của cháu với khăn của bác phải không ạ?","cap":12}
+{"src":"快递员把花送错楼了。","tgt":"Người giao hàng đã mang bó hoa đến nhầm tòa nhà.","spoken":"Người giao hàng đã giao hoa nhầm tòa nhà.","cap":9}
+{"src":"电池还能用半个小时，别着急。","tgt":"Pin vẫn còn dùng được nửa tiếng nữa, đừng vội.","spoken":"Pin còn dùng được nửa tiếng, đừng vội.","cap":8}
+{"src":"他没忘记密码，只是输错了。","tgt":"Anh ấy không quên mật khẩu, chỉ là đã nhập sai thôi.","spoken":"Anh ấy không quên mật khẩu, chỉ nhập sai thôi.","cap":10,"checks":[["không","chẳng"],["mật khẩu","mật mã"],["sai","nhầm"]]}
+{"src":"东边那个房间留给客人吧。","tgt":"Chúng ta hãy để căn phòng ở phía đông cho khách nhé.","spoken":"Chúng ta để phòng phía đông cho khách nhé.","cap":9}
+{"src":"除非本人同意，否则不能公开照片。","tgt":"Trừ khi chính người đó đồng ý, nếu không thì không được công khai ảnh.","spoken":"Trừ khi người đó đồng ý, nếu không thì không được công khai ảnh.","cap":14}
+{"src":"林医生今晚值班，不是明晚。","tgt":"Bác sĩ Lâm trực tối hôm nay, không phải tối ngày mai.","spoken":"Bác sĩ Lâm trực tối nay, không phải tối mai.","cap":10}
+{"src":"你先把地图摊开给我看看。","tgt":"Trước hết anh hãy trải tấm bản đồ ra cho tôi xem.","spoken":"Anh trải bản đồ ra cho tôi xem trước.","cap":9}
+{"src":"末班车还在桥的另一边。","tgt":"Chuyến xe cuối ngày vẫn còn ở phía bên kia cây cầu.","spoken":"Chuyến xe cuối vẫn ở bên kia cầu.","cap":8}
+{"src":"等姐姐回来再分这袋栗子。","tgt":"Hãy đợi chị về rồi mới chia túi hạt dẻ này nhé.","spoken":"Đợi chị về rồi mới chia túi hạt dẻ nhé.","cap":10}

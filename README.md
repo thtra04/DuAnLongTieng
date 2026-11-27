@@ -14,6 +14,18 @@ Tool tạo **phụ đề** và **dịch video** chạy hoàn toàn trên máy b�
 - 📦 **Xuất** SRT · VTT · SRT song ngữ · TXT · video nung phụ đề · video phụ đề bật-tắt · video lồng tiếng
 - 📂 **Dự án phim** — tạo bộ → tạo tập → đưa video vào từng tập; theo dõi còn thiếu tập nào
 
+**Giao diện:** bấm **Giao diện** ở màn hình đăng nhập hoặc trên thanh đầu của studio
+(điện thoại: **Tùy chọn → Giao diện**). Mặc định là **Champagne sáng** với nền ngà và ánh vàng;
+**Première** là lựa chọn xanh trầm nếu thích nền tối. Đổi bảng màu hay màu nhấn không làm mất
+khung phim 3D. Tắt **Chiều sâu 3D** để dùng khung phẳng, hoặc bật **Giảm chuyển động** để giữ khung xếp lớp đứng yên.
+Lựa chọn được nhớ trên trình duyệt này, không đổi phụ đề hay màu của video xuất.
+
+**Ảnh thư viện:** tập và video lẻ tự lấy khung hình từ video gốc hoặc bản xuất; bộ phim
+dùng bìa của một tập. Bấm vào bìa (hoặc **Thêm ảnh**) → **Tải ảnh lên** để chọn JPG, PNG
+hoặc WebP, tối đa 5 MB. Tập chưa có hình sẽ dùng ảnh bìa đã tải lên của bộ phim, nếu có.
+**Dùng bìa tự động** bỏ ảnh riêng đã chọn và quay về cách lấy bìa này.
+Bìa chỉ hiển thị trong thư viện; chỉ chủ dự án và người có quyền sửa mới đổi được.
+
 ---
 
 ## Kiến trúc: frontend và backend tách rời
@@ -30,9 +42,9 @@ backend/                 API + lõi xử lý (Python, FastAPI)
   store/                 lưu trữ JSON: films  projects  series
 frontend/                giao diện tĩnh HTML/CSS/JS, không cần build
   index.html  config.js  (config.js: địa chỉ backend, window.VSUB_API_BASE)
-  css/style.css
-  js/                    core → theme → boot → films → source → setup → ai → progress → editor → dubbing → export → prefs → main
-                         (theme.js: 8 bảng màu + màu nhấn tuỳ ý, chọn ở góc phải header, nhớ cho lần sau;
+  css/                   style.css, appearance.css
+  js/                    theme-state (trước CSS) → core → theme → boot → films → source → setup → ai → progress → minutes → editor → hardsub → dubbing → timeline → export → prefs → main
+                         (theme-state.js khôi phục diện mạo; theme.js điều khiển bảng cài đặt;
                           icon là SVG nội tuyến trong index.html, gọi bằng icon('tên') ở core.js)
 training/                notebook huấn luyện AI (.ipynb): sinh dữ liệu, train, khung đo
 tests/                   pytest — chạy được không cần torch / pyannote / vieneu
@@ -102,7 +114,8 @@ Trình duyệt tự mở <http://127.0.0.1:8000>.
 | Tuỳ chọn | Ý nghĩa |
 |---|---|
 | `--port 8080` | đổi cổng |
-| `--host 0.0.0.0` | cho máy khác trong LAN truy cập |
+| `--host 0.0.0.0` | lắng nghe LAN; để đăng nhập qua Wi-Fi cần thêm chứng thư và khóa HTTPS |
+| `--invite` | tạo mã đăng ký thành viên dùng một lần, hết hạn sau 24 giờ, rồi thoát |
 | `--no-browser` | không tự mở trình duyệt |
 | `--reload` | tự nạp lại khi sửa code (dev) |
 
@@ -110,10 +123,13 @@ Trình duyệt tự mở <http://127.0.0.1:8000>.
 
 ```bash
 docker compose up -d --build
+docker compose exec vsub python run.py --invite
 ```
 
 Mở <http://127.0.0.1:8000>. Compose dựng hai dịch vụ: ứng dụng và Redis (hàng đợi tác vụ, giữ
 trạng thái job qua các lần khởi động lại). Dữ liệu và model tải về nằm trong volume `vsub-data`.
+Compose chỉ công bố cổng trên loopback. Không giữ `VSUB_LOOPBACK_PUBLISHED=1` nếu thay cấu hình
+đó để mở mạng LAN; khi triển khai cho điện thoại dùng HTTPS.
 
 Ảnh mặc định có lồng tiếng, dịch AI và hàng đợi nhưng **không có torch** (nhẹ hơn ~2,5 GB), nên
 chưa có nhận diện người nói và nhân bản giọng — tách giọng nam / nữ thì vẫn có. Muốn đủ:
@@ -151,8 +167,57 @@ cd mobile\android
 .\gradlew.bat assembleRelease      # cần JDK 17 + Android SDK; APK ở app\build\outputs\apk\release\
 ```
 
-Trên máy tính chạy `uv run python run.py --host 0.0.0.0` (hoặc tích ô điện thoại trong `VSubStudio.exe`),
-cài APK lên điện thoại cùng Wi-Fi rồi nhập `IP-máy-tính:8000`.
+**Qua USB (không cần chứng thư):** chạy `uv run python run.py` trên máy tính, bật gỡ lỗi USB
+trên điện thoại, kết nối cáp và chạy `adb reverse tcp:8000 tcp:8000`. Trong app nhập `localhost:8000`.
+**Qua Wi-Fi:** dùng reverse proxy HTTPS hoặc `uv run python run.py --host 0.0.0.0 --ssl-certfile cert.pem --ssl-keyfile key.pem`.
+Nhập `https://ten-may:8000` khớp với chứng thư được Android tin cậy. Chỉ bật ô Wi-Fi trên launcher
+cũ chưa đủ để đăng nhập. App không gửi mật khẩu qua HTTP mạng LAN.
+
+### Tài khoản và dữ liệu
+
+Chủ máy chạy `uv run python run.py --invite`, đưa mã trực tiếp cho người cần mời. Mở studio,
+chọn **Có mã mời? Đăng ký**, nhập tên tài khoản và mật khẩu (10–128 ký tự). Lần sau chỉ cần đăng nhập.
+Sau khi đăng nhập, mở **Trang cá nhân** để xem ngày tham gia và quyền tài khoản. Chọn **Chỉnh sửa hồ sơ**
+để cập nhật tên hiển thị, email liên hệ, công việc trong ê-kíp và giới thiệu. Các mục này không bắt buộc;
+email không dùng để đăng nhập hoặc khôi phục mật khẩu. Đổi mật khẩu cần mật khẩu hiện tại; các phiên khác phải đăng nhập lại.
+Tài khoản mới là **thành viên**, không có quyền đọc phim của người khác. Để thiết lập admin đầu tiên,
+chủ máy chạy `uv run python run.py --make-admin TEN_DANG_NHAP` cho một tài khoản đã đăng ký rồi tải lại trang.
+Không có mật khẩu admin mặc định. Admin mở **Quản trị studio** (`/#admin`) từ thư viện hoặc trang cá nhân.
+Bảng điều hành riêng có ba mục **Tài khoản**, **Nhóm sản xuất** và **Dự án phim**; các số đếm lấy từ máy chủ.
+Admin có thể cấp mã đăng ký, đổi quyền tài khoản,
+khóa/mở khóa hoặc giao bộ phim cũ cho trưởng nhóm. Khóa tài khoản chấm dứt các phiên đang dùng.
+
+**Làm chung một dự án:**
+
+1. Trong **Nhóm & mã mời**, tạo nhóm. Mở **Quản lý nhóm → Tạo mã nhóm**, gửi riêng mã `TM-…` cho đồng đội.
+2. Tại thư viện, **Tạo dự án phim → Không gian dự án** và chọn nhóm. Nếu làm một mình, chọn **Cá nhân**.
+3. Chủ dự án vào **Cộng tác**, chọn **Chỉ xem** hoặc **Biên tập** và tạo mã `PJ-…`. Người nhận đã đăng nhập dùng
+   **Nhóm & mã mời → Tham gia bằng mã**. Với phim của nhóm, dùng mã nhóm trước, rồi mã dự án. Cùng nhóm
+   không tự nhìn thấy phim của nhau. Mã đăng ký, nhóm và dự án không thay thế nhau; mỗi mã dùng một lần trong 24 giờ.
+
+| Vai trò | Quyền |
+|---|---|
+| Quản trị studio | Quản lý tài khoản, mọi nhóm và mọi dự án, kể cả thư viện cũ chưa phân công |
+| Trưởng nhóm | Mời/gỡ thành viên nhóm; không tự xem hoặc quản lý phim do thành viên khác tạo |
+| Chủ dự án | Xử lý, mời/gỡ cộng tác viên, đổi quyền, đổi tên, xóa tập và bộ phim |
+| Biên tập | Xem, thêm tập, sửa kịch bản/phân vai, dịch và xuất; không xóa dự án hay cấp quyền |
+| Chỉ xem | Đọc kịch bản, phát video, tải các bản đã xuất; không chỉnh sửa hoặc chạy job trên dự án |
+
+Gỡ thành viên khỏi nhóm thu hồi quyền ở các phim của nhóm; tham gia nhóm lại vẫn cần mã dự án mới.
+Mã chưa dùng có thể thu hồi trong **Cộng tác**. Hai biên tập viên lưu cùng một bản kịch bản: người
+lưu sau được báo xung đột và phải mở lại để đối chiếu, không tự gộp văn bản. Bộ nhớ dịch và
+thuật ngữ học từ kịch bản được tách theo dự án. Khi nâng cấp, **dừng tất cả server cũ** dùng cùng `data`
+trước khi chạy bản mới: tiến trình cũ không thực thi quyền theo nhóm.
+
+SQLite qua SQLAlchemy, tệp `data/vsub.db`, bật khóa ngoại và WAL. Bảng `films`, `episodes`,
+`characters`, `voices`, `translation_memory` giữ dữ liệu nghiệp vụ; `studio_members`, `login_sessions`,
+`studio_invites` lưu thành viên, phiên và mã mời. CSDL không chứa mật khẩu thô, mã mời hay token
+phiên thô. `teams`, `team_members`, `film_members`, `collaboration_invites`, `job_scopes` và
+`upload_owners` lưu phạm vi cộng tác. Video lẻ cũ chỉ hiện cho admin; có thể gán rõ ràng vào một tập.
+Phiên hết hạn sau 7 ngày hoặc ngay khi đăng xuất. Nâng cấp tạo bảng và chỉ mục tại chỗ;
+không nhận quyền sở hữu dự án cho tài khoản đầu tiên. Video gốc ở `data/uploads`, kịch bản,
+track và file xuất ở `data/jobs`: khi sao lưu toàn bộ studio, dừng server rồi sao lưu cả `data`,
+không chỉ chép một file `.db` đang mở.
 
 ---
 
@@ -170,7 +235,8 @@ Nghĩa là **một tập tồn tại trước khi có video**. Bộ phim do bạ
 đó là lý do video upload từ máy cũng gom vào bộ được (trước đây không link thì không gộp nổi).
 
 **Bước 1 — tạo bộ.** Bấm `➕ Tạo dự án phim`, đặt tên. Dán thêm **link cả bộ** thì tool đọc link,
-**tạo sẵn từng tập** kèm tên và thời lượng, và **tự nhận những tập bạn đã làm trước đó** vào đúng chỗ.
+**tạo sẵn từng tập** kèm tên và thời lượng. Chỉ bộ cá nhân tự nhận video lẻ của chính bạn có link khớp;
+bộ nhóm không tự lấy video từ thư viện riêng.
 
 **Bước 2 — tạo tập.** `➕ Thêm tập` trong thẻ bộ (link nhiều phần thì đã có sẵn, bỏ qua bước này).
 
@@ -217,7 +283,7 @@ xuất được SRT · VTT · TXT, nhưng không xem trước và không nung / 
 Kéo thả file (`mp4, mkv, mov, avi, webm, mp3, wav…`) hoặc dán link YouTube/TikTok/Facebook/bilibili.
 
 **Link nhiều phần** — một link bilibili có thể chứa nhiều phần (`P1, P2, P3…`), playlist YouTube
-cũng vậy. Bấm **🔍 Kiểm tra link** (hoặc chỉ cần rời khỏi ô nhập) để xem danh sách phần kèm thời
+cũng vậy. Dán riêng địa chỉ video (ví dụ `youtu.be/…` cũng được), rồi bấm **Kiểm tra link**, **Enter** hoặc **Tiếp tục** để xem danh sách phần kèm thời
 lượng, rồi chọn phần muốn xử lý — mỗi lần một phần. Chưa chọn thì tool không cho đi tiếp, tránh
 chuyện tải nhầm một phần dài 9 tiếng.
 
@@ -253,6 +319,13 @@ Rồi chọn phụ đề lấy từ đâu:
 | **Tên riêng tiếng Trung** | Chuyển sang âm Hán-Việt, không để pinyin |
 | **Bộ thuật ngữ cho mọi engine** | Với Google / MyMemory / NLLB, thuật ngữ được cài thẳng vào câu gốc trước khi dịch (`朱大生 = Chu Đại Sinh`) |
 | **Bộ nhớ dịch** | Câu bạn sửa tay ở bước 4 rồi xuất được ghi nhớ. Lần sau gặp lại đúng câu đó thì dùng bản của bạn (engine nào cũng vậy); câu gần giống thì đưa cho AI làm mẫu |
+
+Riêng Trung → Việt, bước 2 có **Tra Hán Việt từ kịch bản**. Sau khi mở dự án hoặc nhập lời gốc,
+có thể xem mục từ theo tên người, địa danh, xưng hô, danh từ và thành ngữ, chọn những mục cần đưa vào
+ô thuật ngữ rồi sửa. Tool tự nhận họ đơn/họ kép trong lời giới thiệu (ví dụ `我叫欧阳明`),
+dùng cách đọc theo địa danh (`重庆` → Trùng Khánh), dịch nghĩa thay vì ghép âm với thành ngữ
+(`锦衣玉食` → ăn ngon mặc đẹp). Tên suy ra chỉ dùng trong kịch bản hiện tại; không tự ghi vào bộ nhớ
+toàn cục chỉ vì được đoán một lần. ASR nghe sai hoặc thành ngữ chưa có mục vẫn cần người duyệt.
 
 Đo trên bộ gold 271 câu (phim cổ trang zh→vi, so với bản dịch tham chiếu; mỗi cấu hình chạy một lần):
 
@@ -295,11 +368,11 @@ Vì vậy VAD mặc định tắt. Chỉ bật khi video là phỏng vấn/thuy�
 
 Whisper có thể bỏ sót cả đoạn dài **mà không báo lỗi**. Tool luôn đo độ phủ và:
 
-1. Nếu phủ dưới 85% và VAD đang bật → tự nhận dạng lại không dùng VAD, giữ kết quả tốt hơn
-2. Quét bù các khoảng trống dài trên 20 giây (lọc chặt theo `no_speech_prob` và `avg_logprob`
-   để Whisper không bịa lời trên đoạn nhạc/im lặng)
-3. Nếu vẫn hụt, hiện cảnh báo rõ ràng ở bước 3 kèm danh sách đoạn thiếu — không bao giờ
-   im lặng trả về kết quả cụt
+1. Nếu câu cuối chưa tới 85% video và VAD đang bật, nghe lại không VAD và bổ sung đoạn mới, không bỏ lời đã nhận ra.
+2. Dùng VAD tìm tiếng nói trong khoảng trống từ 0,65 giây giữa các từ, kể cả giữa phim. Nghe lại tối đa 40 đoạn nghi có lời, lọc chữ lặp và kết quả thiếu tin cậy.
+3. Đoạn còn nghi có tiếng nói được lưu với dự án để nghe lại ở bước 4. Đây là gợi ý, không phải kết luận nhạc nền là lời thoại. Video có câu ở giây cuối **không** có nghĩa là đã nhận ra hết lời.
+
+Với phim có nhạc lấn giọng, bật **Tách nhạc nền trước khi nghe giọng** để Whisper và bước nhận diện vai nghe rãnh giọng do Demucs tách. Nếu tách thất bại, tool dùng tiếng gốc và ghi lý do vào nhật ký.
 
 ### Bước 3 — Xử lý
 
@@ -307,6 +380,10 @@ Xem tiến độ từng bước và log thời gian thực. Có thể bấm **Hu
 
 ### Bước 4 — Biên tập & xuất
 
+- **Kịch bản theo phút:** chọn khoảng trong danh sách (kể cả phút trống) hoặc bật **Theo video**. Phút có lời chưa dịch hoặc có đoạn cần nghe được đánh dấu. Câu vắt qua phút xuất hiện trong cả hai khung nhìn nhưng chỉ xuất/đọc một lần.
+- Bấm **Thêm câu** hoặc một mốc nghi thiếu lời, nhập mốc bắt đầu/kết thúc, lời gốc và/hoặc bản dịch rồi **Áp dụng**. Bấm mốc giờ trên câu để chỉnh; **Xóa** chỉ xóa câu đang chọn. **Lưu kịch bản** để mở lại mà không phải xuất video.
+- Nếu đã bổ sung lời gốc, bấm **Dịch câu thiếu** để dịch các dòng trống trong phút đang xem bằng engine ở bước 2. Các dòng đã có bản dịch không bị viết lại.
+- Bản dịch gắn với đúng dòng nguồn; engine AI được đọc các dòng lân cận nhưng phải trả về theo số dòng. Nếu vẫn thiếu sau khi thử lại, dòng được ghi **Chưa dịch**, không coi lời gốc là bản dịch. Bản lồng tiếng không tự đọc nguyên ngữ thay chỗ trống.
 - Bố cục **bàn dựng phim**: màn hình xem bên trái, danh sách thoại bên phải, **dòng thời gian** chạy ngang bên dưới
 - Dòng thời gian: mỗi nhân vật một rãnh, mỗi dòng phụ đề một khối. Kéo khối để dời mốc giờ, kéo mép để co giãn,
   kéo sang rãnh khác để đổi vai; bấm chỗ trống để tua. Ctrl + lăn chuột để thu phóng; Alt + ←/→ dời khối 0,1 giây
@@ -323,7 +400,22 @@ Phím tắt: `Space` phát/dừng · `←` `→` nhảy dòng trước/sau.
 
 ### Lồng tiếng (tuỳ chọn)
 
-Bật **Lồng tiếng** ở bước 4 để video nói tiếng Việt thay vì chỉ có phụ đề.
+Ở bước 4, mở **Duyệt kịch bản sau dịch**. Mỗi câu đọc có mốc giờ, vai và dòng phụ đề
+đối chiếu. Mỗi dòng được đọc ở mốc riêng; không ghép lời của các dòng sau để đọc sớm.
+Sửa câu thiếu bản dịch hoặc còn chữ chưa dịch rồi bấm **Dựng lại**.
+**Xem & nghe** phát riêng câu nháp trên hình gốc, không lưu phụ đề, không trộn nhạc nền
+và không cần xuất video. Bấm **Sửa tiếp** để quay lại ô đang sửa.
+Phần tiếng vừa nghe được giữ riêng trong dự án. Nếu giữ nguyên lời, vai và giọng,
+bản xuất dùng lại lần đọc đó, kể cả khi đóng rồi mở lại dự án. Nếu phát âm chưa
+ưng, bấm **Tạo lượt đọc khác** ở chính dòng đó rồi duyệt lại; bản đã duyệt trước
+đó không bị thay chỉ vì một người khác đang nghe thử. Đổi tốc độ chỉ
+canh lại cùng bản thu; âm lượng và nhạc nền được trộn ở bước xuất.
+
+Khi đã hài lòng, bấm **Duyệt kịch bản này**, rồi bật **Lồng tiếng**. Máy chủ lưu lời đã
+duyệt cùng phụ đề theo dự án; bản xuất dùng đúng những câu đó, không tự rút gọn thêm.
+Đổi lời, mốc, vai, giọng, phong cách hoặc tốc độ thì phải duyệt lại. Nếu bộ đọc
+chỉ sinh tiếng bật, im lặng hoặc hỏng sau khi thử lại, công cụ báo số dòng và
+dừng thay vì xuất một video thiếu tiếng.
 
 | Tuỳ chọn | Ý nghĩa |
 |---|---|
@@ -337,7 +429,7 @@ Bật **Lồng tiếng** ở bước 4 để video nói tiếng Việt thay vì 
 | **Âm lượng tiếng gốc** | **Mức tối đa** của tiếng gốc — mặc định 45%. Tool chỉ được hạ xuống, không tự nâng lên |
 | **Tăng tốc tối đa** | Câu dịch dài hơn khung giờ sẽ được đọc nhanh hơn (giữ nguyên cao độ) tới mức này |
 
-Bấm **🔊 Nghe thử giọng** để nghe ngay dòng đang chọn trước khi xuất.
+Bấm **Xem & nghe câu đang chọn** để nghe trên hình trước khi xuất.
 
 ### 🎭 Lồng tiếng đa nhân vật
 
@@ -360,28 +452,42 @@ từng người — hoặc **nhân bản chính giọng nhân vật đó** trong
 
 | Chi tiết | Cách làm |
 |---|---|
-| **Nhãn nhân vật** | `S1`, `S2`… đánh số theo **tổng thời gian nói giảm dần** — `S1` thường là vai chính, và thứ tự không đổi giữa các lần chạy |
+| **Nhãn nhân vật** | `S1`, `S2`… đánh số theo **tổng thời gian nói giảm dần** trong video hiện tại. `S1` không phải tên người thật và không nhất thiết là cùng một người ở tập khác |
 | **Gán dòng cho vai** | Theo **độ chồng lấn thời gian lớn nhất**. Dòng vắt qua hai người thì lấy bên chiếm nhiều hơn |
 | **Dòng không rõ ai nói** | Thường là phụ đề trên nền nhạc — đọc bằng giọng ở ô "Giọng đọc" chung |
 | **Mẫu nhân bản** | **Ghép từ nhiều câu của đúng vai đó** (tới ~8–10 giây), mỗi khúc cắt gọn trong mốc giờ của một câu, ưu tiên câu **không sát lượt của người khác**; có mô hình véc-tơ giọng thì chọn những câu tiêu biểu nhất và loại câu lạc giọng. Không gom đủ 3 giây thì quay về cắt một đoạn liền như trước |
 | **Độ to theo thoại gốc** | Khi đã tách giọng gốc khỏi nhạc: câu gốc nói to thì câu lồng to hơn, nói khẽ thì nhỏ hơn (theo 60 % độ lệch so với mức thường của chính vai đó, chặn ±4 dB) |
 | **Mẫu không lấy câu trầm** | VieNeu-TTS đọc thấp hơn mẫu của nó 2–3 nửa cung, nên mẫu ghép chỉ lấy các câu có cao độ (F0) **từ tầm giọng của vai trở lên** — bản đọc bớt trầm hơn người thật. Không còn đủ 3 giây sau khi lọc thì dùng lại mọi câu |
-| **Kịch bản lồng tiếng có dấu câu** | Dịch từng dòng (Google, NLLB) cho ra mảnh không dấu câu; nối thẳng thì giọng đọc liền một mạch qua ranh giới câu. Lúc ghép câu đọc, chỗ nối được đặt dấu chấm / phẩy / hỏi theo câu gốc (tiểu từ hỏi 吗 呢, đại từ 什么 谁 哪, vế phụ 若 既然, lời gọi ngắn). Khung **Kịch bản lồng tiếng** ở bước 4 cho xem và sửa từng câu trước khi xuất (`POST /api/tts/script`); lúc xuất đọc đúng kịch bản và ghi kèm `<tên>.kichban.txt`. Đo trên 4 dự án: 227/291 chỗ nối thiếu dấu → 0 |
+| **Kịch bản lồng tiếng có dấu câu** | **Duyệt kịch bản sau dịch** giữ một câu đọc cho từng mốc và vai, bổ sung dấu câu khi cần. Khi xuất, giọng đọc và file `<tên>.kichban.txt` dùng cùng bản đã duyệt. Bộ dựng cụm câu độc lập (`POST /api/tts/script` không có `project`) vẫn có thể nối các mảnh có dấu chấm / phẩy / hỏi theo câu gốc; phép đo cũ trên 4 dự án giảm từ 227/291 chỗ nối thiếu dấu xuống 0. |
 | **Báo vai nhân bản lệch tone** | Khi đã tách giọng gốc khỏi nhạc: lúc lồng tiếng, đo cao độ từng câu đọc so với tầm giọng gốc của vai. Vai nào lệch từ 4 nửa cung trở lên (trung vị, ít nhất 3 câu) thì nhật ký báo rõ, để bạn đổi sang giọng dựng sẵn cho vai đó |
 | **Tone giọng theo thoại gốc** (thử nghiệm, mặc định tắt — bật bằng `dub.match_pitch`) | Đo trên tập phim 16 phút, 4 vai: lệch tầm giọng giảm 2,0 → 0,4 nửa cung nhưng độ giống giọng (cosine WeSpeaker) tụt 0,68 → 0,45, với cả bốn cách dịch cao độ đã thử (`data/_bench/pitch_variants.py`), nên chưa bật mặc định. Cách làm: khi đã tách giọng gốc khỏi nhạc và vai dùng giọng nhân bản, đo cao độ (F0) của vai trong tiếng gốc, rồi nâng/hạ từng câu lồng về tầm đó; câu gốc lên giọng hay xuống giọng thì câu lồng nhích theo 50 % (chặn ±2 nửa cung). Mỗi câu chỉnh tối đa 3 nửa cung, giữ nguyên độ dài và formant (ffmpeg `rubberband`); lệch dưới nửa nửa-cung thì để yên. Đây là xử lý tín hiệu, không huấn luyện lại VieNeu-TTS |
 | **Vai không cắt được mẫu** | Tự chuyển sang giọng dựng sẵn, có báo rõ — không làm hỏng cả bản lồng tiếng |
-| **Biết trước số vai** | Điền vào ô **Số nhân vật** ở bước 2 — chính xác hơn hẳn để tool tự đoán |
+| **Biết trước số vai** | Điền số **người có thoại**, từ 1 đến 20, tính cả người dẫn đọc ngoài hình. Không chắc thì để trống; đoán sai số có thể gộp hai vai hoặc tách một vai thành hai |
 
 > Không phụ thuộc ngôn ngữ: bước này chỉ đọc đặc trưng âm học của giọng, nên phim Trung, Hàn,
 > Nhật, Anh hay bất kỳ tiếng nào cũng dùng được y như nhau.
 
-**Cần token Hugging Face.** Model `pyannote/speaker-diarization-3.1` yêu cầu chấp nhận điều
-khoản: mở trang model, bấm đồng ý, tạo token ở mục *Access Tokens*, rồi dán vào ô ở bước 2
-(hoặc đặt biến môi trường `HF_TOKEN` cho khỏi nhập lại).
+**Chọn cách nhận diện ở bước 2:**
 
-```bash
-uv sync --extra cuda --extra diarize   # nhớ ghi thêm các --extra đang dùng
-```
+1. **Chạy ngay không cần tài khoản:** trong khung **Nhận diện người nói**, bấm **Dùng cách không cần token**.
+   App tắt phân đoạn pyannote và bật **Tách giọng nam / nữ, nhiều người, tuổi**. Chế độ này nhóm giọng theo từng dòng phụ đề;
+   WeSpeaker là model công khai (lần đầu có thể cần tải). Nếu không dùng được WeSpeaker, app dùng cao độ;
+   hai giọng giống nhau dễ bị gộp. Số người nhập ở khung pyannote không áp dụng cho cách này.
+2. **Muốn phân đoạn theo lượt nói:** trên máy chủ, cài nhóm tùy chọn nếu còn thiếu:
+   `uv sync --inexact --extra diarize` rồi khởi động lại VSub. Đăng nhập Hugging Face, mở đúng link model
+   trong app và đồng ý điều khoản. Bản pyannote 4.x mặc định dùng [Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1);
+   bản 3.x dùng [diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) cùng
+   [segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0).
+3. Tạo [token chỉ đọc](https://huggingface.co/settings/tokens) của **cùng tài khoản**. Token fine-grained
+   phải có quyền đọc các model gated đã được duyệt. Dán vào ô mật khẩu **trên máy chủ VSub bạn tin cậy**
+   hoặc đặt biến môi trường `HF_TOKEN` trước khi mở app. Không gửi token qua chat. Bấm **Kiểm tra quyền tải**:
+   máy chủ chỉ hỏi thông tin tệp, không gửi tiếng hay tải trọng số. Có quyền đọc chưa phải đã tải xong.
+   Lỗi 401/403: kiểm tra tài khoản, trạng thái duyệt và quyền token; lỗi mạng: kiểm tra Internet của **máy chủ**.
+4. Bấm **Bắt đầu xử lý** (không phải *Chỉ dịch lại*). Nếu biết clip có hai người đối thoại và không ai khác
+   lên tiếng, nhập `2`; nếu không, để trống. Nhạc lấn thoại thì cân nhắc **Tách nhạc nền trước khi nghe giọng**.
+   Ô **Gợi ý từ khoá cho Whisper** chỉ giúp chép đúng chữ của tiếng gốc, không đặt tên vai.
+5. Ở bước 4, nghe lại các mốc chưa chắc trong nhật ký, nhất là đoạn nói chồng hoặc quá ngắn; sửa nhãn vai ở từng dòng.
+   Chọn giọng dựng sẵn cho từng vai → **Xem & nghe** → **Duyệt kịch bản này** trước khi xuất.
 
 ### 👫 Tách giọng nam / nữ — không cần cài thêm gì
 
@@ -399,7 +505,7 @@ ngay trên đường tiếng của video — dưới 165 Hz là giọng nam, t�
 
 | | Cách cũ | Cách mới |
 |---|---|---|
-| Trích đoạn 86 giây (3 nhân vật, 43 câu) | 3 vai, đúng 69,8 % — nam quát to thành vai "Nữ 2" | 2 vai, **đúng 88,4 %** — mọi câu nam chính đúng; bà vợ còn gộp với nữ chính (hai giọng giống nhau 0,64) |
+| Trích đoạn 86 giây (3 nhân vật, 43 câu) | 2 vai, đúng 38/43 câu — hai vai nữ bị gộp | **3 vai, đúng 40/43 câu** tự động; còn 3 câu nhầm giữa hai vai nữ |
 | 6 giọng dựng sẵn | 7 vai, đúng 93,3 % | **6 vai, đúng 100 %** |
 | Video 16 phút / 13 phút | 12 vai (4 / 2 vai dưới 5 câu) | 9 / 10 vai (0 / 1 vai dưới 5 câu) |
 
@@ -410,7 +516,13 @@ phim** (khi đã cài `--extra clone`); chưa cài thì chọn giọng có sẵn
 nam, vai nữ → giọng nữ, hai vai cùng giới thì hai giọng khác nhau). Đoán sai giới tính thì:
 
 - bấm nút **Nam / Nữ** cạnh tên vai để đổi — vai đang dùng giọng có sẵn sẽ được đổi sang giọng đúng giới mới;
-- bấm **nhãn vai** trên một dòng phụ đề để chuyển riêng dòng đó sang vai khác.
+- ở từng câu, chọn **nhãn vai** để chuyển câu sang vai khác hoặc **+ Tạo vai mới** nếu hai người bị gộp.
+
+**Dự án cũ chưa có vai:** ở bước 4, bấm **Dòng thời gian → Phân giọng**. Tool ưu tiên rãnh
+giọng gốc đã tách, kể cả rãnh từ lần xuất trước, và chỉ lưu nhãn vai; không chạy lại Whisper hay dịch lại.
+Nếu hai giọng giống nhau, chọn đúng vai cho một hoặc hai câu nghe rõ, bấm **Lưu kịch bản**, rồi
+**Phân giọng** lại. Các câu đã gán tay được giữ làm mẫu. Khi không có model WeSpeaker, chỉ phân
+theo cao độ; khi đó vẫn có thể tạo và gán vai bằng tay.
 
 Đo trên trích đoạn 86 giây của video kiểm thử (một nam, một nữ đối thoại): 31 dòng được xếp vai nữ,
 12 dòng vai nam; nghe lại đường lồng tiếng, 39/43 dòng có cao độ đúng giới tính của vai được gán.
@@ -474,21 +586,26 @@ quá khung thì **nén âm thanh** (`atempo`) — giọng gấp và máy móc. �
 48/69 câu phải nén, nén tối đa 1,48×.
 
 Cách mới, bật bằng tuỳ chọn **Rút gọn câu vượt khung thời gian** ở bước 2 (`budget_loop`) và
-**Rút gọn câu đọc không kịp** ở bước lồng tiếng (`dub.shorten`, bật sẵn):
+**Rút gọn câu đọc không kịp** ở bước lồng tiếng (`dub.shorten`, mặc định tắt để giữ lời đã duyệt):
 
 ```
 dịch  →  dự đoán số giây TTS sẽ đọc (mô hình HP-3) cho từng ĐƠN VỊ ĐỌC (đúng cách lồng tiếng gộp câu)
       →  câu nào vượt: Claude / OpenAI → nhắc AI viết lại ngắn hơn, kèm giới hạn âm tiết (tối đa 2 lượt)
                        Google / NLLB   → bộ luật rút gọn tiếng Việt (`backend/core/shorten.py`):
                                          cụm dài → cụm ngắn cùng nghĩa, bỏ từ đệm, từ chức năng dư,
-                                         phó từ mức độ — theo 4 tầng, không bao giờ cắt ý
+                                         phó từ mức độ — theo 4 tầng; cần nghe lại sắc thái nếu bật
       →  vẫn vượt thì mới để atempo lo, và log chỉ rõ dòng nào
 ```
 
-Lúc xuất lồng tiếng, vòng lặp chạy lại bằng bộ luật **trước khi ghi phụ đề**, vì tới lúc đó mới
-biết đủ đơn vị đọc (đã gán người nói, đã sửa tay ở bước 4) — phụ đề nung và tiếng đọc cùng một câu
-chữ. Đo trên bản dịch Google của video bilibili 16 phút (186 đơn vị đọc): 49 câu dự đoán vượt khung,
-tổng vượt 41,7 s → sau rút gọn bằng luật còn 38 câu, 30,0 s; bản dịch bớt 2,3 % âm tiết.
+Ở bước 4, **Rút gọn câu đọc không kịp** chỉ đề xuất lời ngắn hơn lúc **Dựng kịch bản**.
+Bạn có thể sửa riêng câu đọc rồi nghe thử; lúc xuất không chạy lại bộ rút gọn. SRT, VTT,
+phụ đề nung và phụ đề mềm giữ nguyên bản dịch. Tùy chọn ở bước 2 thì khác:
+nó được phép làm gọn bản dịch máy trước khi duyệt, nhưng không rút tiếp câu khớp bộ nhớ sửa tay
+hoặc khớp nguyên một mục thuật ngữ.
+
+Có thể huấn luyện và thử riêng model **dịch sát nghĩa** (Trung → Việt) và model **viết lời đọc**
+(Việt → Việt theo số âm tiết); mỗi model bật hoặc tắt độc lập. Xem [dữ liệu, cách chạy và kết quả
+đối chiếu](training/DIALOGUE.md). Đây là hai adapter ngôn ngữ, không phải giọng TTS mới.
 
 Phần huấn luyện nằm trong notebook, xem [training/README.md](training/README.md):
 
@@ -527,12 +644,13 @@ và xuất kèm CSV.
 
 Phụ đề bị cắt theo **giới hạn ký tự**, không theo ngữ pháp — Whisper tiếng Trung gần như không
 trả dấu câu (đo trên một video thật: 18 dấu / 1768 ký tự, 53/69 cue bị cắt vì đủ 28 ký tự, chỉ
-8/69 kết ở dấu câu). Sau đó bước dịch gom cue thành câu để dịch trọn ý rồi **chia lại bản dịch
-theo tỉ lệ số ký tự**, nên 68/69 cue nhận một mảnh cụt: 48 mảnh không kết bằng dấu câu, **41 chỗ
-một từ bị chẻ đôi**.
+8/69 kết ở dấu câu). Bản cũ gom nhiều dòng để dịch rồi chia ngược theo số ký tự, có khi chữ của
+người này rơi vào mốc của người khác. Bản hiện tại ưu tiên ranh giới vế/ngắt nghỉ khi tạo dòng;
+chỉ nối mảnh ASR trước khi dịch nếu có dấu hiệu nối vế và cùng vai. Không chia lại lời dịch theo số ký tự.
 
 Đọc từng mảnh đó thì TTS xuống giọng và nghỉ ngay giữa từ. Vì vậy tool **nối các mảnh của cùng
-một câu lại rồi đọc trọn một lần** trong đúng khoảng thời gian của cả nhóm. Đo trên video thật
+một câu lại rồi đọc trọn một lần** trong khung của nhóm. Câu thêm hoặc đặt mốc tay được đọc riêng.
+Số đo dưới đây là của phép so sánh trước đây trên video thật
 (69 cue / 392 s):
 
 | | Đọc từng dòng | Đọc câu trọn |
@@ -549,8 +667,9 @@ Giọng bị nén nghe gấp và máy móc là khuyết điểm dễ nghe nhất
 
 **Canh mốc giờ.** Mỗi đơn vị đọc được đặt vào mốc bắt đầu của cue đầu tiên trong nhóm — mốc
 tuyệt đối, nên **sai số không dồn về sau**. Đọc dài hơn khung thì lấn sang khoảng lặng phía sau,
-vẫn không đủ thì tăng tốc bằng `atempo` (không đổi cao độ) tới `Tăng tốc tối đa`. Vẫn tràn thì
-log chỉ đúng nhóm dòng nào để bạn rút gọn.
+vẫn không đủ thì tăng tốc bằng `atempo` (không đổi cao độ) tới `Tăng tốc tối đa`.
+Câu sau không mượn lại cùng khoảng nghỉ để vào sớm. Nếu bản đã duyệt vẫn tràn,
+công cụ dừng trước khi ghép tiếng và báo dòng cần sửa, kể cả ở cuối video.
 
 **Cân âm lượng.** Giọng VieNeu-TTS ra khoảng −18…−20 dBFS, còn thoại gốc trong phim thường
 −10…−13 dBFS — để nguyên là giọng lồng vào nghe lép hơn thoại gốc. Tool đo mức *phần có tiếng*
@@ -615,7 +734,7 @@ data/             Video upload, kết quả job, model đã tải  (không commi
 | `VSUB_ASR_MODEL` | `medium` | Model Whisper mặc định |
 | `VSUB_MAX_UPLOAD` | `4294967296` | Giới hạn upload (bytes) |
 | `HF_TOKEN` | — | Token Hugging Face để tải model nhận diện người nói (khỏi nhập trên giao diện) |
-| `VSUB_DIARIZE_MODEL` | `pyannote/speaker-diarization-3.1` | Model nhận diện người nói |
+| `VSUB_DIARIZE_MODEL` | `pyannote/speaker-diarization-community-1` (4.x), `pyannote/speaker-diarization-3.1` (3.x) | Chủ máy có thể chỉ định model phân đoạn tương thích |
 | `VSUB_AI_TIMEOUT` | `120` | Giây chờ tối đa cho mỗi lượt gọi API AI (Claude/OpenAI); quá thì thử lại một lần rồi báo lỗi |
 
 ---
@@ -672,7 +791,8 @@ Muốn bật lại thì đặt biến môi trường trước khi chạy; tool k
 vào mọi đoạn tiếng nó sinh ra, để nhận diện được đó là giọng tổng hợp. Watermark này không mang
 thông tin về bạn và không gửi gì đi đâu.
 
-Server mặc định chỉ nghe ở `127.0.0.1`. Chạy `--host 0.0.0.0` thì mọi máy trong mạng LAN dùng
-được tool mà không cần mật khẩu — chỉ làm vậy trong mạng bạn tin.
+Server mặc định chỉ nghe ở `127.0.0.1`. Đăng nhập là bắt buộc cả khi mở link video hoặc tải kết quả.
+Trên LAN chỉ sử dụng HTTPS; không đưa studio, tài khoản thành viên hay endpoint dùng khóa API của chủ
+máy ra Internet công cộng. Khi dùng reverse proxy, chỉ tin header chuyển tiếp từ proxy do bạn quản lý.
 
 Chỉ xử lý video bạn có quyền sử dụng.

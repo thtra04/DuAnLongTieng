@@ -1,0 +1,39 @@
+.admin-page { max-width: 1110px; }
+.admin-top, .admin-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.admin-top { margin-bottom: 16px; }
+#adminOperator { margin-left: auto; max-width: 48%; overflow-wrap: anywhere; }
+.admin-mast {
+  display: flex; justify-content: space-between; align-items: end; gap: 24px;
+  padding: clamp(18px, 3.8vw, 44px); border: 1px solid var(--stroke-2); border-top: 4px solid var(--brand);
+  background: repeating-linear-gradient(110deg, transparent 0 32px, rgba(var(--ink-rgb), .04) 32px 33px),
+    linear-gradient(110deg, var(--card-solid), var(--bg-2));
+}
+.admin-mast h1 { font: 500 clamp(36px, 6vw, 66px)/1.1 var(--edition-type); letter-spacing: -.045em; margin: 6px 0 10px; }
+.admin-mast p { max-width: 53ch; color: var(--muted); margin: 0; }
+.admin-mast .btn { flex: none; }
+.admin-register { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.admin-register button {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 14px clamp(12px, 2.3vw, 26px); background: var(--card-solid); color: var(--muted);
+  border: 1px solid var(--stroke-2); border-top: 0; cursor: pointer; text-align: left;
+}
+.admin-register button + button { border-left: 0; }
+.admin-register button[aria-pressed=true] { color: var(--brand-text); background: var(--bg-2); box-shadow: inset 0 -3px var(--brand); }
+.admin-register span { font: 600 13px/1.4 var(--font-tc); }
+.admin-register b { font: 500 29px/1 var(--edition-type); }
+.admin-status { justify-content: space-between; margin-block: 12px; }
+.admin-status .profile-message { margin: 0; }
+.admin-filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr); gap: 12px; }
+.admin-filters input[type=search] {
+  width: 100%; min-height: 44px; border-radius: 12px; padding: 10px 13px; font: inherit;
+  background: var(--field); border: 1px solid var(--stroke-2); color: var(--text);
+}
+.admin-page .crew-row:first-child { border-top: 1px solid var(--stroke-2); }
+@media (max-width: 650px) {
+  .admin-mast { align-items: start; flex-direction: column; gap: 16px; }
+  .admin-register button { flex-direction: column; justify-content: space-between; }
+  .admin-register span { font-size: 12px; }
+  .admin-filters { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .admin-page .btn { min-height: 44px; }
+  .profile-nav { flex-wrap: wrap; }
+}

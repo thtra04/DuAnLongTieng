@@ -17,10 +17,11 @@ $('#renderBtn').addEventListener('click', async () => {
 
   const payload = {
     cues: S.cues,
+    revision: S.analyzed?.revision,
     display: S.display,
     outputs,
     // Dữ liệu để máy chủ dựng lại phiên nếu thư mục job đã bị dọn / server khởi động lại
-    media_id: S.mediaId,
+    media_id: S.projectId ? null : S.mediaId,
     source_lang: S.analyzed?.source_lang || null,
     target_lang: S.analyzed?.target_lang || '',
     offset: +$('#stOffset').value || 0,
@@ -51,14 +52,16 @@ $('#renderBtn').addEventListener('click', async () => {
       auto_level: $('#dubAutoLevel').checked,
       duck: $('#dubDuck').checked,
       max_speed: +$('#dubSpeed').value / 100,
-      shorten: $('#dubShorten').checked,      // HP-5 lúc xuất: rút gọn bằng luật trước khi đọc
+      shorten: $('#dubShorten').checked,      // chỉ rút lời đọc, không sửa chữ trên hình
       keep_wav: $('#outDubWav').checked,
       voices: collectSpeakerVoices(),
-      script: collectScript(),                // câu đã sửa trong khung Kịch bản lồng tiếng
+      approved_script: outputs.dub ? approvedScript() : null,
     },
   };
-  if (outputs.dub && scriptStale() && payload.dub.script.length)
-    toast('Phụ đề đã đổi sau khi sửa kịch bản — câu nào không còn khớp sẽ đọc theo bản tự dựng.', 'warn', 8000);
+  if (outputs.dub && !payload.dub.approved_script) {
+    $('#scriptBox').scrollIntoView({ block: 'center' });
+    return toast('Hãy duyệt kịch bản hiện tại trước khi xuất video lồng tiếng.', 'warn', 8000);
+  }
 
   $('#renderBtn').disabled = true;
   $('#resultBox').classList.add('hide');
@@ -70,6 +73,7 @@ $('#renderBtn').addEventListener('click', async () => {
       body: JSON.stringify(payload),
     });
     S.renderJob = r.job_id;
+    if (S.analyzed) S.analyzed.revision = r.revision;
     pollRender();
   } catch (e) {
     $('#renderBtn').disabled = false;
@@ -132,7 +136,7 @@ function showFiles(files) {
   $('#fileList').innerHTML = files.map((f, i) => `
     <div class="fileitem" style="animation-delay:${i * 60}ms">
       <span class="ic">${icon(FILE_ICON[f.kind] || 'folder')}</span>
-      <div class="meta"><b>${f.name}</b><small>${fmtBytes(f.size)}</small></div>
+      <div class="meta"><b>${esc(f.name)}</b><small>${fmtBytes(f.size)}</small></div>
       ${f.kind === 'mp4' ? `<button type="button" class="btn sm ghost play" data-play="${i}">${icon('film')} Xem thử</button>` : ''}
       <a class="btn sm" href="${urlOf(f)}" download>${icon('download')} Tải</a>
     </div>`).join('');
@@ -145,16 +149,16 @@ function showFiles(files) {
   $$('#fileList [data-play]').forEach(b => b.addEventListener('click', () => {
     setMonitorOutput(asOutput(files[+b.dataset.play]));
     monitorShow('out');
-    $('#player').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    $('#player').scrollIntoView({ behavior: uiScrollBehavior(), block: 'center' });
   }));
   // Vừa xuất bản lồng tiếng -> đưa luôn lên màn hình xem để nghe và sửa tiếp
   const dubbed = files.find(f => /\.longtieng\.mp4$/i.test(f.name));
   if (dubbed) {
     setMonitorOutput(asOutput(dubbed));
     monitorShow('out');
-    toast('Bản lồng tiếng đã lên màn hình xem — bấm một dòng để nghe đúng câu đó, sửa rồi xuất lại.', 'ok', 8000);
+    toast('Đang xem bản đã xuất. Nếu sửa lời, bấm “Xem & nghe” cạnh câu để thử ngay.', 'ok', 8000);
   } else {
-    $('#resultBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    $('#resultBox').scrollIntoView({ behavior: uiScrollBehavior(), block: 'nearest' });
   }
 }
 
@@ -168,14 +172,16 @@ function setMonitorOutput(out) {
   if (!S.monOut) monitorShow('orig');
 }
 
-function monitorShow(which) {
+function monitorShow(which, keepPosition = true) {
+  stopAudition();
   const p = $('#player');
   const useOut = which === 'out' && !!S.monOut;
   const url = useOut ? S.monOut.url : p.dataset.src;
   if (url && p.getAttribute('src') !== url) {
     const at = p.currentTime || 0, playing = !p.paused;
     p.src = url;
-    p.addEventListener('loadedmetadata', () => {
+    if (keepPosition) p.addEventListener('loadedmetadata', () => {
+      if (p.getAttribute('src') !== url) return;
       p.currentTime = at;
       if (playing) p.play().catch(() => {});
     }, { once: true });
@@ -186,8 +192,7 @@ function monitorShow(which) {
   const note = $('#monNote');
   note.classList.toggle('hide', !useOut);
   note.textContent = useOut
-    ? `Đang phát ${S.monOut.label.toLowerCase()} đã xuất. Chữ bạn sửa sau lần xuất đó chưa có trong tiếng — xuất lại để nghe bản mới.`
+    ? `Đang phát ${S.monOut.label.toLowerCase()} đã xuất. Bấm “Xem & nghe” cạnh câu để nghe bản đang sửa.`
     : '';
 }
 $$('#monSrc button').forEach(b => b.addEventListener('click', () => monitorShow(b.dataset.mon)));
-

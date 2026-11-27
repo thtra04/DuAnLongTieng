@@ -6,20 +6,24 @@ import json
 import mimetypes
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
 from ..config import JOB_DIR, UPLOAD_DIR
-from ..core import diarize, pipeline, translate
+from ..core import diarize, dub_review, pipeline, translate, workspaces
 from ..core.jobs import create_job, get_job, run_in_thread
-from ..store import films, memory
-from .deps import find_source_video, needs_video, rebuild_state, safe_id
+from ..core.subtitles import Cue
+from ..db import get_db
+from ..store import films, memory, projects
+from . import access, auth
+from .deps import edited_cues, find_source_video, needs_video, rebuild_state, remote_source, safe_id
 
 router = APIRouter(prefix="/api", tags=["jobs"])
 
 
 @router.post("/analyze")
-async def analyze(payload: dict) -> dict:
+async def analyze(payload: dict, user=Depends(auth.member)) -> dict:
     cfg = dict(payload or {})
     source_type = cfg.get("source_type", "file")
 
@@ -30,10 +34,14 @@ async def analyze(payload: dict) -> dict:
         files = [p for p in folder.glob("*") if p.is_file()] if folder and folder.is_dir() else []
         if not files:
             raise HTTPException(400, "Chưa chọn video (media_id không hợp lệ).")
+        with get_db() as db:
+            access.upload_right(db, user, media_id)
         cfg["video_path"] = str(files[0])
     elif source_type == "url":
-        if not (cfg.get("url") or "").strip():
+        if not cfg.get("url"):
             raise HTTPException(400, "Thiếu link video.")
+        cfg["url"] = remote_source(cfg["url"])
+        cfg.pop("video_path", None)
         raw_part = cfg.get("part")
         if raw_part in (None, "", 0):
             cfg["part"] = None
@@ -65,27 +73,28 @@ async def analyze(payload: dict) -> dict:
         if not ok:
             raise HTTPException(400, why)
 
-    # Kiểm tra nhận diện người nói TRƯỚC khi chạy: bước này nằm sau khâu nghe
-    # lời thoại, để lỗi ở đó thì người dùng đã chờ mất cả chục phút.
     if cfg.get("diarize"):
-        ok, why = diarize.available(cfg.get("hf_token", ""))
-        if not ok:
-            raise HTTPException(400, why)
         for key in ("num_speakers", "max_speakers"):
             raw = cfg.get(key)
-            if raw in (None, "", 0):
+            if raw is None or raw == "":
                 cfg[key] = None
                 continue
             try:
-                cfg[key] = max(1, min(20, int(raw)))
+                if type(raw) not in (int, str) or not 1 <= int(raw) <= 20:
+                    raise ValueError
+                cfg[key] = int(raw)
             except (TypeError, ValueError):
-                raise HTTPException(400, f"Số nhân vật không hợp lệ ({key}).") from None
+                raise HTTPException(400, "Số nhân vật phải là số nguyên từ 1 đến 20, hoặc để trống.") from None
+    else:
+        cfg.pop("hf_token", None)
 
     # Đang làm cho một tập cụ thể của một bộ phim? Kiểm tra trước khi chạy, để
     # không phải nghe cả video xong mới phát hiện bộ/tập không tồn tại.
     film_id = (cfg.get("film_id") or "").strip()
     episode_no = None
     if film_id:
+        with get_db() as db:
+            access.require(access.film_role(db, user, film_id), "editor")
         try:
             episode_no = int(cfg.get("episode_no"))
         except (TypeError, ValueError):
@@ -96,27 +105,42 @@ async def analyze(payload: dict) -> dict:
         if episode_no not in {int(e.get("no") or 0) for e in target_film.get("episodes") or []}:
             raise HTTPException(404, f"Bộ phim này không có tập {episode_no}.")
 
+    # No audio or ASR job until a first-time model download is actually authorized.
+    if cfg.get("diarize"):
+        ok, why = await run_in_threadpool(diarize.check_access, cfg.get("hf_token", ""))
+        if not ok:
+            raise HTTPException(400, why)
+
     job = create_job("analyze", pipeline.analyze_steps(cfg))
+    access.record_job(job, user, film=film_id or None)
     job.log("Bắt đầu xử lý.")
 
     def target(j):
         pipeline.run_analyze(j, cfg)
         if film_id and episode_no is not None:
             try:
-                films.bind(film_id, episode_no, j.id)
+                films.bind(film_id, episode_no, j.id, only_empty=True)
                 j.log(f"Đã gắn kết quả vào tập {episode_no}.")
             except films.FilmError as exc:
                 # Phụ đề vẫn xong, chỉ là không gắn được vào bộ -> nói rõ,
                 # đừng làm cả job thành lỗi.
                 j.log(f"Không gắn được vào tập {episode_no}: {exc}")
 
-    run_in_thread(job, target)
+    with workspaces.using("project-" + job.id):
+        run_in_thread(job, target)
     return {"job_id": job.id}
 
 
 @router.post("/jobs/{job_id}/render")
-async def render(job_id: str, payload: dict) -> dict:
+async def render(job_id: str, payload: dict, user=Depends(auth.member)) -> dict:
     cfg = dict(payload or {})
+    if cfg.get("media_id"):
+        with get_db() as db:
+            access.upload_right(db, user, cfg["media_id"])
+    if "cues" in cfg:
+        cfg["cues"] = edited_cues(cfg["cues"])
+        if not cfg["cues"]:
+            raise HTTPException(400, "Không có dòng phụ đề nào để xuất.")
     job_id = safe_id(job_id)
     cfg["source_job"] = job_id  # để bước lồng tiếng ghi giọng đã dùng vào đúng dự án
     state_path = JOB_DIR / job_id / "state.json" if job_id else None
@@ -150,6 +174,9 @@ async def render(job_id: str, payload: dict) -> dict:
 
     # Cho phép người dùng sửa phụ đề trước khi xuất
     machine_cues = state.get("cues") or []
+    expected = cfg.get("revision")
+    if expected is None and state_path.is_file():
+        expected = projects.script_revision(machine_cues)
     if cfg.get("cues"):
         state["cues"] = cfg["cues"]
     if cfg.get("source_lang") and not state.get("source_lang"):
@@ -157,13 +184,42 @@ async def render(job_id: str, payload: dict) -> dict:
     if cfg.get("target_lang") and not state.get("target_lang"):
         state["target_lang"] = cfg["target_lang"]
 
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    pipeline.write_utf8(state_path, json.dumps(state, ensure_ascii=False, indent=1))
-
     if not state.get("cues"):
         raise HTTPException(400, "Không có dòng phụ đề nào để xuất.")
     if not any(cfg.get("outputs", {}).values()):
         raise HTTPException(400, "Chưa chọn định dạng nào để xuất.")
+
+    token = None
+    if cfg["outputs"].get("dub"):
+        dub = cfg.get("dub") or {}
+        if not isinstance(dub, dict):
+            raise HTTPException(400, "Cấu hình lồng tiếng không hợp lệ.")
+        token = dub.get("approved_script")
+        saved = state.get("dub_review") or {}
+        if not token or token != saved.get("token"):
+            raise HTTPException(409, "Hãy xem và duyệt kịch bản hiện tại trước khi lồng tiếng.")
+        if cfg.get("cues") is not None and cfg["cues"] != machine_cues:
+            raise HTTPException(409, "Phụ đề không khớp bản đang lưu. Hãy dựng và duyệt lại trước khi lồng tiếng.")
+        cues = [Cue.from_dict(row) for row in state["cues"]]
+        try:
+            if mix := saved.get("playback"):
+                requested = dub_review.playback({**mix, **dub, "offset": cfg.get("offset", mix["offset"])}, cues)
+                if requested != mix:
+                    raise ValueError("Giọng, tốc độ hoặc độ lệch mốc đã đổi. Nghe thử và duyệt lại trước khi xuất.")
+                cfg["dub"] = {**dub, **{k: v for k, v in mix.items() if k != "offset"}}
+                cfg["offset"] = mix["offset"]
+            cfg["reviewed_units"] = dub_review.approved(
+                cues, saved, job_id, state.get("source_lang"),
+                state.get("target_lang"), dub.get("shorten", saved.get("shorten", False)))
+            if mix:
+                takes = projects.audition_takes(job_id, state["video_path"], cues)
+                takes.bind(cfg["reviewed_units"], mix["voices"], mix["voice"], mix["style"], saved["units"])
+                takes.check_timing(cues, cfg["reviewed_units"], mix, (state.get("info") or {}).get("duration") or 0)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    projects.commit_script(state_path, state, expected, expected_review=token)
 
     # Câu nào khác bản máy dịch tức là người dùng đã sửa tay -> ghi vào bộ nhớ dịch để
     # lần sau gặp lại câu đó (hoặc câu gần giống) thì dịch theo cách họ đã chọn. Đặt sau
@@ -181,6 +237,7 @@ async def render(job_id: str, payload: dict) -> dict:
             learned = 0
 
     job = create_job("render", pipeline.render_steps(cfg))
+    access.record_job(job, user, parent=job_id)
     job.result = {"source_job": job_id}
     job.log("Bắt đầu xuất file.")
     if learned:
@@ -198,11 +255,11 @@ async def render(job_id: str, payload: dict) -> dict:
         pipeline.run_render(j, state, cfg)
 
     run_in_thread(job, target)
-    return {"job_id": job.id}
+    return {"job_id": job.id, "revision": projects.script_revision(state["cues"])}
 
 
 @router.post("/jobs/{job_id}/retranslate")
-async def retranslate(job_id: str, payload: dict) -> dict:
+async def retranslate(job_id: str, payload: dict, user=Depends(auth.member)) -> dict:
     """Dịch lại phụ đề của dự án `job_id` với engine / thuật ngữ / bối cảnh mới, không chạy lại nhận dạng."""
     from ..store import characters
 
@@ -212,13 +269,20 @@ async def retranslate(job_id: str, payload: dict) -> dict:
     if not state_path or not state_path.exists():
         raise HTTPException(410, "Dự án không còn trên máy chủ. Hãy chạy lại từ bước 1.")
     state = json.loads(state_path.read_text(encoding="utf-8"))
+    projects.check_revision(state.get("cues") or [], cfg.get("revision"))
     if not (cfg.get("target_lang") or state.get("target_lang")):
         raise HTTPException(400, "Chưa chọn ngôn ngữ đích.")
     ok, why = translate.engine_available(cfg.get("engine", "google"))
     if not ok:
         raise HTTPException(400, why)
-    if cfg.get("cues") is not None and not isinstance(cfg["cues"], list):
-        raise HTTPException(400, "Danh sách phụ đề không hợp lệ.")
+    if "cues" in cfg:
+        cfg["cues"] = edited_cues(cfg["cues"])
+    lines = cfg.get("cues", state.get("cues") or [])
+    if not any(c.get("text", "").strip() for c in lines):
+        raise HTTPException(400, "Chưa có lời gốc để dịch.")
+    if (state.get("target_lang") and cfg.get("target_lang", state["target_lang"]) != state["target_lang"]
+            and any(not c["text"] and c.get("text2") for c in lines)):
+        raise HTTPException(400, "Có câu chỉ có bản dịch. Bổ sung lời gốc cho câu đó trước khi đổi ngôn ngữ đích.")
 
     # Bảng vai (tên, giới, nhóm tuổi) để engine AI chọn xưng hô theo người nói
     cast: list[dict] = []
@@ -231,11 +295,11 @@ async def retranslate(job_id: str, payload: dict) -> dict:
         cast = [s for s in state.get("speakers") or [] if isinstance(s, dict)]
 
     # Chưa dòng nào có vai và người dùng bật tách giọng nam / nữ -> nhận vai trong lượt này
-    lines = cfg["cues"] if cfg.get("cues") is not None else (state.get("cues") or [])
     has_roles = any(isinstance(c, dict) and (c.get("speaker") or "").strip() for c in lines)
     cfg["resplit"] = bool(cfg.get("gender_split")) and not has_roles
 
     job = create_job("retranslate", pipeline.retranslate_steps(cfg))
+    access.record_job(job, user, parent=job_id)
     job.log("Bắt đầu dịch lại.")
     run_in_thread(job, lambda j: pipeline.run_retranslate(j, state, state_path, cfg, cast))
     return {"job_id": job.id}
@@ -261,6 +325,34 @@ def reading_budget(payload: dict) -> dict:
         for it in budget.assess(cues)
     ]
     return {"items": items, "tolerance": budget.TOLERANCE}
+
+
+@router.post("/translate-missing")
+def translate_missing(payload: dict) -> dict:
+    """Fill only empty translations in the selected minute; do not rewrite the project."""
+    from ..core.subtitles import Cue
+
+    rows = [Cue.from_dict(c) for c in edited_cues(payload.get("cues"))]
+    missing = [(i, c) for i, c in enumerate(rows) if c.text and not c.text2]
+    if not missing:
+        return {"changes": [], "remaining": 0}
+    engine = payload.get("engine") or "google"
+    note = payload.get("context_note") or ""
+    if engine in ("openai", "claude"):
+        nearby = "\n".join(f"{c.text} → {c.text2}" for c in rows if c.text and c.text2)
+        if nearby:
+            note += "\nLời đã dịch trong cùng phút (chỉ tham khảo):\n" + nearby[:3000]
+    try:
+        translate.translate_cues(
+            [c for _, c in missing], payload.get("source_lang"), payload.get("target_lang") or "vi",
+            engine=engine, api_key=payload.get("api_key") or "", model=payload.get("ai_model") or "",
+            base_url=payload.get("ai_base_url") or "", translation_mode=payload.get("translation_mode") or "natural",
+            context_note=note, glossary=payload.get("glossary") or "", auto_context=False,
+        )
+    except translate.TranslateError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    changes = [{"i": i, "text2": c.text2} for i, c in missing if c.text2]
+    return {"changes": changes, "remaining": len(missing) - len(changes)}
 
 
 @router.post("/fit-lines")

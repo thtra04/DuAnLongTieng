@@ -60,13 +60,12 @@ TIER_1 = _subs(
         ("một chút", "chút"), ("một lát", "lát"), ("một ít", "ít"),
         ("rất là", "rất"), ("khá là", "khá"), ("rất nhiều", "nhiều"),
         ("vô cùng", "rất"), ("cực kỳ", "rất"), ("cực kì", "rất"), ("hết sức", "rất"),
-        ("cũng như", "và"), ("trong trường hợp", "lỡ"), ("đặc biệt là", "nhất là"),
+        ("cũng như", "và"), ("đặc biệt là", "nhất là"),
         ("đã từng", "từng"), ("có lẽ là", "có lẽ"), ("có phải là", "có phải"),
-        ("chúng ta", "ta"), ("của chúng ta", "của ta"),
         ("một cách nhanh chóng", "nhanh"), ("một cách dễ dàng", "dễ dàng"),
-        ("một cách", ""), ("hay là", "hay"), ("hoặc là", "hoặc"), ("nếu như", "nếu"),
+        ("hay là", "hay"), ("hoặc là", "hoặc"), ("nếu như", "nếu"),
         ("thế nhưng", "nhưng"), ("nhưng mà", "nhưng"), ("vậy thì", "vậy"), ("thế thì", "vậy"),
-        ("quý vị", "mọi người"), ("các vị", "mọi người"), ("hãy để", "để"),
+        ("hãy để", "để"),
     ]
 )
 
@@ -86,8 +85,6 @@ _FINAL_RE = re.compile(
     rf"(?P<prev>[{_L}]+)\s+(?P<p>" + "|".join(map(re.escape, _FINAL_PARTICLES)) + r")(?=\s*[.!?…,;:]|\s*$)",
     _FLAGS,
 )
-TIER_2 = _subs([("là một", "là"), ("là những", "là"), ("có một", "có")])
-
 # Tầng 3 — từ chức năng dư trong ngữ cảnh cụ thể
 _RANG_AFTER = ["nói", "biết", "nghĩ", "thấy", "tin", "bảo", "hiểu", "nhớ", "hy vọng", "mong",
                "chắc", "sợ", "nghe", "đoán", "cảm thấy", "khẳng định", "thừa nhận"]
@@ -100,8 +97,6 @@ TIER_3 = [
         _FLAGS), r"\1 "),
     # "có thể ... được" → bỏ "được" cuối
     (re.compile(rf"(có\s+thể\s+[^.!?,;]*?)\s+được(?=\s*[.!?…,;:]|\s*$)", _FLAGS), r"\1"),
-    (re.compile(_w("đang"), _FLAGS), ""),
-    (re.compile(_w("sẽ"), _FLAGS), ""),
 ]
 # "đã" chỉ bỏ khi câu đã có dấu hiệu quá khứ khác
 _PAST_MARKERS = re.compile(_w("rồi") + "|" + _w("từng") + "|" + _w("hôm qua") + "|" + _w("trước đây")
@@ -166,7 +161,7 @@ def shorten(text: str, target: int, max_tier: int = 4) -> tuple[str, int]:
     used = 0
     tiers: list[Callable[[str], str]] = [
         lambda t: _apply(t, TIER_1, target),
-        lambda t: _drop_final_particles(_apply(_apply(t, TIER_2_LEAD, target), TIER_2, target), target),
+        lambda t: _drop_final_particles(_apply(t, TIER_2_LEAD, target), target),
         lambda t: _apply(_DA_rules(t), TIER_3, target),
         lambda t: _apply(t, TIER_4, target),
     ]

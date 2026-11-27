@@ -27,7 +27,7 @@ $('#redoTransBtn').addEventListener('click', () => {
   $('#doTranslate').checked = true;
   $('#doTranslate').dispatchEvent(new Event('change'));
   goStep(2);
-  $('#engineCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#engineCard').scrollIntoView({ behavior: uiScrollBehavior(), block: 'start' });
 });
 
 /* Dịch lại phụ đề của dự án đang mở: giữ lời gốc, mốc giờ, vai; chỉ viết lại bản dịch. */
@@ -38,7 +38,9 @@ async function startRetranslate() {
   if (had && !(await askConfirm('Dịch lại sẽ thay toàn bộ bản dịch hiện có, kể cả những dòng bạn đã sửa tay trong lần mở này. '
       + 'Những câu bạn đã sửa và từng xuất thì bộ nhớ dịch vẫn giữ và sẽ dùng lại.', { ok: 'Dịch lại', danger: false }))) return;
   const payload = {
-    cues: S.cues.map(c => ({ start: c.start, end: c.end, text: c.text, text2: '', speaker: c.speaker || '' })),
+    cues: S.cues,
+    revision: S.analyzed?.revision,
+    source_lang: $('#srcLang').value || S.analyzed?.source_lang,
     target_lang: $('#tgtLang').value,
     ...aiPayload(),
     // dự án chưa dòng nào có vai thì máy chủ nhận vai nam / nữ luôn trong lượt này
@@ -76,7 +78,7 @@ function pollRetranslate(id) {
       $('#cancelBtn').disabled = true;
       $('#phaseText').textContent = 'hoàn tất';
       S.cues = (j.result.cues || []).map(c => ({ ...c }));
-      S.analyzed = { ...(S.analyzed || {}), target_lang: j.result.target_lang, speakers: j.result.speakers || [] };
+      S.analyzed = { ...(S.analyzed || {}), revision: j.result.revision, source_lang: j.result.source_lang, target_lang: j.result.target_lang, speakers: j.result.speakers || [] };
       await loadCharacters(S.jobId);   // lượt này có thể vừa nhận vai cho dự án chưa có vai
       S.display = 'second';
       $$('.tab[data-disp]').forEach(t => { t.disabled = false; t.classList.toggle('active', t.dataset.disp === 'second'); });
@@ -98,10 +100,16 @@ function pollRetranslate(id) {
 
 async function startAnalyze() {
   if (!aiReady()) return;
+  if (S.sourceType === 'url' && (!S.linkInfo || S.linkChecked !== $('#urlInput').value.trim() || (S.linkInfo.multi && !S.part))) {
+    setSource('url'); goStep(1); $('#urlInput').focus();
+    return toast('Kiểm tra link, chọn phần nếu có nhiều tập rồi bấm “Tiếp tục”.', 'warn');
+  }
+  const speakers = diarizeOptions();
+  if (!speakers) return;
   const payload = {
     source_type: S.sourceType,
     media_id: S.mediaId,
-    url: S.url,
+    url: S.sourceType === 'url' ? S.url : '',
     part: S.sourceType === 'url' ? S.part : null,
     // xong thì tự gắn kết quả vào đúng tập của bộ phim đang làm
     film_id: S.target?.filmId || '',
@@ -123,9 +131,7 @@ async function startAnalyze() {
     max_chars: +$('#maxChars').value,
     gender_split: $('#genderOn').checked,
     separate_first: $('#separateFirstOn').checked,
-    diarize: $('#diarizeOn').checked,
-    num_speakers: +$('#numSpeakers').value || null,
-    hf_token: $('#hfToken').value.trim(),
+    ...speakers,
   };
   savePrefs();
 
@@ -142,6 +148,10 @@ async function startAnalyze() {
     });
     S.jobId = r.job_id;
     saveJobRecovery(payload);
+    if (speakers.hf_token && $('#hfToken').value.trim() === speakers.hf_token) {
+      $('#hfToken').value = '';
+      $('#hfToken').dispatchEvent(new Event('input'));
+    }
     updateStepSummary();
     unlock(3);
     goStep(3);
@@ -154,4 +164,3 @@ async function startAnalyze() {
     $('#startBtn').disabled = false;
   }
 }
-

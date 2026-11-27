@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from ..config import DATA_DIR
-from ..core import dubbing
+from ..core import dub_review, dubbing
+from ..core.subtitles import Cue
+from .deps import edited_cues
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
 
@@ -50,48 +56,30 @@ def tts_preview(payload: dict):
     voice = payload.get("voice") or ""
     if voice == dubbing.CLONE_VOICE:
         raise HTTPException(
-            400, "Giọng nhân bản chỉ tạo được lúc xuất video (cần cắt mẫu từ chính video)."
+            400, "Giọng nhân bản cần mẫu từ video. Mở dự án và chọn “Xem & nghe” cạnh câu cần thử."
         )
     out = DATA_DIR / "preview"
     out.mkdir(parents=True, exist_ok=True)
-    path = out / "last.wav"
+    temp = TemporaryDirectory(dir=out)
+    path = Path(temp.name) / "preview.wav"
     try:
         dubbing.preview(text, voice=voice, style=payload.get("style") or "tu_nhien", out_path=path)
     except Exception as exc:
+        temp.cleanup()
         raise HTTPException(500, f"Không đọc thử được: {exc}") from exc
-    return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+    return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "no-store"},
+                        background=BackgroundTask(temp.cleanup))
 
 
 @router.post("/script")
 def tts_script(payload: dict) -> dict:
     """Kịch bản lồng tiếng: đúng các câu sẽ được đọc lúc xuất, đã đặt dấu câu.
 
-    Chạy y như lúc xuất (rút gọn bằng luật nếu bật, gộp câu theo người nói) trên
-    một bản sao của phụ đề, để người dùng xem và sửa trước khi lồng tiếng. Chữ
-    trả về nằm ở `base` — gửi kèm khi xuất để biết bản sửa còn khớp hay đã cũ.
+    Có `project`: mỗi mốc phụ đề có một câu đọc riêng để xem, sửa và duyệt.
+    Không có dự án: dựng các cụm câu liền mạch để thử độc lập.
     """
-    import copy
-
-    from ..core import budget, shorten
-    from ..core.subtitles import Cue
-
-    cues = [Cue.from_dict(c) for c in payload.get("cues") or [] if isinstance(c, dict)]
+    cues = [Cue.from_dict(c) for c in edited_cues(payload.get("cues") or [], allow_blank=True)]
     if not cues:
         return {"units": []}
-    use_translation = any((c.text2 or "").strip() for c in cues)
-    target = (payload.get("target_lang") or "vi").lower()
-    if use_translation and payload.get("shorten", True) and target.startswith("vi"):
-        cues = copy.deepcopy(cues)
-        try:
-            budget.run_loop(cues, shorten.make_tightener())
-        except Exception:
-            pass
-    units = dubbing.speech_units(cues, use_translation)
-    return {
-        "use_translation": use_translation,
-        "units": [
-            {"cues": u["cues"], "start": round(u["start"], 3), "end": round(u["end"], 3),
-             "speaker": u["speaker"], "text": u["text"]}
-            for u in units
-        ],
-    }
+    return dub_review.draft(cues, payload.get("project"), payload.get("source_lang"),
+                            payload.get("target_lang"), payload.get("shorten", False))

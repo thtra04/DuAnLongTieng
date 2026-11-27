@@ -17,7 +17,7 @@ import wave
 from pathlib import Path
 from typing import Callable
 
-from . import gender, hf_cache, media
+from . import budget, duration, gender, hf_cache, media
 from .subtitles import Cue
 
 SR = 48000  # VieNeu-TTS v3 Turbo xuất 48 kHz
@@ -31,6 +31,7 @@ STYLES = [
 CLONE_VOICE = "__clone__"  # giá trị đặc biệt: nhân bản giọng trong video
 
 _lock = threading.Lock()
+_infer_lock = threading.Lock()
 _engine = None
 
 
@@ -252,7 +253,7 @@ def _run_filter(samples, filt: str, tmpdir: Path, tag: str):
 
 def _time_stretch(samples, factor: float, tmpdir: Path, tag: str):
     """Tăng/giảm tốc audio mà giữ nguyên cao độ (ffmpeg atempo)."""
-    if abs(factor - 1.0) < 0.02:
+    if abs(factor - 1.0) < 0.00001:
         return samples
     return _run_filter(samples, _atempo_chain(factor), tmpdir, tag)
 
@@ -274,9 +275,6 @@ def _pitch_shift(samples, semitones: float, tmpdir: Path, tag: str):
     return _run_filter(samples, filt, tmpdir, f"p{tag}")
 
 
-# Cho câu vào sớm tối đa bao nhiêu giây khi khung không đủ. Vào sớm khó nhận ra
-# hơn nhiều so với tràn qua câu sau — tràn thì dồn lệch cho tất cả câu tiếp theo.
-MAX_LEAD_IN = 0.15
 # Một đơn vị đọc không dài quá bao nhiêu giây / bao nhiêu ký tự.
 #
 # Đo trên video thật (69 cue / 392s), số câu phải tăng tốc theo mức chặn:
@@ -394,6 +392,20 @@ def _split_middle(text: str) -> tuple[str, str] | None:
     return None
 
 
+def _has_spoken_audio(audio, text, speed=1.0):
+    """Reject DC, isolated clicks and implausibly short fragments, not just all-zero buffers."""
+    import numpy as np
+
+    frame = SR // 100
+    count = audio.size // frame
+    if not count or not np.isfinite(audio).all():
+        return False
+    level = audio[:count * frame].reshape(count, frame).std(axis=1)
+    active = np.count_nonzero(level > max(0.001, float(level.max()) * 0.03))
+    # Deliberately below fluent speech duration; this is not a pronunciation score.
+    return active * 0.01 * speed >= max(0.065, 0.045 * duration.syllables(text))
+
+
 def _infer_sane(engine, text: str, kwargs: dict, label: str, on_log=None, depth: int = 0):
     """Đọc `text`; TTS sinh đoạn dài bất thường thì đọc lại, rồi chẻ đôi câu dài. Trả về None nếu bó tay.
 
@@ -404,13 +416,20 @@ def _infer_sane(engine, text: str, kwargs: dict, label: str, on_log=None, depth:
     import numpy as np
 
     for attempt in range(RUNAWAY_RETRIES + 1):
-        audio = np.asarray(engine.infer(text, **kwargs), dtype=np.float32).reshape(-1)
-        if audio.size:
+        try:
+            with _infer_lock:
+                samples = engine.infer(text, **kwargs)
+            audio = np.asarray(samples, dtype=np.float32).reshape(-1)
+        except Exception:
+            if attempt == RUNAWAY_RETRIES:
+                raise
+            continue
+        if audio.size and np.isfinite(audio).all():
             audio, _ = _trim_silence(audio)
-        if not _runaway(audio.size / SR, text):
-            return audio
+            if not _runaway(audio.size / SR, text) and _has_spoken_audio(audio, text):
+                return audio
         if on_log and attempt < RUNAWAY_RETRIES:
-            on_log(f"{label}: TTS sinh {audio.size / SR:.1f}s cho {len(text)} ký tự — đọc lại (lần {attempt + 1}).")
+            on_log(f"{label}: tiếng đọc trống hoặc bất thường — đọc lại (lần {attempt + 1}).")
     halves = _split_middle(text) if depth < 2 else None
     if halves is None:
         return None
@@ -418,7 +437,7 @@ def _infer_sane(engine, text: str, kwargs: dict, label: str, on_log=None, depth:
         on_log(f"{label}: vẫn loạn — chẻ câu làm hai ({len(halves[0])} + {len(halves[1])} ký tự) rồi đọc từng nửa.")
     parts = []
     for half in halves:
-        a = _infer_sane(engine, _clean_for_tts(half) or half, kwargs, label, on_log, depth + 1)
+        a = _infer_sane(engine, half, kwargs, label, on_log, depth + 1)
         if a is None:
             return None
         parts.append(a)
@@ -992,14 +1011,22 @@ def finish_sentence(text: str, last_src: str = "") -> str:
 
 
 def script_text(units: list[dict], names: dict[str, str] | None = None) -> str:
-    """Kịch bản lồng tiếng dạng văn bản: mỗi câu đọc một dòng, kèm mốc giờ và vai."""
+    """A reading script grouped by start minute; a crossing line is never split."""
+    def stamp(t):
+        ms = round(t * 1000)
+        return f"{ms // 60000:02d}:{ms // 1000 % 60:02d}.{ms % 1000:03d}"
+
     names = names or {}
     lines = []
+    minute = None
     for u in units:
-        m, s = divmod(u["start"], 60)
+        m = int(u["start"] // 60)
+        if m != minute:
+            lines.append(f"Phút {m} · {m:02d}:00")
+            minute = m
         who = u.get("speaker") or ""
         who = f"{names.get(who) or who}: " if who else ""
-        lines.append(f"[{int(m):02d}:{s:04.1f}] {who}{u['text']}")
+        lines.append(f"[{stamp(u['start'])} → {stamp(u['end'])}] {who}{u['text']}")
     return "\n".join(lines) + "\n"
 
 
@@ -1035,19 +1062,8 @@ def speech_units(cues: list[Cue], use_translation: bool = True) -> list[dict]:
     """Gộp cue thành **đơn vị đọc**: một câu trọn = một lần đọc TTS.
 
     Vì sao phải gộp: phụ đề được cắt theo giới hạn ký tự chứ không theo ngữ
-    pháp (Whisper tiếng Trung gần như không trả dấu câu — đo thật: 18 dấu trên
-    1768 ký tự, 53/69 cue bị cắt vì đủ 28 ký tự). Sau đó `translate` gom cue
-    thành câu để dịch trọn ý, rồi **chia lại bản dịch theo tỉ lệ số ký tự**, nên
-    68/69 cue nhận một mảnh cụt: 48 mảnh không kết thúc bằng dấu câu, 41 chỗ một
-    từ bị chẻ đôi.
-
-    Nếu đọc từng mảnh đó thì TTS xuống giọng và nghỉ ngay giữa từ, và nội dung
-    tiếng Việt rơi lệch khỏi chỗ đáng nói (đo được: lệch trung vị 550 ms, tới
-    1,3 s). Nối lại rồi đọc trọn câu trong đúng khoảng thời gian của cả nhóm thì
-    hết cả hai chuyện.
-
-    `translate._cut_near` cắt đúng vào khoảng trắng nên nối lại bằng
-    `_join_fragments` phục hồi nguyên văn bản dịch.
+    pháp. Nối các mảnh cùng vai để TTS không xuống giọng giữa vế. Câu người dùng
+    đặt mốc tay (`pinned`) luôn có đơn vị đọc riêng.
     """
     from .translate import _join_fragments, group_cues
 
@@ -1319,6 +1335,59 @@ def clone_pitch_report(gaps: dict[str, list[float]]) -> dict[str, float]:
     return out
 
 
+def slot_frames(cues, indices, video_duration):
+    start = cues[indices[0]].start
+    window = budget.window_seconds(cues, indices, video_duration)
+    return round((start + window) * SR) - round(start * SR)
+
+
+def fit_spoken_unit(audio, cues, unit, max_speed, tmpdir, tag, video_duration=0):
+    """Fit one utterance identically in the monitor and final mix, without clipping its words."""
+    start = unit["start"]
+    room = slot_frames(cues, unit["cues"], video_duration)
+    factor = 1.0
+    if not math.isfinite(max_speed) or not 1 <= max_speed <= 2:
+        raise DubError("Tăng tốc tối đa phải nằm trong khoảng 1–2×.")
+    if audio.size > room > 0 and max_speed > 1:
+        raw = audio
+        factor = min(max_speed, audio.size / room)
+        audio = _time_stretch(audio, factor, tmpdir, tag)
+        # atempo works in frames. Measure its result, don't assume len(raw)/factor.
+        if audio.size > room and factor < max_speed:
+            factor = min(max_speed, factor * (audio.size + SR * 0.012) / room)
+            audio = _time_stretch(raw, factor, tmpdir, tag)
+        if not _has_spoken_audio(audio, unit["text"], factor):
+            raise DubError(f"dòng {unit['cues'][0] + 1}: mất tiếng sau khi ép tốc độ. "
+                           "Rút gọn lời đọc hoặc nới mốc rồi nghe lại.")
+    return audio, start, factor, (audio.size - room) / SR
+
+
+def _synthesize_unit(unit, voice, style, reference, label, on_log=None):
+    kwargs = {"style": style}
+    if reference:
+        kwargs.update(ref_audio=str(reference), denoise=True)
+    elif voice:
+        kwargs["voice"] = voice
+    return _infer_sane(get_engine(), unit["text"], kwargs, label, on_log)
+
+
+def audition_unit(cues, unit, voice, style, max_speed, workdir, video_duration, takes, prepare_reference,
+                  *, new_variant=False):
+    key = takes.key(unit, voice, style)
+    raw = takes.read(key)
+    if raw is None:
+        label = f"Dòng #{unit['cues'][0] + 1}"
+        if unit.get("variant") and not new_variant:
+            raise DubError(f"{label}: bản thu không còn phù hợp. Chọn “Tạo lượt đọc khác” rồi duyệt lại.")
+        raw = _synthesize_unit(unit, voice, style, prepare_reference(), label)
+        if raw is None:
+            raise DubError(f"{label}: không tạo được tiếng đọc. Sửa lời đọc hoặc đổi giọng.")
+        raw = takes.remember(key, raw)
+    audio, start, _, over = fit_spoken_unit(raw, cues, unit, max_speed, workdir, "preview", video_duration)
+    takes.record_fit(key, slot_frames(cues, unit["cues"], video_duration), max_speed, max(0, over))
+    return _write_wav(workdir / "preview.wav", audio), start, max(0, over)
+
+
 def build_dub_track(
     cues: list[Cue],
     total_duration: float,
@@ -1337,6 +1406,8 @@ def build_dub_track(
     pitch_from: Path | None = None,
     pitch_shift: bool = True,
     script: list[dict] | None = None,
+    reviewed_units: list[dict] | None = None,
+    read_take: Callable | None = None,
 ) -> tuple[Path, dict]:
     """Sinh file wav lồng tiếng khớp mốc giờ của `cues`.
 
@@ -1362,11 +1433,12 @@ def build_dub_track(
     """
     import numpy as np
 
-    engine = get_engine()
     tmpdir = workdir / "tts_tmp"
     tmpdir.mkdir(parents=True, exist_ok=True)
 
-    if per_cue:
+    if reviewed_units is not None:
+        units = reviewed_units
+    elif per_cue:
         units = [
             {"cues": [i], "start": c.start, "end": c.end,
              "text": _spoken_text(c, use_translation),
@@ -1376,7 +1448,7 @@ def build_dub_track(
         units = [u for u in units if u["text"]]
     else:
         units = speech_units(cues, use_translation)
-    edited = apply_script(units, script) if not per_cue else 0
+    edited = apply_script(units, script) if not per_cue and reviewed_units is None else 0
     if edited and on_log:
         on_log(f"Đọc theo kịch bản đã sửa tay cho {edited} câu.")
     try:
@@ -1409,7 +1481,9 @@ def build_dub_track(
             + ("…" if len(half_done) > 12 else "")
             + "). Phần chữ đó không đọc được nên sẽ lặng — dịch lại mấy dòng này ở bước 4."
         )
-    if on_log and not per_cue and units:
+    if on_log and reviewed_units is not None:
+        on_log(f"Lồng theo {len(units)} câu đã duyệt, mỗi câu bắt đầu ở đúng mốc phụ đề.")
+    elif on_log and not per_cue and units:
         on_log(
             f"Đọc theo câu trọn: {len(cues)} dòng phụ đề gộp thành {len(units)} câu "
             "— tránh đọc cụt giữa từ."
@@ -1422,7 +1496,7 @@ def build_dub_track(
     stats: dict = {
         "count": 0, "sped_up": 0, "overflow": 0, "failed": 0, "max_factor": 1.0,
         "trimmed_ms": 0.0, "overflow_s": 0.0, "worst": [], "runaway": 0,
-        "skipped": len(skipped),
+        "skipped": len(skipped), "reused": 0,
         "untranslated": stats_untranslated,
     }
     first_error = ""
@@ -1452,18 +1526,20 @@ def build_dub_track(
             else f"dòng {first_cue + 1}–{last_cue + 1}"
         )
         try:
-            kwargs = {"style": style}
             # Giọng riêng của nhân vật này; không có thì dùng giọng chung.
             speaker = (unit.get("speaker") or "").strip()
             unit_ref = (ref_map or {}).get(speaker) or ref_audio
             unit_voice = (voice_map or {}).get(speaker) or voice
-            if unit_ref:
-                kwargs["ref_audio"] = unit_ref
-                kwargs["denoise"] = True
-            elif unit_voice:
-                kwargs["voice"] = unit_voice
-            audio = _infer_sane(engine, text, kwargs, label, on_log)
+            if read_take and unit.get("take"):
+                audio = read_take(unit["take"])
+                if audio is None or not _has_spoken_audio(audio, text):
+                    raise DubError("Bản đã nghe không còn dùng được. Hãy nghe thử lại dòng này.")
+                stats["reused"] += 1
+            else:
+                audio = _synthesize_unit(unit, unit_voice, style, unit_ref, label, on_log)
         except Exception as exc:
+            if reviewed_units is not None:
+                raise DubError(f"Không tạo được tiếng cho {label}: {exc}. Chưa xuất video lồng tiếng.") from exc
             stats["failed"] += 1
             if not first_error:
                 first_error = str(exc)
@@ -1482,6 +1558,9 @@ def build_dub_track(
         # None = đọc lại và chẻ đôi vẫn loạn. Không chặn thì cục tiếng bịa dài tới
         # 24 giây đổ vào track, đè lên mấy câu thoại thật phía sau.
         if audio is None:
+            if reviewed_units is not None:
+                raise DubError(f"{label}: tiếng đọc trống hoặc bất thường sau khi thử lại. "
+                               "Chưa xuất video lồng tiếng; hãy nghe thử câu này hoặc đổi giọng.")
             stats["failed"] += 1
             stats["runaway"] += 1
             if on_log:
@@ -1491,6 +1570,8 @@ def build_dub_track(
             continue
         audio = np.asarray(audio, dtype=np.float32).reshape(-1)
         if audio.size == 0:
+            if reviewed_units is not None:
+                raise DubError(f"{label}: bộ đọc trả về âm thanh rỗng. Chưa xuất video lồng tiếng.")
             continue
 
         # VieNeu-TTS chèn ~100ms lặng ở đầu và ~140ms ở cuối mỗi câu. Không cắt
@@ -1504,47 +1585,28 @@ def build_dub_track(
             gap = pitch_gap(audio, targets[u])
             if gap is not None and abs(gap) < 12.0:
                 pitch_gaps.setdefault(speaker, []).append(gap)
-            semis = pitch_correction(audio, targets[u]) if pitch_shift else 0.0
+            semis = pitch_correction(audio, targets[u]) if pitch_shift and not unit.get("take") else 0.0
             if semis:
                 audio = _pitch_shift(audio, semis, tmpdir, str(u))
                 stats["pitch_matched"] += 1
                 pitch_moves.append(semis)
 
-        window = unit["end"] - unit["start"]
-        gap_after = (cues[last_cue + 1].start - unit["end"]) if last_cue + 1 < len(cues) else 2.0
-        gap_before = (unit["start"] - cues[first_cue - 1].end) if first_cue > 0 else unit["start"]
-        # Lấn sang khoảng lặng phía sau, và chớm sang phía trước một chút: vào
-        # sớm 0.15s gần như không ai nhận ra, còn tràn qua câu sau thì đọc chồng.
-        # Chừa 0.02s thôi — lưới cue đóng gói sát nhau, khoảng cách điển hình chỉ
-        # 0.04s nên đòi 0.08s là không bao giờ lấn được.
-        lead_in = max(0.0, min(MAX_LEAD_IN, gap_before - 0.02))
-        allowed = window + max(0.0, gap_after - 0.02) + lead_in
-
-        dur = audio.size / SR
-        if dur > allowed and allowed > 0.2:
-            factor = min(max_speed, dur / allowed)
-            audio = _time_stretch(audio, factor, tmpdir, str(u))
+        audio, start, factor, over = fit_spoken_unit(audio, cues, unit, max_speed, tmpdir, str(u), total_duration)
+        if reviewed_units is not None and over > 0:
+            nxt = last_cue + 1
+            edge = (f"mốc dòng #{nxt + 1}" if nxt < len(cues) and
+                    (not total_duration or cues[nxt].start < total_duration) else "khung cuối video")
+            raise DubError(f"{label}: lời đọc vượt {edge} {over:.3f}s ở giới hạn {max_speed:g}×. "
+                           "Chưa xuất video. Rút gọn lời đọc, nới mốc hoặc tăng tốc tối đa rồi nghe lại.")
+        if factor > 1:
             stats["sped_up"] += 1
             stats["max_factor"] = max(stats["max_factor"], factor)
-            dur = audio.size / SR
-            if dur > allowed + 0.05:
-                over = dur - allowed
-                stats["overflow"] += 1
-                stats["overflow_s"] += over
-                # Giữ lại mấy câu tràn nặng nhất để chỉ đúng chỗ cho người dùng
-                stats["worst"].append(
-                    {
-                        "line": label,
-                        "over_s": round(over, 2),
-                        "chars": len(text),
-                        "window_s": round(window, 2),
-                        "text": text[:60],
-                    }
-                )
-
-        # Chỉ vào sớm đúng phần cần, không phải lúc nào cũng lùi
-        shift = min(lead_in, max(0.0, dur - (window + max(0.0, gap_after - 0.02))))
-        pos = max(0, int((unit["start"] - shift) * SR))
+        if over > 0.05:
+            stats["overflow"] += 1
+            stats["overflow_s"] += over
+            stats["worst"].append({"line": label, "over_s": round(over, 2), "chars": len(text),
+                                   "window_s": round(unit["end"] - unit["start"], 2), "text": text[:60]})
+        pos = round(start * SR)
         end = pos + audio.size
         if end > track.size:
             track = np.pad(track, (0, end - track.size))
@@ -1827,7 +1889,7 @@ def _duck_filter(bg_volume: float, duck_db: float, voice_dbfs: float, dub_volume
         f"{bg_in}volume={bg_volume:.4f},{AFMT}[bg];"
         f"[bg][vokey]sidechaincompress="
         f"threshold={thr:.5f}:ratio={ratio:.2f}:attack=20:release=700:makeup=1:level_sc=1[bgduck];"
-        f"[bgduck][vomix]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix];"
+        f"[bgduck][vomix]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[mix];"
         f"[mix]{_limiter()}[aout]"
     )
 
@@ -1884,7 +1946,7 @@ def mux_dub(
             filt = (
                 f"{bg_in}volume={original_volume:.4f},{AFMT}[bg];"
                 f"[1:a]volume={dub_volume:.3f},{AFMT}[vo];"
-                f"[bg][vo]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix];"
+                f"[bg][vo]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[mix];"
                 f"[mix]{_limiter()}[aout]"
             )
             mode = "giảm đều cả video"
@@ -1922,6 +1984,7 @@ def preview(text: str, voice: str = "", style: str = "tu_nhien", out_path: Path 
     kwargs = {"style": style}
     if voice:
         kwargs["voice"] = voice
-    audio = engine.infer(_clean_for_tts(text) or "Xin chào, đây là giọng đọc thử.", **kwargs)
+    with _infer_lock:
+        audio = engine.infer(_clean_for_tts(text) or "Xin chào, đây là giọng đọc thử.", **kwargs)
     out_path = out_path or Path("preview.wav")
     return _write_wav(out_path, audio)

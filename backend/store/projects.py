@@ -13,20 +13,28 @@ xem còn dự án nào trỏ tới nó không.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+import threading
+from collections.abc import Iterator
+from tempfile import NamedTemporaryFile
 from pathlib import Path
 
-from . import characters, series
+from . import characters, films, series
 from ..config import JOB_DIR, UPLOAD_DIR
+from ..core.dub_takes import AuditionTakes
+from ..db import JobScope, UploadOwner, get_db
 
 # Đuôi file được coi là kết quả xuất ra, đáng cho người dùng tải lại
 _OUTPUT_EXT = {".srt", ".vtt", ".txt", ".ass", ".mp4", ".mkv", ".webm", ".wav"}
+_PICTURE_VIDEO_EXT = {".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".flv", ".ts", ".wmv"}
 # File làm việc nội bộ của pipeline — không phải kết quả
 _INTERNAL = {
     "state.json", "render.json", "burn.ass", "audio.wav", "dub.wav",
     "voice_ref.wav", "_soft.srt",
 }
+_script_lock = threading.Lock()
 
 
 def _render_dirs(job_id: str) -> list[Path]:
@@ -57,6 +65,10 @@ def audio_dirs(job_id: str) -> list[Path]:
     """Thư mục có thể chứa file âm thanh của dự án: job phân tích trước, rồi các lần xuất (mới nhất trước)."""
     renders = sorted(_render_dirs(job_id), key=lambda p: p.stat().st_mtime, reverse=True)
     return [JOB_DIR / job_id, *renders]
+
+
+def audition_takes(job_id, video, cues):
+    return AuditionTakes(JOB_DIR / job_id, video, cues)
 
 
 def _dir_size(folder: Path) -> int:
@@ -125,6 +137,8 @@ def summary(job_id: str) -> dict | None:
     info = state.get("info") or {}
     cfg = state.get("cfg") or {}
     video = Path(state.get("video_path") or "")
+    source = _source_file(folder, state)
+    files = _outputs(job_id)
     return {
         "id": job_id,
         "video_name": state.get("video_name") or video.name or "(không rõ tên)",
@@ -137,7 +151,9 @@ def summary(job_id: str) -> dict | None:
         "updated": (folder / "state.json").stat().st_mtime,
         "size": _dir_size(folder) + sum(_dir_size(d) for d in _render_dirs(job_id)),
         # Video gốc còn trên máy không — không còn thì chỉ xem/sửa được phụ đề
-        "video_ok": video.is_file(),
+        "video_ok": source is not None,
+        "has_thumbnail": bool(source and source.suffix.lower() in _PICTURE_VIDEO_EXT)
+                         or any(Path(f["name"]).suffix.lower() in _PICTURE_VIDEO_EXT for f in files),
         "source_url": cfg.get("url") or "",
         "part": cfg.get("part") or None,
         # Tên bộ & tổng số tập do trình duyệt gửi kèm lúc chọn phần (xem
@@ -145,17 +161,17 @@ def summary(job_id: str) -> dict | None:
         "series_name": (cfg.get("series_name") or "").strip(),
         "series_total": int(cfg.get("series_total") or 0),
         "series_key": series.key_for(cfg.get("url") or ""),
-        "files": _outputs(job_id),
+        "files": files,
     }
 
 
-def list_all(limit: int = 80) -> list[dict]:
+def list_all(limit: int = 80, only_ids=None) -> list[dict]:
     """Các dự án đọc được, mới nhất trước."""
     if not JOB_DIR.is_dir():
         return []
     items: list[dict] = []
     for folder in JOB_DIR.iterdir():
-        if not folder.is_dir():
+        if (only_ids is not None and folder.name not in only_ids) or not folder.is_dir():
             continue
         item = summary(folder.name)
         if item:
@@ -164,20 +180,22 @@ def list_all(limit: int = 80) -> list[dict]:
     return items[:limit]
 
 
-def dashboard() -> dict:
+def dashboard(film_roles=None, job_ids=None) -> dict:
     """Toàn bộ nội dung dashboard: các bộ phim (kèm tập) + job chưa thuộc bộ nào.
 
     Bộ phim và tập lấy từ `films.json` — do người dùng tạo. Mỗi tập có `job`
     hoặc không: có thì gắn kèm thông tin phụ đề, không thì trạng thái là
     "chưa có video". Job nào không tập nào trỏ tới thì xếp vào `loose`.
     """
-    from . import films  # nạp muộn: films chỉ là kho, không phụ thuộc chiều ngược
-
-    by_id = {item["id"]: item for item in list_all(limit=10_000)}
+    by_id = {item["id"]: item for item in list_all(limit=10_000, only_ids=job_ids)}
+    if by_id:
+        with get_db() as db:
+            for job_id, in db.query(JobScope.id).filter(JobScope.id.in_(by_id), JobScope.has_cover):
+                by_id[job_id]["has_cover"] = True
     bound = films.bound_jobs()
 
     result: list[dict] = []
-    for film in films.all_films():
+    for film in films.all_films(film_roles):
         episodes: list[dict] = []
         for episode in sorted(film.get("episodes") or [], key=lambda e: int(e.get("no") or 0)):
             job_id = episode.get("job")
@@ -186,6 +204,7 @@ def dashboard() -> dict:
                 {
                     "no": int(episode.get("no") or 0),
                     "title": episode.get("title") or "",
+                    "has_cover": bool(episode.get("has_cover")),
                     # tập chưa làm vẫn biết dài bao lâu nếu lấy được từ link
                     "duration": float(project["duration"] if project else (episode.get("duration") or 0.0)),
                     "job": job_id if project else None,
@@ -199,6 +218,10 @@ def dashboard() -> dict:
         result.append(
             {
                 "id": film.get("id") or "",
+                "has_cover": bool(film.get("has_cover")),
+                "team_id": film.get("team_id"),
+                "legacy": film.get("legacy", False),
+                "role": film_roles[film["id"]] if film_roles is not None else "owner",
                 "name": film.get("name") or "(chưa đặt tên)",
                 "url": film.get("url") or "",
                 "created": float(film.get("created") or 0.0),
@@ -232,7 +255,10 @@ def full(job_id: str) -> dict | None:
     if item is None:
         return None
     item["cues"] = found[1].get("cues") or []
+    item["revision"] = script_revision(item["cues"])
+    item["dub_review"] = found[1].get("dub_review")
     item["speakers"] = found[1].get("speakers") or []
+    item["speech_gaps"] = found[1].get("speech_gaps") or []
     item["hardsub"] = found[1].get("hardsub") or None
     # Tên vai & giọng người dùng đã chọn — nằm trong DB, không nằm trong state.json.
     # DB hỏng thì vẫn mở được dự án, chỉ mất phần này.
@@ -245,21 +271,108 @@ def full(job_id: str) -> dict | None:
 
 def save_hardsub(job_id: str, result: dict) -> None:
     """Ghi kết quả dò phụ đề nung sẵn vào state.json của dự án."""
-    found = _read_state(job_id)
-    if not found:
-        return
-    folder, state = found
-    state["hardsub"] = result
-    (folder / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    with _script_lock:
+        found = _read_state(job_id)
+        if found:
+            folder, state = found
+            state["hardsub"] = result
+            _write_state(folder, state)
 
 
-def video_path(job_id: str) -> Path | None:
-    """File video gốc của dự án, nếu còn trên máy."""
-    found = _read_state(job_id)
-    if not found:
-        return None
-    folder, state = found
+def _write_state(folder: Path, state: dict) -> None:
+    pending = NamedTemporaryFile(mode="w", dir=folder, encoding="utf-8", delete=False)
+    temp = Path(pending.name)
+    try:
+        with pending as f:
+            json.dump(state, f, ensure_ascii=False, indent=1)
+        temp.replace(folder / "state.json")
+    finally:
+        temp.unlink(missing_ok=True)
 
+
+class ScriptChanged(RuntimeError):
+    pass
+
+
+def script_revision(cues):
+    data = json.dumps(cues, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(data).hexdigest()
+
+
+def check_revision(cues, expected):
+    if expected is not None and script_revision(cues) != expected:
+        raise ScriptChanged("Kịch bản đã được người khác sửa. Mở lại dự án để đối chiếu; chưa ghi đè.")
+
+
+def commit_script(path, state, expected, expected_review=None):
+    with _script_lock:
+        if path.is_file():
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            check_revision(saved.get("cues") or [], expected)
+            if expected_review and (saved.get("dub_review") or {}).get("token") != expected_review:
+                raise ScriptChanged("Bản duyệt đã đổi. Mở lại kịch bản trước khi lồng tiếng.")
+            if "dub_review" in saved:
+                state["dub_review"] = saved["dub_review"]
+            if "hardsub" in saved:
+                state["hardsub"] = saved["hardsub"]
+        elif expected is not None:
+            raise ScriptChanged("Dự án không còn tồn tại; chưa ghi kết quả.")
+        _write_state(path.parent, state)
+
+
+def save_cues(job_id: str, cues: list[dict], target_lang: str = "", expected=None, *,
+              review=None, previous_review=None) -> bool:
+    with _script_lock:
+        found = _read_state(job_id)
+        if not found:
+            return False
+        folder, state = found
+        old = state.get("cues") or []
+        if review is not None:
+            if (state.get("dub_review") or {}).get("token") != previous_review:
+                raise ScriptChanged("Bản duyệt đã đổi ở phiên khác. Mở lại để đối chiếu.")
+            if expected is None and old != cues:
+                raise ScriptChanged("Cần phiên bản phụ đề hiện tại để lưu bản duyệt. Hãy mở lại dự án.")
+            state["dub_review"] = review
+        check_revision(old, expected)
+        state["cues"] = cues
+        if not state.get("target_lang") and target_lang:
+            state["target_lang"] = target_lang
+        _write_state(folder, state)
+    try:
+        from . import memory
+
+        if state.get("target_lang") and old != cues:
+            memory.learn_from_edit(old, cues, state.get("source_lang") or "", state["target_lang"], job_id)
+    except Exception:
+        pass  # A memory failure must not turn a successful script save into an error.
+    return True
+
+
+def speaker_timing(rows: list[dict]) -> list[tuple]:
+    return [(round(c["start"], 3), round(c["end"], 3), c.get("speaker") or "",
+             c.get("speaker_fixed") is True) for c in rows]
+
+
+def save_speakers(job_id: str, expected: list[tuple], labels: list[str], speakers: list[dict], revision=None):
+    """Commit only speaker assignments; never overwrite a newer edit with the analysis snapshot."""
+    with _script_lock:
+        found = _read_state(job_id)
+        if not found:
+            return False
+        folder, state = found
+        rows = state.get("cues") or []
+        check_revision(rows, revision)
+        if len(labels) != len(rows) or speaker_timing(rows) != expected:
+            return False
+        for row, label in zip(rows, labels):
+            row["speaker"] = label
+        state["speakers"] = speakers
+        _write_state(folder, state)
+        return script_revision(rows)
+
+
+def _source_file(folder: Path, state: dict) -> Path | None:
     candidate = Path(state.get("video_path") or "")
     if candidate.is_file():
         return candidate
@@ -273,6 +386,44 @@ def video_path(job_id: str) -> Path | None:
     return None
 
 
+def video_path(job_id: str) -> Path | None:
+    """File video gốc của dự án, nếu còn trên máy."""
+    found = _read_state(job_id)
+    return _source_file(*found) if found else None
+
+
+def audition_source(job_id):
+    found = _read_state(job_id)
+    if found:
+        return _source_file(*found), float((found[1].get("info") or {}).get("duration") or 0)
+    return None
+
+
+def exists(job_id: str) -> bool:
+    return (JOB_DIR / job_id / "state.json").is_file()
+
+
+def thumbnail_sources(job_id: str) -> Iterator[Path]:
+    """Try the original, then the newest video export belonging to this project."""
+    found = _read_state(job_id)
+    if not found:
+        return
+    roots = (JOB_DIR.resolve(), UPLOAD_DIR.resolve())
+
+    def eligible(path: Path) -> bool:
+        return (path.suffix.lower() in _PICTURE_VIDEO_EXT
+                and any(path.resolve().is_relative_to(root) for root in roots))
+
+    source = _source_file(*found)
+    if source and eligible(source):
+        yield source
+    # Only scan render directories if the original is absent or cannot be decoded.
+    newest = max((p for p in _output_paths(job_id) if p != source and eligible(p)),
+                 key=lambda p: p.stat().st_mtime_ns, default=None)
+    if newest:
+        yield newest
+
+
 def output_file(job_id: str, name: str) -> Path | None:
     """File kết quả để tải về. Chỉ nhận tên file trần, không nhận `../`."""
     wanted = Path(name).name
@@ -282,7 +433,7 @@ def output_file(job_id: str, name: str) -> Path | None:
     return None
 
 
-def delete(job_id: str, with_source: bool = False) -> dict:
+def delete(job_id: str, with_source: bool = False, *, source_owner_id=None) -> dict:
     """Xoá dự án: thư mục job + các thư mục render của nó.
 
     Trả về {ok, freed, source_deleted}.
@@ -304,10 +455,14 @@ def delete(job_id: str, with_source: bool = False) -> dict:
         shutil.rmtree(rendered, ignore_errors=True)
 
     # Tập đang trỏ tới job này phải quay về trạng thái "chưa có video"
-    from . import films
-
     films.unbind_job(job_id)
     characters.delete_for(job_id)
+    with get_db() as db:
+        db.query(JobScope).filter((JobScope.id == job_id) | (JobScope.parent_id == job_id)).delete()
+        if upload_dir and source_owner_id is not None:
+            owner = db.get(UploadOwner, upload_dir.name)
+            if not owner or owner.member_id != source_owner_id:
+                upload_dir = None
 
     source_deleted = False
     # Chỉ xoá video upload khi không còn dự án nào khác dùng nó
@@ -325,14 +480,14 @@ def _upload_folder_of(video: Path) -> Path | None:
         rel = video.resolve().relative_to(UPLOAD_DIR.resolve())
     except (ValueError, OSError):
         return None
-    return UPLOAD_DIR / rel.parts[0] if rel.parts else None
+    return UPLOAD_DIR / rel.parts[0] if len(rel.parts) >= 2 else None
 
 
 def _upload_in_use(upload_dir: Path) -> bool:
     """Còn dự án nào trỏ video vào thư mục upload này không."""
     target = upload_dir.resolve()
-    for item in list_all(limit=10_000):
-        found = _read_state(item["id"])
+    for folder in JOB_DIR.iterdir():
+        found = _read_state(folder.name)
         if not found:
             continue
         candidate = Path(found[1].get("video_path") or "")
